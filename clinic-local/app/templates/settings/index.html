@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Paramètres - Clinic Local{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Paramètres du cabinet</h1>
+<form method="post" class="space-y-4 max-w-xl">
+  {{ csrf_input(request) }}
+  <div>
+    <label class="block text-sm font-medium">Nom du cabinet</label>
+    <input name="org_name" value="{{ settings.org_name }}" class="mt-1 w-full rounded border border-slate-300 px-3 py-2" />
+  </div>
+  <div>
+    <label class="block text-sm font-medium">SIRET</label>
+    <input name="siret" value="{{ settings.siret }}" class="mt-1 w-full rounded border border-slate-300 px-3 py-2" />
+  </div>
+  <div>
+    <label class="block text-sm font-medium">N° TVA</label>
+    <input name="vat_number" value="{{ settings.vat_number }}" class="mt-1 w-full rounded border border-slate-300 px-3 py-2" />
+  </div>
+  <button type="submit" class="rounded bg-sky-600 px-4 py-2 text-white">Enregistrer</button>
+</form>
+<div class="mt-6 text-sm text-slate-600">
+  <a class="text-sky-600" href="/settings/activities">Gérer les activités</a> ·
+  <a class="text-sky-600" href="/settings/services">Gérer les actes</a>
+</div>
+{% endblock %}
