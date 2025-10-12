@@ -68,20 +68,11 @@ python -m app.cli seed
 
 ### 5. Lancement
 
-#### Option la plus simple (double clic)
-
-1. Dans le Finder, ouvrez le dossier du projet puis double-cliquez sur `Launch.command`.
-2. Au premier lancement, macOS peut afficher un avertissement. Faites un clic droit → **Ouvrir** → **Ouvrir** pour autoriser l’exécution.
-3. Le terminal affiche la progression (création/activation de l’environnement virtuel, installation des dépendances, migrations, données de démo) puis démarre le serveur Uvicorn.
-4. Dès que le serveur répond, le navigateur par défaut s’ouvre automatiquement sur `http://localhost:8000`.
-
-Le terminal reste ouvert et diffuse les logs. Pour arrêter l’application, revenez dans la fenêtre Terminal et pressez `Ctrl+C`. En cas d’erreur au démarrage, un message explicite s’affiche et il suffit d’appuyer sur Entrée pour fermer la fenêtre.
-
-#### Option ligne de commande
-
 ```bash
 ./run.sh
 ```
+
+Le script crée/active l’environnement virtuel, applique les migrations, lance Uvicorn et ouvre l’application sur `http://localhost:8000`.
 
 Vous pouvez également utiliser `make dev` pour lancer le serveur en mode développement ou `make start` pour un lancement standard.
 
