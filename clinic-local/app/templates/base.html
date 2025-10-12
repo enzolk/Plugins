@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Clinic Local{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/tailwind.css" />
+    <script src="/static/js/htmx.min.js" defer></script>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <header class="bg-white border-b border-slate-200">
+      <div class="mx-auto max-w-6xl px-4 py-4 flex justify-between items-center">
+        <div class="text-lg font-semibold">Clinic Local</div>
+        <nav class="flex gap-4 text-sm">
+          <a href="/" class="hover:text-sky-600">Tableau de bord</a>
+          <a href="/patients" class="hover:text-sky-600">Patients</a>
+          <a href="/appointments" class="hover:text-sky-600">Agenda</a>
+          <a href="/consultations" class="hover:text-sky-600">Consultations</a>
+          <a href="/invoices" class="hover:text-sky-600">Factures</a>
+          <a href="/reports" class="hover:text-sky-600">Rapports</a>
+          <a href="/settings" class="hover:text-sky-600">Paramètres</a>
+        </nav>
+      </div>
+    </header>
+    <main class="mx-auto max-w-6xl px-4 py-6">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
