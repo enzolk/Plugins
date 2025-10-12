@@ -68,31 +68,11 @@ python -m app.cli seed
 
 ### 5. Lancement
 
-#### Option la plus simple (double clic sans Terminal)
-
-1. Dans le Finder, double-cliquez directement sur `launcher.py`.
-2. Une petite fenêtre "OsteoDrainage – Lancement" s’affiche : cliquez sur **Lancer**.
-3. Le lanceur gère automatiquement la création de l’environnement Python, l’installation des dépendances, l’application des migrations et le chargement des données de démonstration. Les étapes s’affichent dans la fenêtre.
-4. Dès que le serveur est prêt, votre navigateur par défaut s’ouvre sur `http://localhost:8000`. Laissez la fenêtre ouverte pour pouvoir arrêter proprement le serveur via le bouton **Arrêter**.
-5. En cas d’erreur, un message détaillé apparaît dans la fenêtre et aucune connaissance technique n’est requise.
-
-Cette option ne dépend d’aucun terminal et convient à un usage "double clic" très grand public.
-
-#### Option Terminal (contrôle avancé)
-
-1. Double-cliquez sur `Launch.command` (ou clic droit → **Ouvrir** si Gatekeeper bloque l’exécution la première fois).
-2. Le Terminal indique clairement chaque étape (création de l’environnement Python local, installation des dépendances, mise à jour de la base, chargement des données de démo) puis garde la fenêtre ouverte tant que l’application tourne.
-3. Dès que l’application est prête, votre navigateur par défaut s’ouvre automatiquement sur `http://localhost:8000`.
-
-Le Terminal sert de tableau de bord : il affiche les journaux temps réel et se ferme quand vous quittez l’application (`Ctrl+C`). En cas de problème, un message lisible est affiché et un appui sur Entrée suffit pour fermer la fenêtre après avoir pris connaissance de l’erreur.
-
-#### Option ligne de commande
-
 ```bash
 ./run.sh
 ```
 
-Ce raccourci lance exactement la même séquence que `Launch.command` mais sans ouverture automatique du navigateur (pratique pour un accès distant ou pour n’utiliser que l’API).
+Le script crée/active l’environnement virtuel, applique les migrations, lance Uvicorn et ouvre l’application sur `http://localhost:8000`.
 
 Vous pouvez également utiliser `make dev` pour lancer le serveur en mode développement ou `make start` pour un lancement standard.
 

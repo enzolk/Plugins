@@ -63,8 +63,8 @@ def upgrade() -> None:
         sa.Column("notes_encrypted", sa.Text, nullable=False, server_default=""),
         sa.Column("consent_rgpd", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.UniqueConstraint("first_name", "last_name", "birthdate", name="uq_patient_identity"),
     )
+    op.create_unique_constraint("uq_patient_identity", "patients", ["first_name", "last_name", "birthdate"])
 
     op.create_table(
         "appointments",
