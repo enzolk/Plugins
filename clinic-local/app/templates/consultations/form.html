@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Nouvelle consultation - Clinic Local{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Nouvelle consultation</h1>
+<form method="post" action="/consultations" class="grid max-w-2xl gap-4">
+  {{ csrf_input(request) }}
+  <div>
+    <label class="block text-sm font-medium">Patient</label>
+    <select name="patient_id" class="mt-1 w-full rounded border border-slate-300 px-3 py-2">
+      {% for patient in patients %}
+      <option value="{{ patient.id }}" {% if patient_id == patient.id %}selected{% endif %}>{{ patient.last_name }} {{ patient.first_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-sm font-medium">Activité</label>
+    <select name="activity_id" class="mt-1 w-full rounded border border-slate-300 px-3 py-2">
+      {% for activity in activities %}
+      <option value="{{ activity.id }}">{{ activity.code }} – {{ activity.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-sm font-medium">Acte</label>
+    <select name="service_id" class="mt-1 w-full rounded border border-slate-300 px-3 py-2">
+      {% for service in services %}
+      <option value="{{ service.id }}">{{ service.code }} – {{ service.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm font-medium">Quantité</label>
+      <input type="number" name="qty" value="1" class="mt-1 w-full rounded border border-slate-300 px-3 py-2" />
+    </div>
+    <div>
+      <label class="block text-sm font-medium">Prix HT</label>
+      <input type="number" step="0.01" name="price_ht" class="mt-1 w-full rounded border border-slate-300 px-3 py-2" />
+    </div>
+  </div>
+  <div>
+    <label class="block text-sm font-medium">TVA %</label>
+    <input type="number" step="0.1" name="vat_rate" value="0" class="mt-1 w-full rounded border border-slate-300 px-3 py-2" />
+  </div>
+  <div>
+    <label class="block text-sm font-medium">Notes internes</label>
+    <textarea name="notes_internal" rows="3" class="mt-1 w-full rounded border border-slate-300 px-3 py-2"></textarea>
+  </div>
+  <button class="mt-2 w-fit rounded bg-emerald-600 px-4 py-2 text-white">Enregistrer</button>
+</form>
+{% endblock %}
