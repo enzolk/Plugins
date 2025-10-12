@@ -1,0 +1,1 @@
+"""Module sécurité (authentification, chiffrement)."""
