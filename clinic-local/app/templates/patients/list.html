@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Patients - Clinic Local{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">Patients</h1>
+  <a href="/patients/new" class="rounded bg-sky-600 px-3 py-2 text-white text-sm">Nouveau patient</a>
+</div>
+<form method="get" class="mb-4">
+  <input type="search" name="q" value="{{ query }}" placeholder="Rechercher..." class="w-full rounded border border-slate-300 px-3 py-2" />
+</form>
+<div class="overflow-hidden rounded border border-slate-200 bg-white">
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-100 text-xs uppercase text-slate-500">
+      <tr>
+        <th class="px-4 py-2 text-left">Patient</th>
+        <th class="px-4 py-2 text-left">Email</th>
+        <th class="px-4 py-2 text-left">Téléphone</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for patient in patients %}
+      <tr class="border-t border-slate-200 hover:bg-slate-50">
+        <td class="px-4 py-2"><a class="text-sky-600" href="/patients/{{ patient.id }}">{{ patient.last_name }} {{ patient.first_name }}</a></td>
+        <td class="px-4 py-2">{{ patient.email or '—' }}</td>
+        <td class="px-4 py-2">{{ patient.phone or '—' }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="3" class="px-4 py-4 text-center text-slate-500">Aucun patient enregistré</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
