@@ -69,27 +69,6 @@ Application Qt locale pour la gestion d'un cabinet combinant ostéopathie et dra
 
 ### macOS
 
-#### Lancer l'application en mode développement (débutant)
-
-1. Ouvrez l'application **Terminal** (Spotlight `⌘ + Espace`, tapez « Terminal »).
-2. Tapez la commande suivante pour vous placer dans le dossier du projet (adaptez le chemin si nécessaire) :
-   ```bash
-   cd ~/Téléchargements/clinic-desktop
-   ```
-3. Lancez le script d'installation et de démarrage :
-   ```bash
-   ./scripts/dev_run.sh
-   ```
-   - Au premier lancement, macOS peut bloquer le script : clic droit sur `dev_run.sh` > **Ouvrir**, puis validez.
-   - Le script crée automatiquement un environnement Python, installe les dépendances puis affiche la fenêtre de l'application.
-4. Lorsque vous souhaitez relancer l'application plus tard :
-   ```bash
-   source .venv/bin/activate
-   python -m app.main
-   ```
-
-#### Créer l'application .app (pour double-clic)
-
 ```bash
 ./scripts/build_mac.sh
 ```
