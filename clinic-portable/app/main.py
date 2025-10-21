@@ -9,20 +9,8 @@ from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication
 
-if __package__ in {None, ""}:
-    # When executed as a loose script (e.g. ``python app/main.py``) the
-    # ``app`` package is not automatically discoverable.  We add the project
-    # root to ``sys.path`` so absolute imports continue to work in both the
-    # development and PyInstaller entry points.
-    project_root = Path(__file__).resolve().parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-    from app.app_context import AppContext  # type: ignore
-    from app.platform_paths import get_app_paths  # type: ignore
-else:
-    from .app_context import AppContext
-    from .platform_paths import get_app_paths
+from .app_context import AppContext
+from .platform_paths import get_app_paths
 
 
 def setup_logging(paths) -> None:
