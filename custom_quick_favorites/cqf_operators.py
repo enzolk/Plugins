@@ -31,6 +31,7 @@ from .cqf_config import (
     save_config_now,
 )
 from . import cqf_search
+from .cqf_custom_script import run_custom_script
 
 from .cqf_types import CQF_UL_Modes, CQF_UL_Sections, CQF_UL_Items
 
@@ -602,6 +603,10 @@ class CQF_OT_RunItem(Operator):
                     bpy.ops.wm.call_menu(name=mid)
                 return {'FINISHED'}
 
+            if it.type == "SCRIPT":
+                run_custom_script(it.script_code, context=context)
+                return {'FINISHED'}
+
             owner = None
             try:
                 owner = safe_eval(it.owner_expr)
@@ -868,6 +873,7 @@ class CQF_OT_ManagerPopup(Operator):
         item_ops = col_right.row(align=True)
         item_ops.operator("cqf.item_add_separator", text="Add Separator", icon="REMOVE")
         item_ops.operator("cqf.ask_manual_add", text="Manual Add…", icon="VIEWZOOM")
+        item_ops.operator("cqf.item_add_custom_script", text="Custom Script Button", icon="FILE_SCRIPT")
 
         item_ops2 = col_right.row(align=True)
         item_ops2.operator("cqf.item_remove", text="Remove", icon="TRASH")
@@ -900,6 +906,9 @@ class CQF_OT_ManagerPopup(Operator):
                     if it.prop_action == "SET":
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
+                elif it.type == "SCRIPT":
+                    box2.prop(it, "script_code", text="Script")
+                    box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
 # -----------------------------------------------------------------------------
@@ -1091,6 +1100,8 @@ class CQF_MT_FavoritesMenu(Menu):
                         label = (it.op_idname or it.op_expr or "Operator").strip()
                     elif it.type == "MENU":
                         label = (it.menu_idname or "Menu").strip()
+                    elif it.type == "SCRIPT":
+                        label = "Custom Script"
                     else:
                         label = (f"{it.owner_expr}.{it.prop_id}" if it.owner_expr else it.prop_id).strip() or "Property"
 
@@ -1101,6 +1112,8 @@ class CQF_MT_FavoritesMenu(Menu):
                     icon = "MENU_PANEL"
                 elif it.type == "PROP":
                     icon = "CHECKBOX_HLT"
+                elif it.type == "SCRIPT":
+                    icon = "FILE_SCRIPT"
 
                 op = col.operator("cqf.run_item", text=label, icon=icon)
                 op.mode_key = mode_cfg.mode_key

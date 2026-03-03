@@ -14,6 +14,7 @@ ITEM_TYPES = [
     ("OP", "Operator", ""),
     ("MENU", "Menu", ""),
     ("PROP", "Property", ""),
+    ("SCRIPT", "Custom Script", ""),
     ("SEP", "Separator", ""),
 ]
 
@@ -51,6 +52,8 @@ class CQF_Item(PropertyGroup):
         update=_prefs_update_cb,
     )
     prop_value: StringProperty(name="Value (text)", default="", update=_prefs_update_cb)
+
+    script_code: StringProperty(name="Custom Script", default="", update=_prefs_update_cb)
 
 
 class CQF_Section(PropertyGroup):
@@ -421,6 +424,7 @@ class CQF_AddonPrefs(AddonPreferences):
         item_ops = col_right.row(align=True)
         item_ops.operator("cqf.item_add_separator", text="Add Separator", icon="REMOVE")
         item_ops.operator("cqf.ask_manual_add", text="Manual Add…", icon="VIEWZOOM")
+        item_ops.operator("cqf.item_add_custom_script", text="Custom Script Button", icon="FILE_SCRIPT")
 
         item_ops2 = col_right.row(align=True)
         item_ops2.operator("cqf.item_remove", text="Remove", icon="TRASH")
@@ -453,6 +457,9 @@ class CQF_AddonPrefs(AddonPreferences):
                     if it.prop_action == "SET":
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
+                elif it.type == "SCRIPT":
+                    box2.prop(it, "script_code", text="Script")
+                    box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
 class CQF_UL_Modes(UIList):
@@ -486,6 +493,9 @@ class CQF_UL_Items(UIList):
                 fallback = (it.prop_id or "").strip() or "Property"
             label = (it.text or "").strip() or fallback
             row.label(text=label, icon="CHECKBOX_HLT")
+        elif it.type == "SCRIPT":
+            label = (it.text or "").strip() or "Custom Script"
+            row.label(text=label, icon="FILE_SCRIPT")
         else:
             row.label(text="────────", icon="REMOVE")
 
