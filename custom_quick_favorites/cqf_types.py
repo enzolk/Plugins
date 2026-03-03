@@ -26,91 +26,6 @@ SECTION_SLOTS = [
 ]
 
 
-def _get_addon_prefs(context):
-    try:
-        ad = context.preferences.addons.get(__package__.split(".")[0])
-        return ad.preferences if ad else None
-    except Exception:
-        return None
-
-
-def _active_script_item_from_context(context):
-    prefs = _get_addon_prefs(context)
-    if not prefs or not prefs.modes:
-        return None
-
-    midx = int(getattr(prefs, "active_mode_index", 0))
-    if not (0 <= midx < len(prefs.modes)):
-        return None
-    mode_cfg = prefs.modes[midx]
-    if not mode_cfg.sections:
-        return None
-
-    sidx = int(getattr(mode_cfg, "active_section_index", 0))
-    if not (0 <= sidx < len(mode_cfg.sections)):
-        return None
-    sec = mode_cfg.sections[sidx]
-    if not sec.items:
-        return None
-
-    iidx = int(getattr(sec, "active_item_index", 0))
-    if not (0 <= iidx < len(sec.items)):
-        return None
-    it = sec.items[iidx]
-    if (getattr(it, "type", "") or "") != "SCRIPT":
-        return None
-    return it
-
-
-def _script_code_update_cb(self, context):
-    try:
-        if hasattr(self, "script_lines_cache"):
-            self.script_lines_cache = (self.script_code or "")
-    except Exception:
-        pass
-    _prefs_update_cb(self, context)
-
-
-def _script_line_update_cb(self, context):
-    it = _active_script_item_from_context(context)
-    if not it:
-        return
-    try:
-        it.script_code = "\n".join((ln.text or "") for ln in it.script_lines)
-        it.script_lines_cache = it.script_code
-    except Exception:
-        pass
-    _prefs_update_cb(it, context)
-
-
-def sync_script_lines_from_code(item):
-    if not item:
-        return
-
-    code = (getattr(item, "script_code", "") or "")
-    cache = (getattr(item, "script_lines_cache", "") or "")
-    if cache == code and len(getattr(item, "script_lines", [])) > 0:
-        return
-
-    lines = code.splitlines()
-    if code.endswith("\n"):
-        lines.append("")
-    if not lines:
-        lines = [""]
-
-    item.script_lines.clear()
-    for line in lines:
-        row = item.script_lines.add()
-        row.text = line
-
-    item.active_script_line_index = min(max(0, int(getattr(item, "active_script_line_index", 0))), len(item.script_lines) - 1)
-    item.script_lines_cache = code
-
-
-class CQF_ScriptLine(PropertyGroup):
-    text: StringProperty(name="Line", default="", update=_script_line_update_cb)
-
-
 class CQF_Item(PropertyGroup):
     type: EnumProperty(name="Type", items=ITEM_TYPES, default="OP", update=_prefs_update_cb)
 
@@ -138,10 +53,7 @@ class CQF_Item(PropertyGroup):
     )
     prop_value: StringProperty(name="Value (text)", default="", update=_prefs_update_cb)
 
-    script_code: StringProperty(name="Custom Script", default="", options={"TEXTEDIT_UPDATE", "MULTILINE"}, update=_script_code_update_cb)
-    script_lines: CollectionProperty(type=CQF_ScriptLine)
-    active_script_line_index: IntProperty(default=0, update=_prefs_update_cb)
-    script_lines_cache: StringProperty(default="")
+    script_code: StringProperty(name="Custom Script", default="", update=_prefs_update_cb)
 
 
 class CQF_Section(PropertyGroup):
@@ -546,14 +458,7 @@ class CQF_AddonPrefs(AddonPreferences):
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
                 elif it.type == "SCRIPT":
-                    box2.label(text="Custom Script", icon="FILE_SCRIPT")
-                    col_script = box2.column(align=True)
-                    col_script.scale_y = 6.0
-                    col_script.prop(it, "script_code", text="")
-                    tools = box2.row(align=True)
-                    tools.operator("cqf.script_from_clipboard", text="Paste Clipboard", icon="PASTEDOWN")
-                    tools.operator("cqf.script_to_clipboard", text="Copy Script", icon="COPYDOWN")
-                    box2.label(text="Multiline field: Enter supports new lines and vertical scrolling.", icon="INFO")
+                    box2.prop(it, "script_code", text="Script")
                     box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
@@ -596,7 +501,6 @@ class CQF_UL_Items(UIList):
 
 
 _CLASSES = (
-    CQF_ScriptLine,
     CQF_Item,
     CQF_Section,
     CQF_ModeConfig,

@@ -907,14 +907,7 @@ class CQF_OT_ManagerPopup(Operator):
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
                 elif it.type == "SCRIPT":
-                    box2.label(text="Custom Script", icon="FILE_SCRIPT")
-                    col_script = box2.column(align=True)
-                    col_script.scale_y = 6.0
-                    col_script.prop(it, "script_code", text="")
-                    tools = box2.row(align=True)
-                    tools.operator("cqf.script_from_clipboard", text="Paste Clipboard", icon="PASTEDOWN")
-                    tools.operator("cqf.script_to_clipboard", text="Copy Script", icon="COPYDOWN")
-                    box2.label(text="Multiline field: Enter supports new lines and vertical scrolling.", icon="INFO")
+                    box2.prop(it, "script_code", text="Script")
                     box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
