@@ -1,1 +1,0 @@
-Composants QML réutilisables (placeholder).
