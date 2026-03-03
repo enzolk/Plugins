@@ -18,6 +18,9 @@ ITEM_TYPES = [
     ("SEP", "Separator", ""),
 ]
 
+
+_SCRIPT_LINES_SYNC_IN_PROGRESS = False
+
 SECTION_SLOTS = [
     ("TOP", "Top popup", "Show this section in the TOP popup (above mouse)"),
     ("LEFT", "Left popup", "Show this section in the LEFT popup"),
@@ -73,6 +76,8 @@ def rebuild_script_code_from_lines(it):
 
 
 def sync_script_lines_from_code(it):
+    global _SCRIPT_LINES_SYNC_IN_PROGRESS
+
     if not it:
         return
 
@@ -81,14 +86,18 @@ def sync_script_lines_from_code(it):
         return
 
     lines = code.splitlines() or [""]
-    while len(it.script_lines) > 0:
-        it.script_lines.remove(len(it.script_lines) - 1)
-    for line in lines:
-        row = it.script_lines.add()
-        row.text = line
+    _SCRIPT_LINES_SYNC_IN_PROGRESS = True
+    try:
+        while len(it.script_lines) > 0:
+            it.script_lines.remove(len(it.script_lines) - 1)
+        for line in lines:
+            row = it.script_lines.add()
+            row.text = line
 
-    it.active_script_line_index = max(0, min(int(getattr(it, "active_script_line_index", 0)), len(it.script_lines) - 1))
-    it.script_lines_cache = code
+        it.active_script_line_index = max(0, min(int(getattr(it, "active_script_line_index", 0)), len(it.script_lines) - 1))
+        it.script_lines_cache = code
+    finally:
+        _SCRIPT_LINES_SYNC_IN_PROGRESS = False
 
 
 def _find_script_item_for_line(line):
@@ -106,6 +115,9 @@ def _find_script_item_for_line(line):
 
 
 def _script_line_update_cb(line, context):
+    if _SCRIPT_LINES_SYNC_IN_PROGRESS:
+        return
+
     it = _find_script_item_for_line(line)
     if it:
         rebuild_script_code_from_lines(it)
