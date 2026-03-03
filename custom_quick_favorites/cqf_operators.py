@@ -33,7 +33,7 @@ from .cqf_config import (
 from . import cqf_search
 from .cqf_custom_script import run_custom_script
 
-from .cqf_types import CQF_UL_Modes, CQF_UL_Sections, CQF_UL_Items
+from .cqf_types import CQF_UL_Modes, CQF_UL_Sections, CQF_UL_Items, sync_script_lines_from_code
 
 
 # -----------------------------------------------------------------------------
@@ -907,7 +907,21 @@ class CQF_OT_ManagerPopup(Operator):
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
                 elif it.type == "SCRIPT":
-                    box2.prop(it, "script_code", text="Script")
+                    sync_script_lines_from_code(it)
+
+                    row = box2.row(align=True)
+                    row.label(text="Script")
+                    row.operator("cqf.script_from_clipboard", text="Paste", icon="PASTEDOWN")
+                    row.operator("cqf.script_to_clipboard", text="Copy", icon="COPYDOWN")
+
+                    box2.template_list("CQF_UL_ScriptLines", "", it, "script_lines", it, "active_script_line_index", rows=10)
+
+                    line_ops = box2.row(align=True)
+                    line_ops.operator("cqf.script_line_add", text="Add Line", icon="ADD")
+                    line_ops.operator("cqf.script_line_remove", text="Remove Line", icon="REMOVE")
+                    line_ops.operator("cqf.script_line_move", text="", icon="TRIA_UP").direction = "UP"
+                    line_ops.operator("cqf.script_line_move", text="", icon="TRIA_DOWN").direction = "DOWN"
+
                     box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
