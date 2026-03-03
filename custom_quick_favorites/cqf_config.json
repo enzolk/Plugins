@@ -1,0 +1,564 @@
+{
+  "version": [
+    1,
+    5,
+    0
+  ],
+  "active_mode_index": 0,
+  "ui": {
+    "header_font_size": 15,
+    "item_font_size": 14,
+    "tooltip_font_size": 12,
+    "header_font_weight": 100,
+    "item_font_weight": 100,
+    "tooltip_font_weight": 100,
+    "header_bold": false,
+    "item_bold": false,
+    "tooltip_bold": false,
+    "header_italic": false,
+    "item_italic": false,
+    "tooltip_italic": false,
+    "header_underline": false,
+    "item_underline": false,
+    "tooltip_underline": false,
+    "header_color": [
+      0.4898492097854614,
+      0.4898492097854614,
+      0.4898492097854614
+    ],
+    "header_alpha": 1.0,
+    "item_color": [
+      0.8064299821853638,
+      0.8064299821853638,
+      0.8064299821853638
+    ],
+    "item_alpha": 1.0,
+    "bg_color": [
+      0.06436657905578613,
+      0.06436657905578613,
+      0.06436657905578613
+    ],
+    "bg_alpha": 1.0,
+    "border_color": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "border_alpha": 0.07000000029802322,
+    "border_thickness": 0,
+    "radius": 5,
+    "sep_color": [
+      0.19370141625404358,
+      0.19370141625404358,
+      0.19370141625404358
+    ],
+    "sep_alpha": 1.0,
+    "sep_thickness": 1,
+    "hover_color": [
+      0.42472410202026367,
+      0.42472410202026367,
+      0.42472410202026367
+    ],
+    "hover_alpha": 0.10000000149011612,
+    "shadow_offset_x": 3,
+    "shadow_offset_y": -3,
+    "shadow_alpha": 0.15000000596046448,
+    "line_height": 22,
+    "panel_pad_x": 16,
+    "panel_pad_y": 12,
+    "header_pad_y": 6,
+    "item_pad_y": 0,
+    "sep_pad_y": 1,
+    "tooltip_text_color": [
+      0.9200000166893005,
+      0.9200000166893005,
+      0.9200000166893005
+    ],
+    "tooltip_text_alpha": 1.0,
+    "tooltip_bg_color": [
+      0.05342599004507065,
+      0.05342599004507065,
+      0.05342599004507065
+    ],
+    "tooltip_bg_alpha": 1.0,
+    "tooltip_border_color": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "tooltip_border_alpha": 0.10000000149011612,
+    "tooltip_border_thickness": 0,
+    "tooltip_radius": 6,
+    "tooltip_shadow_offset_x": 0,
+    "tooltip_shadow_offset_y": 0,
+    "tooltip_shadow_alpha": 0.10000000149011612,
+    "tooltip_pad": 10,
+    "tooltip_max_w": 420,
+    "tooltip_offset_x": 18,
+    "tooltip_offset_y": -18,
+    "tooltip_line_height": 0
+  },
+  "modes": [
+    {
+      "mode_key": "OBJECT",
+      "active_section_index": 1,
+      "sections": [
+        {
+          "title": "Viewport",
+          "popup_slot": "TOP",
+          "active_item_index": 1,
+          "items": [
+            {
+              "type": "PROP",
+              "text": "Overlay: Wireframe",
+              "tooltip": "Show face edges wires",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "bpy.context.space_data.overlay",
+              "prop_id": "show_wireframes",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "SEP",
+              "text": "",
+              "tooltip": "",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Display As",
+              "tooltip": "(undocumented operator)",
+              "op_idname": "wm.context_menu_enum",
+              "op_expr": "bpy.ops.wm.context_menu_enum(data_path='object.display_type')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Object",
+          "popup_slot": "BOTTOM",
+          "active_item_index": 3,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Set Origin to Geometry",
+              "tooltip": "Set the object's origin, by either moving the data, or set to center of data, or use 3D cursor",
+              "op_idname": "object.origin_set",
+              "op_expr": "bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Set Origin to Cursor",
+              "tooltip": "Set the object's origin, by either moving the data, or set to center of data, or use 3D cursor",
+              "op_idname": "object.origin_set",
+              "op_expr": "bpy.ops.object.origin_set(type='ORIGIN_CURSOR', center='MEDIAN')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "SEP",
+              "text": "",
+              "tooltip": "",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "PROP",
+              "text": "Transform Origins",
+              "tooltip": "Transform object origins, while leaving the shape in place",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "bpy.context.tool_settings",
+              "prop_id": "use_transform_data_origin",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "mode_key": "EDIT_MESH",
+      "active_section_index": 4,
+      "sections": [
+        {
+          "title": "Add-on",
+          "popup_slot": "BOTTOM",
+          "active_item_index": 1,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Set Edge Flow",
+              "tooltip": "Adjust curvature to match surface defined by edges crossing the edgeloop\nALT: reuse last settings",
+              "op_idname": "mesh.set_edge_flow",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Loop Tools",
+              "tooltip": "Open a predefined menu",
+              "op_idname": "wm.call_menu",
+              "op_expr": "bpy.ops.wm.call_menu(name='VIEW3D_MT_edit_mesh_looptools')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Origin & Cursor",
+          "popup_slot": "LEFT",
+          "active_item_index": 2,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Origin to Selected",
+              "tooltip": "Snaps the object's origin to the selected components in Edit Mode",
+              "op_idname": "object.origin_to_selection",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "SEP",
+              "text": "",
+              "tooltip": "",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Apply Maya Pivot (Pos + Orient)",
+              "tooltip": "",
+              "op_idname": "object.maya_pivot_placement",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "SEP",
+              "text": "",
+              "tooltip": "",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Apply Cursor Position",
+              "tooltip": "Will change cursor position using selected component",
+              "op_idname": "object.maya_pivot_apply_position",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Apply Cursor Pivot Orientation",
+              "tooltip": "Will change cursor orientation using selected component",
+              "op_idname": "object.maya_pivot_apply_orientation",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Aim Cursor Z to Selection",
+              "tooltip": "Will change cursor z orientation aiming selected component",
+              "op_idname": "object.maya_pivot_aim_cursor",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Edges",
+          "popup_slot": "TOP",
+          "active_item_index": 2,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Mark Sharp",
+              "tooltip": "(Un)mark selected edges as sharp",
+              "op_idname": "mesh.mark_sharp",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Clear Sharp",
+              "tooltip": "(Un)mark selected edges as sharp",
+              "op_idname": "mesh.mark_sharp",
+              "op_expr": "bpy.ops.mesh.mark_sharp(clear=True)",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Subdivide",
+              "tooltip": "Subdivide selected edges",
+              "op_idname": "mesh.subdivide",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Vertices",
+          "popup_slot": "TOP",
+          "active_item_index": 0,
+          "items": [
+            {
+              "type": "PROP",
+              "text": "Auto Merge Vertices",
+              "tooltip": "Automatically merge vertices moved to the same location",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "bpy.context.tool_settings",
+              "prop_id": "use_mesh_automerge",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Faces",
+          "popup_slot": "TOP",
+          "active_item_index": 0,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Grid Fill",
+              "tooltip": "Fill grid from two loops",
+              "op_idname": "mesh.fill_grid",
+              "op_expr": "bpy.ops.mesh.fill_grid('INVOKE_DEFAULT')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Selection",
+          "popup_slot": "RIGHT",
+          "active_item_index": 2,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Select Loop Inner-Region",
+              "tooltip": "Select region of faces inside of a selected loop of edges",
+              "op_idname": "mesh.loop_to_region",
+              "op_expr": "",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "MENU",
+              "text": "Select Similar",
+              "tooltip": "",
+              "op_idname": "",
+              "op_expr": "",
+              "menu_idname": "VIEW3D_MT_edit_mesh_select_similar",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Select Sharp Edges",
+              "tooltip": "Select all sharp enough edges",
+              "op_idname": "mesh.edges_select_sharp",
+              "op_expr": "bpy.ops.mesh.edges_select_sharp()",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        },
+        {
+          "title": "Axis",
+          "popup_slot": "LEFT",
+          "active_item_index": 1,
+          "items": [
+            {
+              "type": "OP",
+              "text": "Change Axis Orientation",
+              "tooltip": "(undocumented operator)",
+              "op_idname": "wm.context_menu_enum",
+              "op_expr": "bpy.ops.wm.context_menu_enum(data_path='scene.transform_orientation_slots[0].type')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            },
+            {
+              "type": "OP",
+              "text": "Change Axis Transform",
+              "tooltip": "(undocumented operator)",
+              "op_idname": "wm.context_menu_enum",
+              "op_expr": "bpy.ops.wm.context_menu_enum(data_path='scene.tool_settings.transform_pivot_point')",
+              "menu_idname": "",
+              "menu_call": "call_menu",
+              "owner_expr": "",
+              "prop_id": "",
+              "prop_action": "TOGGLE",
+              "prop_value": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "mode_key": "SCULPT",
+      "active_section_index": 0,
+      "sections": [
+        {
+          "title": "Section",
+          "popup_slot": "TOP",
+          "active_item_index": 0,
+          "items": []
+        }
+      ]
+    },
+    {
+      "mode_key": "VERTEX_PAINT",
+      "active_section_index": 0,
+      "sections": [
+        {
+          "title": "Section",
+          "popup_slot": "TOP",
+          "active_item_index": 0,
+          "items": []
+        }
+      ]
+    },
+    {
+      "mode_key": "WEIGHT_PAINT",
+      "active_section_index": 0,
+      "sections": [
+        {
+          "title": "Section",
+          "popup_slot": "TOP",
+          "active_item_index": 0,
+          "items": []
+        }
+      ]
+    },
+    {
+      "mode_key": "TEXTURE_PAINT",
+      "active_section_index": 0,
+      "sections": [
+        {
+          "title": "Section",
+          "popup_slot": "TOP",
+          "active_item_index": 0,
+          "items": []
+        }
+      ]
+    }
+  ]
+}
