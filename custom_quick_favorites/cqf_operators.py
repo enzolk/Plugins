@@ -907,24 +907,7 @@ class CQF_OT_ManagerPopup(Operator):
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
                 elif it.type == "SCRIPT":
-                    from .cqf_types import sync_script_lines_from_code
-                    sync_script_lines_from_code(it)
-                    box2.label(text="Custom Script (scrollable)", icon="FILE_SCRIPT")
-
-                    rows = box2.row(align=True)
-                    rows.template_list("CQF_UL_ScriptLines", "", it, "script_lines", it, "active_script_line_index", rows=10)
-
-                    side = rows.column(align=True)
-                    side.operator("cqf.script_line_add", text="", icon="ADD")
-                    side.operator("cqf.script_line_remove", text="", icon="REMOVE")
-                    side.separator()
-                    side.operator("cqf.script_line_move", text="", icon="TRIA_UP").direction = "UP"
-                    side.operator("cqf.script_line_move", text="", icon="TRIA_DOWN").direction = "DOWN"
-
-                    tools = box2.row(align=True)
-                    tools.operator("cqf.script_from_clipboard", text="Paste Clipboard", icon="PASTEDOWN")
-                    tools.operator("cqf.script_to_clipboard", text="Copy Script", icon="COPYDOWN")
-
+                    box2.prop(it, "script_code", text="Script")
                     box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
