@@ -88,6 +88,9 @@ def _icon_text_for_item(it) -> str:
         # fallback if not bool
         return "☐"
 
+    if t == "SCRIPT":
+        return "✦"
+
     return ""
 
 
@@ -115,6 +118,8 @@ def _build_slot_entries(mode_cfg, slot_key: str):
                     label = (it.op_idname or it.op_expr or "Operator").strip()
                 elif it.type == "MENU":
                     label = (it.menu_idname or "Menu").strip()
+                elif it.type == "SCRIPT":
+                    label = "Custom Script"
                 else:
                     label = (f"{it.owner_expr}.{it.prop_id}" if it.owner_expr else it.prop_id).strip() or "Property"
 
