@@ -12,6 +12,7 @@ from . import cqf_types
 from . import cqf_multi_popup
 from . import cqf_operators
 from . import cqf_custom_script
+from . import cqf_script_line_ops
 from . import cqf_keymap
 
 def register():
@@ -19,10 +20,12 @@ def register():
     cqf_multi_popup.register()
     cqf_operators.register()
     cqf_custom_script.register()
+    cqf_script_line_ops.register()
     cqf_keymap.register_keymap()
 
 def unregister():
     cqf_keymap.unregister_keymap()
+    cqf_script_line_ops.unregister()
     cqf_custom_script.unregister()
     cqf_operators.unregister()
     cqf_multi_popup.unregister()

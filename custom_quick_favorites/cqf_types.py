@@ -26,6 +26,10 @@ SECTION_SLOTS = [
 ]
 
 
+class CQF_ScriptLine(PropertyGroup):
+    text: StringProperty(name="Line", default="", update=lambda self, ctx: _script_line_update_cb(self, ctx))
+
+
 class CQF_Item(PropertyGroup):
     type: EnumProperty(name="Type", items=ITEM_TYPES, default="OP", update=_prefs_update_cb)
 
@@ -53,7 +57,64 @@ class CQF_Item(PropertyGroup):
     )
     prop_value: StringProperty(name="Value (text)", default="", update=_prefs_update_cb)
 
-    script_code: StringProperty(name="Custom Script", default="", update=_prefs_update_cb)
+    script_code: StringProperty(name="Custom Script", default="", update=lambda self, ctx: _script_code_update_cb(self, ctx))
+    script_lines: CollectionProperty(type=CQF_ScriptLine)
+    active_script_line_index: IntProperty(default=0, update=_prefs_update_cb)
+    script_lines_cache: StringProperty(default="")
+
+
+def rebuild_script_code_from_lines(it):
+    if not it:
+        return
+    code = "\n".join((ln.text or "") for ln in it.script_lines)
+    if (it.script_code or "") != code:
+        it.script_code = code
+    it.script_lines_cache = code
+
+
+def sync_script_lines_from_code(it):
+    if not it:
+        return
+
+    code = it.script_code or ""
+    if getattr(it, "script_lines_cache", "") == code and len(it.script_lines) > 0:
+        return
+
+    lines = code.splitlines() or [""]
+    while len(it.script_lines) > 0:
+        it.script_lines.remove(len(it.script_lines) - 1)
+    for line in lines:
+        row = it.script_lines.add()
+        row.text = line
+
+    it.active_script_line_index = max(0, min(int(getattr(it, "active_script_line_index", 0)), len(it.script_lines) - 1))
+    it.script_lines_cache = code
+
+
+def _find_script_item_for_line(line):
+    prefs = bpy.context.preferences.addons.get(__package__.split(".")[0])
+    prefs = prefs.preferences if prefs else None
+    if not prefs:
+        return None
+    for mode in getattr(prefs, "modes", []):
+        for sec in getattr(mode, "sections", []):
+            for it in getattr(sec, "items", []):
+                for ln in getattr(it, "script_lines", []):
+                    if ln == line:
+                        return it
+    return None
+
+
+def _script_line_update_cb(line, context):
+    it = _find_script_item_for_line(line)
+    if it:
+        rebuild_script_code_from_lines(it)
+    _prefs_update_cb(line, context)
+
+
+def _script_code_update_cb(it, context):
+    sync_script_lines_from_code(it)
+    _prefs_update_cb(it, context)
 
 
 class CQF_Section(PropertyGroup):
@@ -458,7 +519,21 @@ class CQF_AddonPrefs(AddonPreferences):
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
                 elif it.type == "SCRIPT":
-                    box2.prop(it, "script_code", text="Script")
+                    sync_script_lines_from_code(it)
+
+                    row = box2.row(align=True)
+                    row.label(text="Script")
+                    row.operator("cqf.script_from_clipboard", text="Paste", icon="PASTEDOWN")
+                    row.operator("cqf.script_to_clipboard", text="Copy", icon="COPYDOWN")
+
+                    box2.template_list("CQF_UL_ScriptLines", "", it, "script_lines", it, "active_script_line_index", rows=10)
+
+                    line_ops = box2.row(align=True)
+                    line_ops.operator("cqf.script_line_add", text="Add Line", icon="ADD")
+                    line_ops.operator("cqf.script_line_remove", text="Remove Line", icon="REMOVE")
+                    line_ops.operator("cqf.script_line_move", text="", icon="TRIA_UP").direction = "UP"
+                    line_ops.operator("cqf.script_line_move", text="", icon="TRIA_DOWN").direction = "DOWN"
+
                     box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
@@ -473,6 +548,11 @@ class CQF_UL_Sections(UIList):
         row = layout.row(align=True)
         row.prop(item, "title", text="", emboss=False, icon="BOOKMARKS")
         row.prop(item, "popup_slot", text="", emboss=True)
+
+
+class CQF_UL_ScriptLines(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0):
+        layout.prop(item, "text", text="", emboss=True)
 
 
 class CQF_UL_Items(UIList):
@@ -501,12 +581,14 @@ class CQF_UL_Items(UIList):
 
 
 _CLASSES = (
+    CQF_ScriptLine,
     CQF_Item,
     CQF_Section,
     CQF_ModeConfig,
     CQF_AddonPrefs,
     CQF_UL_Modes,
     CQF_UL_Sections,
+    CQF_UL_ScriptLines,
     CQF_UL_Items,
 )
 
