@@ -14,6 +14,7 @@ ITEM_TYPES = [
     ("OP", "Operator", ""),
     ("MENU", "Menu", ""),
     ("PROP", "Property", ""),
+    ("SCRIPT", "Custom Script", ""),
     ("SEP", "Separator", ""),
 ]
 
@@ -23,6 +24,91 @@ SECTION_SLOTS = [
     ("RIGHT", "Right popup", "Show this section in the RIGHT popup"),
     ("BOTTOM", "Bottom popup", "Show this section in the BOTTOM popup (below mouse)"),
 ]
+
+
+def _get_addon_prefs(context):
+    try:
+        ad = context.preferences.addons.get(__package__.split(".")[0])
+        return ad.preferences if ad else None
+    except Exception:
+        return None
+
+
+def _active_script_item_from_context(context):
+    prefs = _get_addon_prefs(context)
+    if not prefs or not prefs.modes:
+        return None
+
+    midx = int(getattr(prefs, "active_mode_index", 0))
+    if not (0 <= midx < len(prefs.modes)):
+        return None
+    mode_cfg = prefs.modes[midx]
+    if not mode_cfg.sections:
+        return None
+
+    sidx = int(getattr(mode_cfg, "active_section_index", 0))
+    if not (0 <= sidx < len(mode_cfg.sections)):
+        return None
+    sec = mode_cfg.sections[sidx]
+    if not sec.items:
+        return None
+
+    iidx = int(getattr(sec, "active_item_index", 0))
+    if not (0 <= iidx < len(sec.items)):
+        return None
+    it = sec.items[iidx]
+    if (getattr(it, "type", "") or "") != "SCRIPT":
+        return None
+    return it
+
+
+def _script_code_update_cb(self, context):
+    try:
+        if hasattr(self, "script_lines_cache"):
+            self.script_lines_cache = (self.script_code or "")
+    except Exception:
+        pass
+    _prefs_update_cb(self, context)
+
+
+def _script_line_update_cb(self, context):
+    it = _active_script_item_from_context(context)
+    if not it:
+        return
+    try:
+        it.script_code = "\n".join((ln.text or "") for ln in it.script_lines)
+        it.script_lines_cache = it.script_code
+    except Exception:
+        pass
+    _prefs_update_cb(it, context)
+
+
+def sync_script_lines_from_code(item):
+    if not item:
+        return
+
+    code = (getattr(item, "script_code", "") or "")
+    cache = (getattr(item, "script_lines_cache", "") or "")
+    if cache == code and len(getattr(item, "script_lines", [])) > 0:
+        return
+
+    lines = code.splitlines()
+    if code.endswith("\n"):
+        lines.append("")
+    if not lines:
+        lines = [""]
+
+    item.script_lines.clear()
+    for line in lines:
+        row = item.script_lines.add()
+        row.text = line
+
+    item.active_script_line_index = min(max(0, int(getattr(item, "active_script_line_index", 0))), len(item.script_lines) - 1)
+    item.script_lines_cache = code
+
+
+class CQF_ScriptLine(PropertyGroup):
+    text: StringProperty(name="Line", default="", update=_script_line_update_cb)
 
 
 class CQF_Item(PropertyGroup):
@@ -51,6 +137,11 @@ class CQF_Item(PropertyGroup):
         update=_prefs_update_cb,
     )
     prop_value: StringProperty(name="Value (text)", default="", update=_prefs_update_cb)
+
+    script_code: StringProperty(name="Custom Script", default="", update=_script_code_update_cb)
+    script_lines: CollectionProperty(type=CQF_ScriptLine)
+    active_script_line_index: IntProperty(default=0, update=_prefs_update_cb)
+    script_lines_cache: StringProperty(default="")
 
 
 class CQF_Section(PropertyGroup):
@@ -421,6 +512,7 @@ class CQF_AddonPrefs(AddonPreferences):
         item_ops = col_right.row(align=True)
         item_ops.operator("cqf.item_add_separator", text="Add Separator", icon="REMOVE")
         item_ops.operator("cqf.ask_manual_add", text="Manual Add…", icon="VIEWZOOM")
+        item_ops.operator("cqf.item_add_custom_script", text="Custom Script Button", icon="FILE_SCRIPT")
 
         item_ops2 = col_right.row(align=True)
         item_ops2.operator("cqf.item_remove", text="Remove", icon="TRASH")
@@ -453,6 +545,25 @@ class CQF_AddonPrefs(AddonPreferences):
                     if it.prop_action == "SET":
                         box2.prop(it, "prop_value")
                         box2.label(text="Enum-flag: 'EDGE,FACE' or '+EDGE -FACE' or 'NONE' or 'ALL'", icon="INFO")
+                elif it.type == "SCRIPT":
+                    sync_script_lines_from_code(it)
+                    box2.label(text="Custom Script (scrollable)", icon="FILE_SCRIPT")
+
+                    rows = box2.row(align=True)
+                    rows.template_list("CQF_UL_ScriptLines", "", it, "script_lines", it, "active_script_line_index", rows=10)
+
+                    side = rows.column(align=True)
+                    side.operator("cqf.script_line_add", text="", icon="ADD")
+                    side.operator("cqf.script_line_remove", text="", icon="REMOVE")
+                    side.separator()
+                    side.operator("cqf.script_line_move", text="", icon="TRIA_UP").direction = "UP"
+                    side.operator("cqf.script_line_move", text="", icon="TRIA_DOWN").direction = "DOWN"
+
+                    tools = box2.row(align=True)
+                    tools.operator("cqf.script_from_clipboard", text="Paste Clipboard", icon="PASTEDOWN")
+                    tools.operator("cqf.script_to_clipboard", text="Copy Script", icon="COPYDOWN")
+
+                    box2.label(text="Script has access to bpy, context and C.", icon="INFO")
 
 
 class CQF_UL_Modes(UIList):
@@ -486,11 +597,20 @@ class CQF_UL_Items(UIList):
                 fallback = (it.prop_id or "").strip() or "Property"
             label = (it.text or "").strip() or fallback
             row.label(text=label, icon="CHECKBOX_HLT")
+        elif it.type == "SCRIPT":
+            label = (it.text or "").strip() or "Custom Script"
+            row.label(text=label, icon="FILE_SCRIPT")
         else:
             row.label(text="────────", icon="REMOVE")
 
 
+class CQF_UL_ScriptLines(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0):
+        layout.prop(item, "text", text="", emboss=True)
+
+
 _CLASSES = (
+    CQF_ScriptLine,
     CQF_Item,
     CQF_Section,
     CQF_ModeConfig,
@@ -498,6 +618,7 @@ _CLASSES = (
     CQF_UL_Modes,
     CQF_UL_Sections,
     CQF_UL_Items,
+    CQF_UL_ScriptLines,
 )
 
 

@@ -346,6 +346,8 @@ def prefs_to_dict(prefs) -> dict:
                     "prop_id": (it.prop_id or ""),
                     "prop_action": (it.prop_action or "TOGGLE"),
                     "prop_value": (it.prop_value or ""),
+
+                    "script_code": (getattr(it, "script_code", "") or ""),
                 })
             mdata["sections"].append(sdata)
         data["modes"].append(mdata)
@@ -537,6 +539,8 @@ def dict_to_prefs(prefs, data: dict):
                         it.prop_id = str(itdata.get("prop_id", ""))
                         it.prop_action = str(itdata.get("prop_action", "TOGGLE"))
                         it.prop_value = str(itdata.get("prop_value", ""))
+                        if hasattr(it, "script_code"):
+                            it.script_code = str(itdata.get("script_code", ""))
 
                 s.active_item_index = int(sdata.get("active_item_index", 0))
 
