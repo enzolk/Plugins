@@ -1372,13 +1372,13 @@ def _auto_attach_tick(scene, depsgraph, source=""):
             if mode == "EDIT":
                 bm = payload
                 comp_q = _component_world_quat_from_data(s, obj, bm, "EDIT")
-                comp_point_world = best["p"]
+                comp_point_world = _compute_comp_point_world_from_attachment(s, obj, bm, "EDIT")
             else:
                 obj_like, me = payload
                 comp_q = _component_world_quat_from_data(s, obj_like, me, "MESH")
-                comp_point_world = best["p"]
+                comp_point_world = _compute_comp_point_world_from_attachment(s, obj_like, me, "MESH")
 
-            if comp_q is None:
+            if comp_q is None or comp_point_world is None:
                 _clear_attachment(scene, "Auto Attach: cannot compute component rotation.")
                 return
 
@@ -1441,6 +1441,11 @@ def _auto_attach_tick(scene, depsgraph, source=""):
         is_edit_mode = (attach_obj.mode == "EDIT" and attach_obj.data and attach_obj.data.is_editmode)
         if is_edit_mode:
             margin = max(0.0, float(getattr(s, "bbox_margin", 0.0)))
+            try:
+                key = scene.as_pointer()
+            except Exception:
+                key = id(scene)
+            prev_outside_count = _bbox_outside_counts.get(key, 0)
 
             basis = comp_q.to_matrix()
             pos_off_local = _get_pos_offset(scene)
@@ -1450,12 +1455,7 @@ def _auto_attach_tick(scene, depsgraph, source=""):
             inside_pred = _cursor_inside_object_bbox_world(attach_obj, depsgraph, predicted_loc, margin)
 
             if not inside_now and not inside_pred:
-                try:
-                    key = scene.as_pointer()
-                except Exception:
-                    key = id(scene)
-
-                cnt = _bbox_outside_counts.get(key, 0) + 1
+                cnt = prev_outside_count + 1
                 _bbox_outside_counts[key] = cnt
 
                 if cnt <= _BBOX_GRACE_TICKS:
@@ -1465,10 +1465,12 @@ def _auto_attach_tick(scene, depsgraph, source=""):
                 _set_status(scene, "Auto Attach: cursor outside bbox (freeze follow).")
                 return
             else:
-                try:
-                    _bbox_outside_counts.pop(scene.as_pointer(), None)
-                except Exception:
-                    pass
+                _bbox_outside_counts.pop(key, None)
+
+                # If follow was frozen while cursor was outside bbox, preserve the current
+                # cursor transform when re-entering follow so attach does not create a jump.
+                if prev_outside_count > _BBOX_GRACE_TICKS:
+                    _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
 
         # Follow: write cursor
         _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
