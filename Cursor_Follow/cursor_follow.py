@@ -1319,6 +1319,152 @@ def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quatern
         _update_obj_xform_cache(attach_obj)
 
 
+def _get_attachment_component_transform(scene, depsgraph=None):
+    """Return (comp_point_world, comp_quat_world, attach_obj) for current attachment."""
+    s = _get_settings(scene)
+    if not s or not _has_attachment(scene):
+        return None, None, None
+
+    obj = _find_object(scene, s.object_name)
+    if not obj or obj.type != "MESH":
+        return None, None, None
+
+    mode, payload = _get_mesh_access_for_follow(obj, depsgraph)
+    if mode == "NONE":
+        return None, None, None
+
+    try:
+        if mode == "EDIT":
+            bm = payload
+            comp_point_world = _compute_comp_point_world_from_attachment(s, obj, bm, "EDIT")
+            comp_q = _component_world_quat_from_data(s, obj, bm, "EDIT")
+        else:
+            obj_like, me = payload
+            comp_point_world = _compute_comp_point_world_from_attachment(s, obj_like, me, "MESH")
+            comp_q = _component_world_quat_from_data(s, obj_like, me, "MESH")
+        return comp_point_world, comp_q, obj
+    except Exception:
+        return None, None, None
+    finally:
+        _free_mesh_access(mode, payload)
+
+
+def _selected_component_transform(context):
+    """Best-effort selected component transform for any active object type."""
+    obj = context.active_object
+    if not obj:
+        return None, None, None
+
+    # Mesh edit mode: use selected mesh components.
+    if obj.type == "MESH" and obj.mode == "EDIT" and obj.data and obj.data.is_editmode:
+        bm = bmesh.from_edit_mesh(obj.data)
+        sel_faces = [f for f in bm.faces if f.select]
+        sel_edges = [e for e in bm.edges if e.select]
+        sel_verts = [v for v in bm.verts if v.select]
+
+        if sel_faces:
+            center_obj = Vector((0.0, 0.0, 0.0))
+            normal_obj = Vector((0.0, 0.0, 0.0))
+            for f in sel_faces:
+                center_obj += f.calc_center_median()
+                normal_obj += f.normal
+            center_obj /= float(len(sel_faces))
+
+            mw3 = obj.matrix_world.to_3x3()
+            center_world = obj.matrix_world @ center_obj
+            z_axis = _safe_normalize(mw3 @ normal_obj, Vector((0.0, 0.0, 1.0)))
+
+            tangent_obj = None
+            for f in sel_faces:
+                if len(f.verts) >= 2:
+                    tangent_obj = f.verts[1].co - f.verts[0].co
+                    if tangent_obj.length_squared > _EPS:
+                        break
+            if tangent_obj is None:
+                tangent_obj = Vector((1.0, 0.0, 0.0))
+
+            x_axis = mw3 @ tangent_obj
+            x_axis = x_axis - z_axis * x_axis.dot(z_axis)
+            if x_axis.length_squared < _EPS:
+                x_axis = Vector((1.0, 0.0, 0.0))
+            q = _basis_to_quat(_make_orthonormal_basis(x_axis, z_axis, z_axis))
+            return center_world, q, obj
+
+        if sel_edges:
+            center_obj = Vector((0.0, 0.0, 0.0))
+            edge_dir_obj = Vector((0.0, 0.0, 0.0))
+            for e in sel_edges:
+                c = (e.verts[0].co + e.verts[1].co) * 0.5
+                center_obj += c
+                edge_dir_obj += (e.verts[1].co - e.verts[0].co)
+            center_obj /= float(len(sel_edges))
+
+            mw3 = obj.matrix_world.to_3x3()
+            center_world = obj.matrix_world @ center_obj
+            x_axis = _safe_normalize(mw3 @ edge_dir_obj, Vector((1.0, 0.0, 0.0)))
+
+            normal_obj = Vector((0.0, 0.0, 0.0))
+            for e in sel_edges:
+                for v in e.verts:
+                    normal_obj += v.normal
+            z_axis = _safe_normalize(mw3 @ normal_obj, mw3 @ Vector((0.0, 0.0, 1.0)))
+            q = _basis_to_quat(_make_orthonormal_basis(x_axis, z_axis, z_axis))
+            return center_world, q, obj
+
+        if sel_verts:
+            center_obj = Vector((0.0, 0.0, 0.0))
+            normal_obj = Vector((0.0, 0.0, 0.0))
+            for v in sel_verts:
+                center_obj += v.co
+                normal_obj += v.normal
+            center_obj /= float(len(sel_verts))
+
+            mw3 = obj.matrix_world.to_3x3()
+            center_world = obj.matrix_world @ center_obj
+            z_axis = _safe_normalize(mw3 @ normal_obj, mw3 @ Vector((0.0, 0.0, 1.0)))
+            x_axis = _safe_normalize(mw3 @ Vector((1.0, 0.0, 0.0)), Vector((1.0, 0.0, 0.0)))
+            q = _basis_to_quat(_make_orthonormal_basis(x_axis, z_axis, z_axis))
+            return center_world, q, obj
+
+    # Fallback for all non-mesh or object-level selection.
+    loc = obj.matrix_world.translation.copy()
+    rot = _safe_quat(obj.matrix_world.to_quaternion())
+    return loc, rot, obj
+
+
+def _resolve_origin_reference(context):
+    """Resolve reference frame used by origin tools.
+    Priority: current attachment -> selected component/object -> cursor transform.
+    Returns (origin_pos, origin_rot, source_obj, source_tag).
+    """
+    scene = context.scene
+    comp_point_world, comp_q, attach_obj = _get_attachment_component_transform(scene, context.evaluated_depsgraph_get())
+    if comp_point_world is not None and comp_q is not None:
+        return comp_point_world, comp_q, attach_obj, "ATTACHMENT"
+
+    sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
+    if sel_loc is not None and sel_rot is not None:
+        return sel_loc, sel_rot, sel_obj, "SELECTION"
+
+    return _cursor_world(scene), _cursor_world_quat(scene), None, "CURSOR"
+
+
+def _aim_z_quaternion(origin_world: Vector, target_world: Vector, x_hint: Vector = None):
+    """Return a quaternion where Z axis points from origin to target."""
+    aim_vec = target_world - origin_world
+    if aim_vec.length_squared < _EPS:
+        return None
+
+    z_axis = _safe_normalize(aim_vec, Vector((0.0, 0.0, 1.0)))
+    if x_hint is None:
+        x_hint = Vector((1.0, 0.0, 0.0))
+        if abs(x_hint.dot(z_axis)) > 0.98:
+            x_hint = Vector((0.0, 1.0, 0.0))
+
+    basis = _make_orthonormal_basis(x_hint, z_axis, z_axis)
+    return _basis_to_quat(basis)
+
+
 # ------------------------------------------------------------
 # Main tick (shared by timer + depsgraph)
 # ------------------------------------------------------------
@@ -1579,6 +1725,220 @@ class CursorAutoAttachSettings(PropertyGroup):
     last_rot_z: FloatProperty(default=0.0)
 
 
+class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
+    bl_idname = "caa.set_origin_pos_to_cursor"
+    bl_label = "Set Origin Position to Cursor Position"
+
+    def execute(self, context):
+        scene = context.scene
+        origin_pos, origin_q, origin_obj, source = _resolve_origin_reference(context)
+        cur_loc = _cursor_world(scene)
+        pos_off_local = origin_q.conjugated() @ (cur_loc - origin_pos)
+        _set_pos_offset(scene, pos_off_local)
+        src_name = origin_obj.name if origin_obj else source
+        _set_status(scene, f"Origin position set to cursor position ({src_name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_set_origin_rot_to_cursor(bpy.types.Operator):
+    bl_idname = "caa.set_origin_rot_to_cursor"
+    bl_label = "Set Origin Orientation to Cursor Orientation"
+
+    def execute(self, context):
+        scene = context.scene
+        s = _get_settings(scene)
+        _origin_pos, origin_q, origin_obj, source = _resolve_origin_reference(context)
+        cur_q = _cursor_world_quat(scene)
+        if s and s.follow_rotation:
+            _set_rot_offset(scene, origin_q.conjugated() @ cur_q)
+        else:
+            _set_rot_offset(scene, cur_q)
+        src_name = origin_obj.name if origin_obj else source
+        _set_status(scene, f"Origin orientation set to cursor orientation ({src_name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_set_origin_pos_to_selected(bpy.types.Operator):
+    bl_idname = "caa.set_origin_pos_to_selected"
+    bl_label = "Set Origin Position to Selected Component Position"
+
+    def execute(self, context):
+        scene = context.scene
+        origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
+        sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_loc is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+        pos_off_local = origin_q.conjugated() @ (sel_loc - origin_pos)
+        _set_pos_offset(scene, pos_off_local)
+        _set_status(scene, f"Origin position set from selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_set_origin_rot_to_selected(bpy.types.Operator):
+    bl_idname = "caa.set_origin_rot_to_selected"
+    bl_label = "Set Origin Orientation to Selected Component Orientation"
+
+    def execute(self, context):
+        scene = context.scene
+        s = _get_settings(scene)
+        _origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
+        _sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_rot is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+        if s and s.follow_rotation:
+            _set_rot_offset(scene, origin_q.conjugated() @ sel_rot)
+        else:
+            _set_rot_offset(scene, sel_rot)
+        _set_status(scene, f"Origin orientation set from selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_aim_origin_z_to_selected(bpy.types.Operator):
+    bl_idname = "caa.aim_origin_z_to_selected"
+    bl_label = "Aim Origin (Z) to Selection"
+
+    def execute(self, context):
+        scene = context.scene
+        s = _get_settings(scene)
+        origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
+        sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_loc is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+
+        x_hint = origin_q.to_matrix().col[0].xyz.copy()
+        aimed_q = _aim_z_quaternion(origin_pos, sel_loc, x_hint)
+        if aimed_q is None:
+            self.report({'WARNING'}, "Origin is already at selection.")
+            return {'CANCELLED'}
+
+        if s and s.follow_rotation:
+            _set_rot_offset(scene, origin_q.conjugated() @ aimed_q)
+        else:
+            _set_rot_offset(scene, aimed_q)
+        _set_status(scene, f"Origin Z aimed to selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_set_cursor_rot_to_selected(bpy.types.Operator):
+    bl_idname = "caa.set_cursor_rot_to_selected"
+    bl_label = "Set Cursor Orientation to Selected Component Orientation"
+
+    def execute(self, context):
+        scene = context.scene
+        _sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_rot is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+        _set_cursor_world_quat(scene, sel_rot)
+        _set_last_applied_cursor(scene, _cursor_world(scene), sel_rot)
+        _set_status(scene, f"Cursor orientation set from selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_set_cursor_pos_to_selected(bpy.types.Operator):
+    bl_idname = "caa.set_cursor_pos_to_selected"
+    bl_label = "Set Cursor Position to Selected Component Position"
+
+    def execute(self, context):
+        scene = context.scene
+        sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_loc is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+        _set_cursor_world(scene, sel_loc)
+        _set_last_applied_cursor(scene, sel_loc, _cursor_world_quat(scene))
+        _set_status(scene, f"Cursor position set from selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_aim_cursor_z_to_selected(bpy.types.Operator):
+    bl_idname = "caa.aim_cursor_z_to_selected"
+    bl_label = "Aim Cursor (Z) to Selection"
+
+    def execute(self, context):
+        scene = context.scene
+        sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_loc is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+
+        cur_loc = _cursor_world(scene)
+        cur_q = _cursor_world_quat(scene)
+        x_hint = cur_q.to_matrix().col[0].xyz.copy()
+        aimed_q = _aim_z_quaternion(cur_loc, sel_loc, x_hint)
+        if aimed_q is None:
+            self.report({'WARNING'}, "Cursor is already at selection.")
+            return {'CANCELLED'}
+
+        _set_cursor_world_quat(scene, aimed_q)
+        _set_last_applied_cursor(scene, cur_loc, aimed_q)
+        _set_status(scene, f"Cursor Z aimed to selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_reset_cursor_rot_world(bpy.types.Operator):
+    bl_idname = "caa.reset_cursor_rot_world"
+    bl_label = "Reset Cursor Orientation to World"
+
+    def execute(self, context):
+        scene = context.scene
+        q = Quaternion((1.0, 0.0, 0.0, 0.0))
+        _set_cursor_world_quat(scene, q)
+        _set_last_applied_cursor(scene, _cursor_world(scene), q)
+        _set_status(scene, "Cursor orientation reset to world.")
+        return {'FINISHED'}
+
+
+class CAA_OT_reset_cursor_pos_world(bpy.types.Operator):
+    bl_idname = "caa.reset_cursor_pos_world"
+    bl_label = "Reset Cursor Position to World"
+
+    def execute(self, context):
+        scene = context.scene
+        loc = Vector((0.0, 0.0, 0.0))
+        _set_cursor_world(scene, loc)
+        _set_last_applied_cursor(scene, loc, _cursor_world_quat(scene))
+        _set_status(scene, "Cursor position reset to world origin.")
+        return {'FINISHED'}
+
+
+class CAA_OT_reset_cursor_rot_to_selected_local(bpy.types.Operator):
+    bl_idname = "caa.reset_cursor_rot_to_selected_local"
+    bl_label = "Reset Cursor Orientation to Selected Object Local Orientation"
+
+    def execute(self, context):
+        scene = context.scene
+        obj = context.active_object
+        if not obj:
+            self.report({'WARNING'}, "No active object.")
+            return {'CANCELLED'}
+        q = _safe_quat(obj.matrix_world.to_quaternion())
+        _set_cursor_world_quat(scene, q)
+        _set_last_applied_cursor(scene, _cursor_world(scene), q)
+        _set_status(scene, f"Cursor orientation reset to {obj.name} local orientation.")
+        return {'FINISHED'}
+
+
+class CAA_OT_reset_cursor_pos_to_selected_origin(bpy.types.Operator):
+    bl_idname = "caa.reset_cursor_pos_to_selected_origin"
+    bl_label = "Reset Cursor Position to Selected Object Origin"
+
+    def execute(self, context):
+        scene = context.scene
+        obj = context.active_object
+        if not obj:
+            self.report({'WARNING'}, "No active object.")
+            return {'CANCELLED'}
+        loc = obj.matrix_world.translation.copy()
+        _set_cursor_world(scene, loc)
+        _set_last_applied_cursor(scene, loc, _cursor_world_quat(scene))
+        _set_status(scene, f"Cursor position reset to {obj.name} origin.")
+        return {'FINISHED'}
+
+
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
@@ -1620,6 +1980,26 @@ class VIEW3D_PT_cursor_auto_attach(Panel):
         box.label(text=f"Pos: {s.pos_off_x:.4f}, {s.pos_off_y:.4f}, {s.pos_off_z:.4f}")
         box.label(text=f"Rot: {s.off_w:.4f}, {s.off_x:.4f}, {s.off_y:.4f}, {s.off_z:.4f}")
 
+        layout.separator()
+        col = layout.column(align=True)
+        col.label(text="Origin")
+        col.operator("caa.set_origin_pos_to_cursor", text="Set Origin Position to Cursor Position")
+        col.operator("caa.set_origin_rot_to_cursor", text="Set Origin Orientation to Cursor Orientation")
+        col.operator("caa.set_origin_pos_to_selected", text="Set Origin Position to Selected Component Position")
+        col.operator("caa.set_origin_rot_to_selected", text="Set Origin Orientation to Selected Component Orientation")
+        col.operator("caa.aim_origin_z_to_selected", text="Aim Origin (Z) to Selection")
+
+        layout.separator()
+        col = layout.column(align=True)
+        col.label(text="Cursor")
+        col.operator("caa.set_cursor_pos_to_selected", text="Set Cursor Position to Selected Component Position")
+        col.operator("caa.set_cursor_rot_to_selected", text="Set Cursor Orientation to Selected Component Orientation")
+        col.operator("caa.aim_cursor_z_to_selected", text="Aim Cursor (Z) to Selection")
+        col.operator("caa.reset_cursor_pos_world", text="Reset Cursor Position to World")
+        col.operator("caa.reset_cursor_rot_world", text="Reset Cursor Orientation to World")
+        col.operator("caa.reset_cursor_pos_to_selected_origin", text="Reset Cursor Position to Selected Object Origin")
+        col.operator("caa.reset_cursor_rot_to_selected_local", text="Reset Cursor Orientation to Selected Object Local Orientation")
+
         if s.status:
             layout.separator()
             layout.label(text=s.status, icon="INFO")
@@ -1631,6 +2011,18 @@ class VIEW3D_PT_cursor_auto_attach(Panel):
 
 CLASSES = (
     CursorAutoAttachSettings,
+    CAA_OT_set_origin_pos_to_cursor,
+    CAA_OT_set_origin_rot_to_cursor,
+    CAA_OT_set_origin_pos_to_selected,
+    CAA_OT_set_origin_rot_to_selected,
+    CAA_OT_aim_origin_z_to_selected,
+    CAA_OT_set_cursor_rot_to_selected,
+    CAA_OT_aim_cursor_z_to_selected,
+    CAA_OT_set_cursor_pos_to_selected,
+    CAA_OT_reset_cursor_rot_world,
+    CAA_OT_reset_cursor_pos_world,
+    CAA_OT_reset_cursor_rot_to_selected_local,
+    CAA_OT_reset_cursor_pos_to_selected_origin,
     VIEW3D_PT_cursor_auto_attach,
 )
 
