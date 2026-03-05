@@ -1,19 +1,9 @@
-bl_info = {
-    "name": "Transform Shortcut: Global",
-    "author": "OpenAI",
-    "version": (1, 0, 0),
-    "blender": (5, 0, 0),
-    "location": "View3D > Sidebar > Tool > Transform Shortcuts",
-    "description": "Set transform orientation to Global and pivot point to Bounding Box Center",
-    "category": "3D View",
-}
-
 import bpy
 
 
 class VIEW3D_OT_set_global_transform(bpy.types.Operator):
     bl_idname = "view3d.set_global_transform"
-    bl_label = "Set Global Transform"
+    bl_label = "Transform Global"
     bl_description = "Set Transform Orientation to Global and Pivot Point to Bounding Box Center"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -28,22 +18,7 @@ class VIEW3D_OT_set_global_transform(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class VIEW3D_PT_transform_shortcuts_global(bpy.types.Panel):
-    bl_label = "Transform Shortcuts"
-    bl_idname = "VIEW3D_PT_transform_shortcuts_global"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "Tool"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator(VIEW3D_OT_set_global_transform.bl_idname, icon='ORIENTATION_GLOBAL')
-
-
-classes = (
-    VIEW3D_OT_set_global_transform,
-    VIEW3D_PT_transform_shortcuts_global,
-)
+classes = (VIEW3D_OT_set_global_transform,)
 
 
 def register():
@@ -54,7 +29,3 @@ def register():
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-
-
-if __name__ == "__main__":
-    register()
