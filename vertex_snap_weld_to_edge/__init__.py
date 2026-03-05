@@ -75,6 +75,8 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
             if not src_vert.is_valid:
                 continue
 
+            src_co = src_vert.co.copy()
+
             connected_edges = set(src_vert.link_edges)
             nearest_edge = None
             nearest_point = None
@@ -88,8 +90,8 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
 
                 a = edge.verts[0].co
                 b = edge.verts[1].co
-                point_on_edge, _ = closest_point_on_segment(src_vert.co, a, b)
-                dist = (src_vert.co - point_on_edge).length
+                point_on_edge, _ = closest_point_on_segment(src_co, a, b)
+                dist = (src_co - point_on_edge).length
 
                 if nearest_dist is None or dist < nearest_dist:
                     nearest_dist = dist
@@ -121,7 +123,9 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
             # Edge slide-style adjustment: move only the inserted vertex along the split edge.
             new_vert.co = nearest_point
 
-            src_vert.co = new_vert.co
+            if not src_vert.is_valid:
+                continue
+
             bmesh.ops.weld_verts(bm, targetmap={src_vert: new_vert})
             welded_count += 1
 
