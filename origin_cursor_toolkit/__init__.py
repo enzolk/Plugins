@@ -321,7 +321,7 @@ class OCT_OT_ResetOriginOrientationWorld(bpy.types.Operator):
 
 class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
     bl_idname = "oct.reset_origin_position_selected_bbox"
-    bl_label = "Reset Origin position to selected object bouding Box"
+    bl_label = "Reset Origin Position to Object Bounding Box"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -330,10 +330,9 @@ class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
             self.report({'WARNING'}, "No active object")
             return {'CANCELLED'}
 
-        ref_obj = next((o for o in context.selected_objects if o != obj), None)
-        if ref_obj is None:
-            self.report({'WARNING'}, "Select another object to use its bounding box")
-            return {'CANCELLED'}
+        # Prefer another selected object as reference, but gracefully fall back
+        # to the active object so the operator also works with a single object.
+        ref_obj = next((o for o in context.selected_objects if o != obj), obj)
 
         bbox_world = [ref_obj.matrix_world @ Vector(corner) for corner in ref_obj.bound_box]
         target_pos = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
