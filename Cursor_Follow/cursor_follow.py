@@ -41,9 +41,8 @@ CURSOR_ROT_EPS = 1e-10
 TIMER_INTERVAL = 0.08
 _timer_running = False
 
-# Edit-mode BBox freeze anti-false-positive (when components move fast)
-_BBOX_GRACE_TICKS = 2
-_bbox_outside_counts = {}  # key: scene pointer -> int
+# Follow freeze distance (meters)
+_DEFAULT_FREEZE_DISTANCE = 0.05  # 5 cm
 
 # Per-object cursor state keys (custom properties)
 _OBJ_STATE_PREFIX = "_caa_"
@@ -243,41 +242,6 @@ def _set_cursor_world_quat(scene, q_world: Quaternion):
 
 
 # ------------------------------------------------------------
-# Bounding box helpers (world space)
-# ------------------------------------------------------------
-
-def _cursor_inside_object_bbox_world(obj, depsgraph, cursor_world: Vector, margin: float) -> bool:
-    if not obj:
-        return True
-    try:
-        o = obj
-        if depsgraph is not None:
-            try:
-                o = obj.evaluated_get(depsgraph)
-            except Exception:
-                o = obj
-
-        bb = getattr(o, "bound_box", None)
-        if not bb:
-            return True
-
-        mw = o.matrix_world
-        pts = [mw @ Vector(corner) for corner in bb]
-
-        minx = min(p.x for p in pts) - margin
-        miny = min(p.y for p in pts) - margin
-        minz = min(p.z for p in pts) - margin
-        maxx = max(p.x for p in pts) + margin
-        maxy = max(p.y for p in pts) + margin
-        maxz = max(p.z for p in pts) + margin
-
-        p = cursor_world
-        return (minx <= p.x <= maxx) and (miny <= p.y <= maxy) and (minz <= p.z <= maxz)
-    except Exception:
-        return True
-
-
-# ------------------------------------------------------------
 # Handler / timer registration
 # ------------------------------------------------------------
 
@@ -449,12 +413,6 @@ def _clear_attachment(scene, reason: str = ""):
     s.pos_off_z = 0.0
     if reason:
         _set_status(scene, reason)
-    try:
-        _bbox_outside_counts.pop(scene.as_pointer(), None)
-    except Exception:
-        pass
-
-
 def _has_attachment(scene) -> bool:
     s = _get_settings(scene)
     if not s:
@@ -669,11 +627,6 @@ def _obj_load_state(scene, obj):
         float(obj.get(_k("last_rot_z"), cur_rot.z)),
     )))
     _set_last_applied_cursor(scene, last_loc, last_rot)
-
-    try:
-        _bbox_outside_counts.pop(scene.as_pointer(), None)
-    except Exception:
-        pass
 
     # refresh xform cache (important for undo detection)
     _update_obj_xform_cache(obj)
@@ -1450,11 +1403,6 @@ def _auto_attach_tick(scene, depsgraph, source=""):
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
             _set_status(scene, f"Auto Attached: {s.component_type}")
 
-            try:
-                _bbox_outside_counts.pop(scene.as_pointer(), None)
-            except Exception:
-                pass
-
             _obj_save_state(scene, obj)
             _update_obj_xform_cache(obj)
 
@@ -1502,40 +1450,18 @@ def _auto_attach_tick(scene, depsgraph, source=""):
             _obj_save_state(scene, obj)
             return
 
-        # Object Mode: ignore bbox always.
-        is_edit_mode = (attach_obj.mode == "EDIT" and attach_obj.data and attach_obj.data.is_editmode)
-        if is_edit_mode:
-            margin = max(0.0, float(getattr(s, "bbox_margin", 0.0)))
-            try:
-                key = scene.as_pointer()
-            except Exception:
-                key = id(scene)
-            prev_outside_count = _bbox_outside_counts.get(key, 0)
+        # Distance-only freeze: if cursor is farther than threshold from nearest candidate
+        # component, freeze both position and rotation updates.
+        freeze_dist = max(0.0, float(getattr(s, "freeze_distance", _DEFAULT_FREEZE_DISTANCE)))
+        nearest = _find_nearest_component_in_edit(attach_obj, cur_loc, float(s.snap_tolerance)) if (
+            attach_obj.mode == "EDIT" and attach_obj.data and attach_obj.data.is_editmode
+        ) else _find_nearest_component_objectmode(attach_obj, depsgraph, cur_loc, float(s.snap_tolerance))
 
-            basis = comp_q.to_matrix()
-            pos_off_local = _get_pos_offset(scene)
-            predicted_loc = comp_point_world + (basis @ pos_off_local)
-
-            inside_now = _cursor_inside_object_bbox_world(attach_obj, depsgraph, cur_loc, margin)
-            inside_pred = _cursor_inside_object_bbox_world(attach_obj, depsgraph, predicted_loc, margin)
-
-            if not inside_now and not inside_pred:
-                cnt = prev_outside_count + 1
-                _bbox_outside_counts[key] = cnt
-
-                if cnt <= _BBOX_GRACE_TICKS:
-                    _set_status(scene, "Auto Attach: bbox check (grace)...")
-                    return
-
-                _set_status(scene, "Auto Attach: cursor outside bbox (freeze follow).")
+        if nearest and ("p" in nearest):
+            dist = (cur_loc - nearest["p"]).length
+            if dist > freeze_dist:
+                _set_status(scene, "Auto Attach: distance too high (follow frozen).")
                 return
-            else:
-                _bbox_outside_counts.pop(key, None)
-
-                # If follow was frozen while cursor was outside bbox, preserve the current
-                # cursor transform when re-entering follow so attach does not create a jump.
-                if prev_outside_count > _BBOX_GRACE_TICKS:
-                    _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
 
         # Follow: write cursor
         _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
@@ -1582,10 +1508,10 @@ class CursorAutoAttachSettings(PropertyGroup):
         subtype="DISTANCE",
         unit="LENGTH",
     )
-    bbox_margin: FloatProperty(
-        name="BBox Margin (Edit Mode only)",
-        description="Extra margin added around the attached object's world bounding box. Used ONLY in Edit Mode. In Object Mode, bbox is ignored.",
-        default=0.05,
+    freeze_distance: FloatProperty(
+        name="Freeze Distance",
+        description="Freeze auto-attach/follow when cursor is farther than this distance from the nearest attachable component",
+        default=_DEFAULT_FREEZE_DISTANCE,
         min=0.0,
         soft_max=10.0,
         subtype="DISTANCE",
@@ -1663,7 +1589,7 @@ class VIEW3D_PT_cursor_auto_attach(Panel):
         layout.prop(s, "auto_attach", toggle=True, text="Auto Attach")
         layout.prop(s, "follow_rotation", toggle=True)
         layout.prop(s, "snap_tolerance")
-        layout.prop(s, "bbox_margin")
+        layout.prop(s, "freeze_distance")
 
         layout.separator()
 
@@ -1720,7 +1646,6 @@ def unregister():
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)
 
-    _bbox_outside_counts.clear()
     _last_active_by_scene.clear()
     _last_obj_xform.clear()
 
