@@ -1432,6 +1432,39 @@ def _selected_component_transform(context):
     return loc, rot, obj
 
 
+def _resolve_origin_reference(context):
+    """Resolve reference frame used by origin tools.
+    Priority: current attachment -> selected component/object -> cursor transform.
+    Returns (origin_pos, origin_rot, source_obj, source_tag).
+    """
+    scene = context.scene
+    comp_point_world, comp_q, attach_obj = _get_attachment_component_transform(scene, context.evaluated_depsgraph_get())
+    if comp_point_world is not None and comp_q is not None:
+        return comp_point_world, comp_q, attach_obj, "ATTACHMENT"
+
+    sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
+    if sel_loc is not None and sel_rot is not None:
+        return sel_loc, sel_rot, sel_obj, "SELECTION"
+
+    return _cursor_world(scene), _cursor_world_quat(scene), None, "CURSOR"
+
+
+def _aim_z_quaternion(origin_world: Vector, target_world: Vector, x_hint: Vector = None):
+    """Return a quaternion where Z axis points from origin to target."""
+    aim_vec = target_world - origin_world
+    if aim_vec.length_squared < _EPS:
+        return None
+
+    z_axis = _safe_normalize(aim_vec, Vector((0.0, 0.0, 1.0)))
+    if x_hint is None:
+        x_hint = Vector((1.0, 0.0, 0.0))
+        if abs(x_hint.dot(z_axis)) > 0.98:
+            x_hint = Vector((0.0, 1.0, 0.0))
+
+    basis = _make_orthonormal_basis(x_hint, z_axis, z_axis)
+    return _basis_to_quat(basis)
+
+
 # ------------------------------------------------------------
 # Main tick (shared by timer + depsgraph)
 # ------------------------------------------------------------
@@ -1698,19 +1731,12 @@ class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        s = _get_settings(scene)
-        comp_point_world, comp_q, _obj = _get_attachment_component_transform(scene, context.evaluated_depsgraph_get())
-        if comp_point_world is None or comp_q is None:
-            self.report({'WARNING'}, "No valid attachment component.")
-            return {'CANCELLED'}
+        origin_pos, origin_q, origin_obj, source = _resolve_origin_reference(context)
         cur_loc = _cursor_world(scene)
-        pos_off_local = comp_q.conjugated() @ (cur_loc - comp_point_world)
+        pos_off_local = origin_q.conjugated() @ (cur_loc - origin_pos)
         _set_pos_offset(scene, pos_off_local)
-        _set_status(scene, "Origin position set to cursor position.")
-        if s and s.object_name:
-            attach_obj = _find_object(scene, s.object_name)
-            if attach_obj:
-                _obj_save_state(scene, attach_obj)
+        src_name = origin_obj.name if origin_obj else source
+        _set_status(scene, f"Origin position set to cursor position ({src_name}).")
         return {'FINISHED'}
 
 
@@ -1721,20 +1747,14 @@ class CAA_OT_set_origin_rot_to_cursor(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        comp_point_world, comp_q, _obj = _get_attachment_component_transform(scene, context.evaluated_depsgraph_get())
-        if comp_point_world is None or comp_q is None:
-            self.report({'WARNING'}, "No valid attachment component.")
-            return {'CANCELLED'}
+        _origin_pos, origin_q, origin_obj, source = _resolve_origin_reference(context)
         cur_q = _cursor_world_quat(scene)
         if s and s.follow_rotation:
-            _set_rot_offset(scene, comp_q.conjugated() @ cur_q)
+            _set_rot_offset(scene, origin_q.conjugated() @ cur_q)
         else:
             _set_rot_offset(scene, cur_q)
-        _set_status(scene, "Origin orientation set to cursor orientation.")
-        if s and s.object_name:
-            attach_obj = _find_object(scene, s.object_name)
-            if attach_obj:
-                _obj_save_state(scene, attach_obj)
+        src_name = origin_obj.name if origin_obj else source
+        _set_status(scene, f"Origin orientation set to cursor orientation ({src_name}).")
         return {'FINISHED'}
 
 
@@ -1744,15 +1764,12 @@ class CAA_OT_set_origin_pos_to_selected(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        comp_point_world, comp_q, _obj = _get_attachment_component_transform(scene, context.evaluated_depsgraph_get())
-        if comp_point_world is None or comp_q is None:
-            self.report({'WARNING'}, "No valid attachment component.")
-            return {'CANCELLED'}
+        origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
         sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
         if sel_loc is None:
             self.report({'WARNING'}, "No selected component/object.")
             return {'CANCELLED'}
-        pos_off_local = comp_q.conjugated() @ (sel_loc - comp_point_world)
+        pos_off_local = origin_q.conjugated() @ (sel_loc - origin_pos)
         _set_pos_offset(scene, pos_off_local)
         _set_status(scene, f"Origin position set from selection ({sel_obj.name}).")
         return {'FINISHED'}
@@ -1765,19 +1782,43 @@ class CAA_OT_set_origin_rot_to_selected(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _comp_point_world, comp_q, _obj = _get_attachment_component_transform(scene, context.evaluated_depsgraph_get())
-        if comp_q is None:
-            self.report({'WARNING'}, "No valid attachment component.")
-            return {'CANCELLED'}
+        _origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
         _sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
         if sel_rot is None:
             self.report({'WARNING'}, "No selected component/object.")
             return {'CANCELLED'}
         if s and s.follow_rotation:
-            _set_rot_offset(scene, comp_q.conjugated() @ sel_rot)
+            _set_rot_offset(scene, origin_q.conjugated() @ sel_rot)
         else:
             _set_rot_offset(scene, sel_rot)
         _set_status(scene, f"Origin orientation set from selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_aim_origin_z_to_selected(bpy.types.Operator):
+    bl_idname = "caa.aim_origin_z_to_selected"
+    bl_label = "Aim Origin (Z) to Selection"
+
+    def execute(self, context):
+        scene = context.scene
+        s = _get_settings(scene)
+        origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
+        sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_loc is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+
+        x_hint = origin_q.to_matrix().col[0].xyz.copy()
+        aimed_q = _aim_z_quaternion(origin_pos, sel_loc, x_hint)
+        if aimed_q is None:
+            self.report({'WARNING'}, "Origin is already at selection.")
+            return {'CANCELLED'}
+
+        if s and s.follow_rotation:
+            _set_rot_offset(scene, origin_q.conjugated() @ aimed_q)
+        else:
+            _set_rot_offset(scene, aimed_q)
+        _set_status(scene, f"Origin Z aimed to selection ({sel_obj.name}).")
         return {'FINISHED'}
 
 
@@ -1810,6 +1851,31 @@ class CAA_OT_set_cursor_pos_to_selected(bpy.types.Operator):
         _set_cursor_world(scene, sel_loc)
         _set_last_applied_cursor(scene, sel_loc, _cursor_world_quat(scene))
         _set_status(scene, f"Cursor position set from selection ({sel_obj.name}).")
+        return {'FINISHED'}
+
+
+class CAA_OT_aim_cursor_z_to_selected(bpy.types.Operator):
+    bl_idname = "caa.aim_cursor_z_to_selected"
+    bl_label = "Aim Cursor (Z) to Selection"
+
+    def execute(self, context):
+        scene = context.scene
+        sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
+        if sel_loc is None:
+            self.report({'WARNING'}, "No selected component/object.")
+            return {'CANCELLED'}
+
+        cur_loc = _cursor_world(scene)
+        cur_q = _cursor_world_quat(scene)
+        x_hint = cur_q.to_matrix().col[0].xyz.copy()
+        aimed_q = _aim_z_quaternion(cur_loc, sel_loc, x_hint)
+        if aimed_q is None:
+            self.report({'WARNING'}, "Cursor is already at selection.")
+            return {'CANCELLED'}
+
+        _set_cursor_world_quat(scene, aimed_q)
+        _set_last_applied_cursor(scene, cur_loc, aimed_q)
+        _set_status(scene, f"Cursor Z aimed to selection ({sel_obj.name}).")
         return {'FINISHED'}
 
 
@@ -1921,12 +1987,14 @@ class VIEW3D_PT_cursor_auto_attach(Panel):
         col.operator("caa.set_origin_rot_to_cursor", text="Set Origin Orientation to Cursor Orientation")
         col.operator("caa.set_origin_pos_to_selected", text="Set Origin Position to Selected Component Position")
         col.operator("caa.set_origin_rot_to_selected", text="Set Origin Orientation to Selected Component Orientation")
+        col.operator("caa.aim_origin_z_to_selected", text="Aim Origin (Z) to Selection")
 
         layout.separator()
         col = layout.column(align=True)
         col.label(text="Cursor")
         col.operator("caa.set_cursor_pos_to_selected", text="Set Cursor Position to Selected Component Position")
         col.operator("caa.set_cursor_rot_to_selected", text="Set Cursor Orientation to Selected Component Orientation")
+        col.operator("caa.aim_cursor_z_to_selected", text="Aim Cursor (Z) to Selection")
         col.operator("caa.reset_cursor_pos_world", text="Reset Cursor Position to World")
         col.operator("caa.reset_cursor_rot_world", text="Reset Cursor Orientation to World")
         col.operator("caa.reset_cursor_pos_to_selected_origin", text="Reset Cursor Position to Selected Object Origin")
@@ -1947,7 +2015,9 @@ CLASSES = (
     CAA_OT_set_origin_rot_to_cursor,
     CAA_OT_set_origin_pos_to_selected,
     CAA_OT_set_origin_rot_to_selected,
+    CAA_OT_aim_origin_z_to_selected,
     CAA_OT_set_cursor_rot_to_selected,
+    CAA_OT_aim_cursor_z_to_selected,
     CAA_OT_set_cursor_pos_to_selected,
     CAA_OT_reset_cursor_rot_world,
     CAA_OT_reset_cursor_pos_world,
