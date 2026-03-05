@@ -84,19 +84,37 @@ def _set_object_origin_orientation_keep_appearance(obj, new_rotation_3x3: Matrix
     if not obj.data or not hasattr(obj.data, "transform"):
         return False, "Active object type does not support data transform"
 
-    m_old = obj.matrix_world.copy()
-    loc = m_old.to_translation()
-    scale = m_old.to_scale()
+    previous_mode = obj.mode
+    switched_mode = False
 
-    m_new_3x3 = new_rotation_3x3.normalized() @ Matrix.Diagonal(scale).to_3x3()
-    m_new = Matrix.Translation(loc) @ m_new_3x3.to_4x4()
+    if previous_mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            switched_mode = True
+        except RuntimeError as ex:
+            return False, str(ex)
 
-    delta_local = m_new.inverted() @ m_old
-    obj.data.transform(delta_local)
-    if hasattr(obj.data, "update"):
-        obj.data.update()
+    try:
+        m_old = obj.matrix_world.copy()
+        loc = m_old.to_translation()
+        scale = m_old.to_scale()
 
-    obj.matrix_world = m_new
+        m_new_3x3 = new_rotation_3x3.normalized() @ Matrix.Diagonal(scale).to_3x3()
+        m_new = Matrix.Translation(loc) @ m_new_3x3.to_4x4()
+
+        delta_local = m_new.inverted() @ m_old
+        obj.data.transform(delta_local)
+        if hasattr(obj.data, "update"):
+            obj.data.update()
+
+        obj.matrix_world = m_new
+    finally:
+        if switched_mode:
+            try:
+                bpy.ops.object.mode_set(mode=previous_mode)
+            except RuntimeError:
+                pass
+
     return True, ""
 
 
