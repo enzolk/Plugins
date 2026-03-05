@@ -1798,6 +1798,7 @@ class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
+        s = _get_settings(scene)
         base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_loc = _cursor_world(scene)
         cur_q = _cursor_world_quat(scene)
