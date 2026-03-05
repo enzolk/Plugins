@@ -301,6 +301,55 @@ class OCT_OT_ResetCursorPositionObject(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class OCT_OT_ResetOriginOrientationWorld(bpy.types.Operator):
+    bl_idname = "oct.reset_origin_orientation_world"
+    bl_label = "Reset Origin Orientation to World Orientation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            self.report({'WARNING'}, "No active object")
+            return {'CANCELLED'}
+
+        ok, msg = _set_object_origin_orientation_keep_appearance(obj, Matrix.Identity(3))
+        if not ok:
+            self.report({'WARNING'}, msg)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
+    bl_idname = "oct.reset_origin_position_selected_bbox"
+    bl_label = "Reset Origin position to selected object bouding Box"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            self.report({'WARNING'}, "No active object")
+            return {'CANCELLED'}
+
+        ref_obj = next((o for o in context.selected_objects if o != obj), None)
+        if ref_obj is None:
+            self.report({'WARNING'}, "Select another object to use its bounding box")
+            return {'CANCELLED'}
+
+        bbox_world = [ref_obj.matrix_world @ Vector(corner) for corner in ref_obj.bound_box]
+        target_pos = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
+
+        cursor = context.scene.cursor
+        previous_cursor_location = cursor.location.copy()
+        cursor.location = target_pos
+        ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
+        cursor.location = previous_cursor_location
+
+        if not ok:
+            self.report({'WARNING'}, msg)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class OCT_OT_AimCursorZ(bpy.types.Operator):
     bl_idname = "oct.aim_cursor_z"
     bl_label = "Aim Cursor (Z)"
@@ -378,6 +427,8 @@ class VIEW3D_PT_OriginCursorToolkit(bpy.types.Panel):
         col.operator("oct.reset_cursor_orientation_world", icon='WORLD')
         col.operator("oct.reset_cursor_position_object", icon='OBJECT_ORIGIN')
         col.operator("oct.reset_cursor_orientation_object", icon='OBJECT_ORIGIN')
+        col.operator("oct.reset_origin_orientation_world", icon='WORLD')
+        col.operator("oct.reset_origin_position_selected_bbox", icon='SHADING_BBOX')
         col.separator()
         col.operator("oct.aim_cursor_z", icon='TRACKING')
         col.operator("oct.aim_origin_z", icon='TRACKING_FORWARDS')
@@ -394,6 +445,8 @@ classes = (
     OCT_OT_ResetCursorPositionWorld,
     OCT_OT_ResetCursorOrientationObject,
     OCT_OT_ResetCursorPositionObject,
+    OCT_OT_ResetOriginOrientationWorld,
+    OCT_OT_ResetOriginPositionSelectedBBox,
     OCT_OT_AimCursorZ,
     OCT_OT_AimOriginZ,
     VIEW3D_PT_OriginCursorToolkit,
