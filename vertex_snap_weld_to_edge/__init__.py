@@ -70,17 +70,19 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
             return {"CANCELLED"}
 
         welded_count = 0
+        world_mx = obj.matrix_world
 
         for src_vert in selected_verts:
             if not src_vert.is_valid:
                 continue
 
-            src_co = src_vert.co.copy()
+            src_co_local = src_vert.co.copy()
+            src_co_world = world_mx @ src_co_local
 
             connected_edges = set(src_vert.link_edges)
             nearest_edge = None
-            nearest_point = None
             nearest_dist = None
+            nearest_t = None
 
             for edge in bm.edges:
                 if edge in connected_edges:
@@ -88,17 +90,20 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
                 if not edge.is_valid:
                     continue
 
-                a = edge.verts[0].co
-                b = edge.verts[1].co
-                point_on_edge, _ = closest_point_on_segment(src_co, a, b)
-                dist = (src_co - point_on_edge).length
+                a_local = edge.verts[0].co
+                b_local = edge.verts[1].co
+                a_world = world_mx @ a_local
+                b_world = world_mx @ b_local
+
+                point_on_edge_world, t = closest_point_on_segment(src_co_world, a_world, b_world)
+                dist = (src_co_world - point_on_edge_world).length
 
                 if nearest_dist is None or dist < nearest_dist:
                     nearest_dist = dist
                     nearest_edge = edge
-                    nearest_point = point_on_edge
+                    nearest_t = t
 
-            if nearest_edge is None or nearest_dist is None:
+            if nearest_edge is None or nearest_dist is None or nearest_t is None:
                 continue
 
             if nearest_dist > max_dist:
@@ -110,6 +115,7 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
                 cuts=1,
                 use_grid_fill=False,
                 smooth=0.0,
+                edge_percents={nearest_edge: nearest_t},
             )
 
             new_verts = [g for g in subdivide_result.get("geom_inner", []) if isinstance(g, bmesh.types.BMVert)]
@@ -118,10 +124,13 @@ class MESH_OT_snap_weld_to_nearest_edge(Operator):
             if not new_verts:
                 continue
 
-            new_vert = min(new_verts, key=lambda v: (v.co - nearest_point).length_squared)
+            a_local = nearest_edge.verts[0].co
+            b_local = nearest_edge.verts[1].co
+            nearest_point_local = a_local.lerp(b_local, nearest_t)
+            new_vert = min(new_verts, key=lambda v: (v.co - nearest_point_local).length_squared)
 
-            # Edge slide-style adjustment: move only the inserted vertex along the split edge.
-            new_vert.co = nearest_point
+            # Keep the inserted point exactly on the projected location on edge.
+            new_vert.co = nearest_point_local
 
             if not src_vert.is_valid:
                 continue
