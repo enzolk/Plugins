@@ -1,10 +1,10 @@
 import bpy
 
 
-class VIEW3D_OT_set_global_transform(bpy.types.Operator):
-    bl_idname = "view3d.set_global_transform"
-    bl_label = "Transform Global"
-    bl_description = "Set Transform Orientation to Global and Pivot Point to Individual Origins"
+class VIEW3D_OT_set_local_transform(bpy.types.Operator):
+    bl_idname = "view3d.set_local_transform"
+    bl_label = "Transform Local"
+    bl_description = "Set Transform Orientation to Local and Pivot Point to Individual Origins"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -13,12 +13,12 @@ class VIEW3D_OT_set_global_transform(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        scene.transform_orientation_slots[0].type = 'GLOBAL'
+        scene.transform_orientation_slots[0].type = 'LOCAL'
         scene.tool_settings.transform_pivot_point = 'INDIVIDUAL_ORIGINS'
         return {'FINISHED'}
 
 
-classes = (VIEW3D_OT_set_global_transform,)
+classes = (VIEW3D_OT_set_local_transform,)
 
 
 def register():

@@ -4,13 +4,13 @@ bl_info = {
     "version": (1, 0, 0),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Edit > Transform shortcut",
-    "description": "Quick buttons for cursor/global transform orientation and pivot",
+    "description": "Quick buttons for cursor/global/local transform orientation and pivot",
     "category": "3D View",
 }
 
 import bpy
 
-from . import transform_cursor, transform_global
+from . import transform_cursor, transform_global, transform_local
 
 
 class VIEW3D_PT_transform_shortcuts(bpy.types.Panel):
@@ -34,6 +34,12 @@ class VIEW3D_PT_transform_shortcuts(bpy.types.Panel):
             icon='ORIENTATION_GLOBAL',
         )
 
+        col.operator(
+            transform_local.VIEW3D_OT_set_local_transform.bl_idname,
+            text="Transform Local",
+            icon='ORIENTATION_LOCAL',
+        )
+
 
 classes = (VIEW3D_PT_transform_shortcuts,)
 
@@ -41,6 +47,7 @@ classes = (VIEW3D_PT_transform_shortcuts,)
 def register():
     transform_cursor.register()
     transform_global.register()
+    transform_local.register()
     for cls in classes:
         bpy.utils.register_class(cls)
 
@@ -48,5 +55,6 @@ def register():
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
+    transform_local.unregister()
     transform_global.unregister()
     transform_cursor.unregister()
