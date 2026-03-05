@@ -1467,20 +1467,9 @@ def _resolve_origin_base_and_current(context):
 
     base_pos, base_q, source_obj = _get_attachment_component_transform(scene, depsgraph)
     if base_pos is None or base_q is None:
-        sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
-        if sel_loc is not None and sel_rot is not None:
-            basis = sel_rot.to_matrix()
-            current_origin_pos = sel_loc + (basis @ _get_pos_offset(scene))
-            if s and s.follow_rotation:
-                current_origin_q = _safe_quat(sel_rot @ _get_rot_offset(scene))
-            else:
-                current_origin_q = _get_rot_offset(scene)
-            _log_debug(scene, f"Origin tools fallback to selected transform ({sel_obj.name}).")
-            return sel_loc, sel_rot, current_origin_pos, current_origin_q, sel_obj, "SELECTION"
-
         cur_loc = _cursor_world(scene)
         cur_q = _cursor_world_quat(scene)
-        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment/selection transform found).")
+        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment transform found).")
         return cur_loc, cur_q, cur_loc, cur_q, None, "CURSOR"
 
     basis = base_q.to_matrix()
