@@ -1479,10 +1479,14 @@ def _resolve_origin_base_and_current(context, prefer_selection_fallback=True):
                 _log_debug(scene, f"Origin tools fallback to selected transform ({sel_obj.name}).")
                 return sel_loc, sel_rot, current_origin_pos, current_origin_q, sel_obj, "SELECTION"
 
-        cur_loc = _cursor_world(scene)
-        cur_q = _cursor_world_quat(scene)
-        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment/selection transform found).")
-        return cur_loc, cur_q, cur_loc, cur_q, None, "CURSOR"
+        # Detached mode: keep a persistent world-space virtual origin when neither
+        # attachment nor selection reference is available.
+        base_pos = Vector((0.0, 0.0, 0.0))
+        base_q = Quaternion((1.0, 0.0, 0.0, 0.0))
+        current_origin_pos = _get_pos_offset(scene)
+        current_origin_q = _safe_quat(_get_rot_offset(scene))
+        _log_debug(scene, "Origin tools fallback to detached origin frame (no attachment/selection transform found).")
+        return base_pos, base_q, current_origin_pos, current_origin_q, None, "DETACHED"
 
     basis = base_q.to_matrix()
     current_origin_pos = base_pos + (basis @ _get_pos_offset(scene))
@@ -1784,7 +1788,7 @@ class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=False)
+        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_loc = _cursor_world(scene)
         pos_off_local = base_q.conjugated() @ (cur_loc - base_pos)
         _set_pos_offset(scene, pos_off_local)
@@ -1801,7 +1805,7 @@ class CAA_OT_set_origin_rot_to_cursor(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=False)
+        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_q = _cursor_world_quat(scene)
         if s and s.follow_rotation:
             rot_off = base_q.conjugated() @ cur_q
