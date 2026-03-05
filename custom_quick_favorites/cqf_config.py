@@ -335,6 +335,8 @@ def prefs_to_dict(prefs) -> dict:
                     "type": (it.type or "OP"),
                     "text": (it.text or ""),
                     "tooltip": (it.tooltip or ""),
+                    "icon_name": (getattr(it, "icon_name", "") or ""),
+                    "icon_value": int(getattr(it, "icon_value", 0) or 0),
 
                     "op_idname": (it.op_idname or ""),
                     "op_expr": (it.op_expr or ""),
@@ -528,6 +530,10 @@ def dict_to_prefs(prefs, data: dict):
                         it.type = str(itdata.get("type", "OP"))
                         it.text = str(itdata.get("text", ""))
                         it.tooltip = str(itdata.get("tooltip", ""))
+                        if hasattr(it, "icon_name"):
+                            it.icon_name = str(itdata.get("icon_name", ""))
+                        if hasattr(it, "icon_value"):
+                            it.icon_value = max(0, int(itdata.get("icon_value", 0) or 0))
 
                         it.op_idname = str(itdata.get("op_idname", ""))
                         it.op_expr = str(itdata.get("op_expr", ""))

@@ -9,6 +9,7 @@ from .cqf_ops_helpers import (
     try_copy_python_command_button,
     op_idname_from_button_operator,
     build_op_expr_from_keymap_item,
+    extract_button_icon,
     remove_capture_combo_everywhere,
     find_capture_combo_kmi,
 )
@@ -218,6 +219,26 @@ def _friendly_label_and_tooltip_for_property(owner_expr: str, prop_id: str):
         return (label, pdesc)
     except Exception:
         return (prop_id or "Property", "")
+
+
+def _item_icon_args(it):
+    icon_name = (getattr(it, "icon_name", "") or "").strip()
+    icon_value = int(getattr(it, "icon_value", 0) or 0)
+
+    if icon_value > 0:
+        return {"icon_value": icon_value}
+    if icon_name:
+        return {"icon": icon_name}
+
+    if it.type == "OP":
+        return {"icon": "PLAY"}
+    if it.type == "MENU":
+        return {"icon": "MENU_PANEL"}
+    if it.type == "PROP":
+        return {"icon": "CHECKBOX_HLT"}
+    if it.type == "SCRIPT":
+        return {"icon": "FILE_SCRIPT"}
+    return {"icon": "DOT"}
 
 
 # -----------------------------------------------------------------------------
@@ -714,6 +735,7 @@ class CQF_OT_AddFromButtonContext(Operator):
         op_expr = try_copy_python_command_button(context)
         button_op = getattr(context, "button_operator", None)
         op_id = op_idname_from_button_operator(button_op) or ""
+        button_icon_name, button_icon_value = extract_button_icon(context)
 
         if (not op_id) and op_expr:
             op_id = _op_id_from_expr(op_expr)
@@ -726,6 +748,8 @@ class CQF_OT_AddFromButtonContext(Operator):
 
             it.text = _friendly_label_for_operator(op_id, fallback=(op_id or "Operator"))
             it.tooltip = _friendly_tooltip_for_operator(op_id)
+            it.icon_name = button_icon_name
+            it.icon_value = button_icon_value
 
             sec.active_item_index = len(sec.items) - 1
             save_config_now()
@@ -776,6 +800,9 @@ class CQF_OT_AddFromButtonContext(Operator):
                 lab, tip = _friendly_label_and_tooltip_for_property(owner_expr, prop_id)
                 it.text = lab
                 it.tooltip = tip
+
+                it.icon_name = button_icon_name
+                it.icon_value = button_icon_value
 
                 if owner is not None and hasattr(owner, prop_id):
                     act, val = guess_prop_action_and_value(owner, prop_id)
@@ -1119,17 +1146,10 @@ class CQF_MT_FavoritesMenu(Menu):
                     else:
                         label = (f"{it.owner_expr}.{it.prop_id}" if it.owner_expr else it.prop_id).strip() or "Property"
 
-                icon = "DOT"
-                if it.type == "OP":
-                    icon = "PLAY"
-                elif it.type == "MENU":
-                    icon = "MENU_PANEL"
-                elif it.type == "PROP":
-                    icon = "CHECKBOX_HLT"
-                elif it.type == "SCRIPT":
-                    icon = "FILE_SCRIPT"
-
-                op = col.operator("cqf.run_item", text=label, icon=icon)
+                try:
+                    op = col.operator("cqf.run_item", text=label, **_item_icon_args(it))
+                except Exception:
+                    op = col.operator("cqf.run_item", text=label, icon="DOT")
                 op.mode_key = mode_cfg.mode_key
                 op.section_index = si
                 op.item_index = ii

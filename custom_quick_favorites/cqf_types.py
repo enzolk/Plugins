@@ -38,6 +38,8 @@ class CQF_Item(PropertyGroup):
 
     text: StringProperty(name="Button Text", default="", update=_prefs_update_cb)
     tooltip: StringProperty(name="Tooltip", default="", update=_prefs_update_cb)
+    icon_name: StringProperty(name="Icon Name", default="", update=_prefs_update_cb)
+    icon_value: IntProperty(name="Icon Value", default=0, min=0, update=_prefs_update_cb)
 
     op_idname: StringProperty(name="Operator idname", default="", update=_prefs_update_cb)
     op_expr: StringProperty(name="Operator full python expr", default="", update=_prefs_update_cb)
