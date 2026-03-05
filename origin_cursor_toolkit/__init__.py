@@ -190,8 +190,12 @@ class OCT_OT_OriginPositionToComponent(bpy.types.Operator):
             self.report({'WARNING'}, "No component selection found")
             return {'CANCELLED'}
 
-        context.scene.cursor.location = pos
+        cursor = context.scene.cursor
+        previous_cursor_location = cursor.location.copy()
+
+        cursor.location = pos
         ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
+        cursor.location = previous_cursor_location
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
