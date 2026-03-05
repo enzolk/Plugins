@@ -1481,7 +1481,7 @@ def _resolve_origin_base_and_current(context, prefer_selection_fallback=True):
 
         cur_loc = _cursor_world(scene)
         cur_q = _cursor_world_quat(scene)
-        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment transform found).")
+        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment/selection transform found).")
         return cur_loc, cur_q, cur_loc, cur_q, None, "CURSOR"
 
     basis = base_q.to_matrix()
