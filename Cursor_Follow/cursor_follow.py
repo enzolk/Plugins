@@ -1459,7 +1459,7 @@ def _resolve_origin_reference(context):
     return _cursor_world(scene), _cursor_world_quat(scene), None, "CURSOR"
 
 
-def _resolve_origin_base_and_current(context):
+def _resolve_origin_base_and_current(context, prefer_selection_fallback=True):
     """Return base transform and current virtual origin transform used by origin tools."""
     scene = context.scene
     s = _get_settings(scene)
@@ -1467,10 +1467,26 @@ def _resolve_origin_base_and_current(context):
 
     base_pos, base_q, source_obj = _get_attachment_component_transform(scene, depsgraph)
     if base_pos is None or base_q is None:
-        cur_loc = _cursor_world(scene)
-        cur_q = _cursor_world_quat(scene)
-        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment transform found).")
-        return cur_loc, cur_q, cur_loc, cur_q, None, "CURSOR"
+        if prefer_selection_fallback:
+            sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
+            if sel_loc is not None and sel_rot is not None:
+                basis = sel_rot.to_matrix()
+                current_origin_pos = sel_loc + (basis @ _get_pos_offset(scene))
+                if s and s.follow_rotation:
+                    current_origin_q = _safe_quat(sel_rot @ _get_rot_offset(scene))
+                else:
+                    current_origin_q = _get_rot_offset(scene)
+                _log_debug(scene, f"Origin tools fallback to selected transform ({sel_obj.name}).")
+                return sel_loc, sel_rot, current_origin_pos, current_origin_q, sel_obj, "SELECTION"
+
+        # Detached mode: keep a persistent world-space virtual origin when neither
+        # attachment nor selection reference is available.
+        base_pos = Vector((0.0, 0.0, 0.0))
+        base_q = Quaternion((1.0, 0.0, 0.0, 0.0))
+        current_origin_pos = _get_pos_offset(scene)
+        current_origin_q = _safe_quat(_get_rot_offset(scene))
+        _log_debug(scene, "Origin tools fallback to detached origin frame (no attachment/selection transform found).")
+        return base_pos, base_q, current_origin_pos, current_origin_q, None, "DETACHED"
 
     basis = base_q.to_matrix()
     current_origin_pos = base_pos + (basis @ _get_pos_offset(scene))
@@ -1772,7 +1788,7 @@ class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context)
+        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_loc = _cursor_world(scene)
         pos_off_local = base_q.conjugated() @ (cur_loc - base_pos)
         _set_pos_offset(scene, pos_off_local)
@@ -1789,7 +1805,7 @@ class CAA_OT_set_origin_rot_to_cursor(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context)
+        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_q = _cursor_world_quat(scene)
         if s and s.follow_rotation:
             rot_off = base_q.conjugated() @ cur_q
