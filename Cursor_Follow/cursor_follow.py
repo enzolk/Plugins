@@ -10,6 +10,7 @@ bl_info = {
 
 import bpy
 import bmesh
+import math
 from bpy.props import (
     BoolProperty,
     StringProperty,
@@ -421,6 +422,15 @@ def _log_debug(scene, msg: str):
     except Exception:
         pass
     print(f"[CursorAutoAttach][{scn_name}] {msg}")
+
+
+def _fmt_vec(v: Vector, ndigits: int = 6):
+    return tuple(round(float(c), ndigits) for c in (v.x, v.y, v.z))
+
+
+def _fmt_quat(q: Quaternion, ndigits: int = 6):
+    qq = _safe_quat(q)
+    return tuple(round(float(c), ndigits) for c in (qq.w, qq.x, qq.y, qq.z))
 
 
 def _find_object(scene, name: str):
@@ -1459,7 +1469,7 @@ def _resolve_origin_reference(context):
     return _cursor_world(scene), _cursor_world_quat(scene), None, "CURSOR"
 
 
-def _resolve_origin_base_and_current(context):
+def _resolve_origin_base_and_current(context, prefer_selection_fallback=True):
     """Return base transform and current virtual origin transform used by origin tools."""
     scene = context.scene
     s = _get_settings(scene)
@@ -1467,10 +1477,26 @@ def _resolve_origin_base_and_current(context):
 
     base_pos, base_q, source_obj = _get_attachment_component_transform(scene, depsgraph)
     if base_pos is None or base_q is None:
-        cur_loc = _cursor_world(scene)
-        cur_q = _cursor_world_quat(scene)
-        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment transform found).")
-        return cur_loc, cur_q, cur_loc, cur_q, None, "CURSOR"
+        if prefer_selection_fallback:
+            sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
+            if sel_loc is not None and sel_rot is not None:
+                basis = sel_rot.to_matrix()
+                current_origin_pos = sel_loc + (basis @ _get_pos_offset(scene))
+                if s and s.follow_rotation:
+                    current_origin_q = _safe_quat(sel_rot @ _get_rot_offset(scene))
+                else:
+                    current_origin_q = _get_rot_offset(scene)
+                _log_debug(scene, f"Origin tools fallback to selected transform ({sel_obj.name}).")
+                return sel_loc, sel_rot, current_origin_pos, current_origin_q, sel_obj, "SELECTION"
+
+        # Detached mode: keep a persistent world-space virtual origin when neither
+        # attachment nor selection reference is available.
+        base_pos = Vector((0.0, 0.0, 0.0))
+        base_q = Quaternion((1.0, 0.0, 0.0, 0.0))
+        current_origin_pos = _get_pos_offset(scene)
+        current_origin_q = _safe_quat(_get_rot_offset(scene))
+        _log_debug(scene, "Origin tools fallback to detached origin frame (no attachment/selection transform found).")
+        return base_pos, base_q, current_origin_pos, current_origin_q, None, "DETACHED"
 
     basis = base_q.to_matrix()
     current_origin_pos = base_pos + (basis @ _get_pos_offset(scene))
@@ -1772,12 +1798,24 @@ class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context)
+        s = _get_settings(scene)
+        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_loc = _cursor_world(scene)
+        cur_q = _cursor_world_quat(scene)
+
         pos_off_local = base_q.conjugated() @ (cur_loc - base_pos)
         _set_pos_offset(scene, pos_off_local)
+
+        basis = base_q.to_matrix()
+        resolved_origin_pos = base_pos + (basis @ _get_pos_offset(scene))
+        pos_delta = cur_loc - resolved_origin_pos
+
         src_name = origin_obj.name if origin_obj else source
-        _log_debug(scene, f"Set origin position to cursor. source={src_name}, pos_off={tuple(round(v, 6) for v in pos_off_local)}")
+        _log_debug(scene, f"Set origin position to cursor. source={src_name}, pos_off_local={_fmt_vec(pos_off_local)}")
+        _log_debug(scene, f"Origin pos debug: cursor_loc={_fmt_vec(cur_loc)}, cursor_rot={_fmt_quat(cur_q)}")
+        _log_debug(scene, f"Origin pos debug: base_pos={_fmt_vec(base_pos)}, base_rot={_fmt_quat(base_q)}, follow_rotation={bool(s and s.follow_rotation)}")
+        _log_debug(scene, f"Origin pos debug: resolved_origin_pos={_fmt_vec(resolved_origin_pos)}, delta_to_cursor={_fmt_vec(pos_delta)}")
+
         _set_status(scene, f"Origin position set to cursor position ({src_name}).")
         return {'FINISHED'}
 
@@ -1789,15 +1827,25 @@ class CAA_OT_set_origin_rot_to_cursor(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context)
+        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context, prefer_selection_fallback=True)
         cur_q = _cursor_world_quat(scene)
         if s and s.follow_rotation:
             rot_off = base_q.conjugated() @ cur_q
         else:
             rot_off = cur_q
         _set_rot_offset(scene, rot_off)
+
+        if s and s.follow_rotation:
+            resolved_origin_q = _safe_quat(base_q @ _get_rot_offset(scene))
+        else:
+            resolved_origin_q = _safe_quat(_get_rot_offset(scene))
+        rot_delta = resolved_origin_q.rotation_difference(_safe_quat(cur_q))
+
         src_name = origin_obj.name if origin_obj else source
         _log_debug(scene, f"Set origin orientation to cursor. source={src_name}, follow_rotation={bool(s and s.follow_rotation)}")
+        _log_debug(scene, f"Origin rot debug: cursor_rot={_fmt_quat(cur_q)}, base_rot={_fmt_quat(base_q)}, rot_off={_fmt_quat(rot_off)}")
+        _log_debug(scene, f"Origin rot debug: resolved_origin_rot={_fmt_quat(resolved_origin_q)}, delta_angle_deg={round(math.degrees(rot_delta.angle), 6)}")
+
         _set_status(scene, f"Origin orientation set to cursor orientation ({src_name}).")
         return {'FINISHED'}
 
