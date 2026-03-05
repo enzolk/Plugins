@@ -100,16 +100,44 @@ def _set_object_origin_orientation_keep_appearance(obj, new_rotation_3x3: Matrix
     return True, ""
 
 
+def _set_origin_to_cursor_allow_edit_mode(context):
+    obj = context.active_object
+    if not obj:
+        return False, "No active object"
+
+    previous_mode = obj.mode
+    switched_mode = False
+
+    if previous_mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            switched_mode = True
+        except RuntimeError as ex:
+            return False, str(ex)
+
+    try:
+        bpy.ops.object.origin_set(type='ORIGIN_CURSOR', center='MEDIAN')
+    except RuntimeError as ex:
+        return False, str(ex)
+    finally:
+        if switched_mode:
+            try:
+                bpy.ops.object.mode_set(mode=previous_mode)
+            except RuntimeError:
+                pass
+
+    return True, ""
+
+
 class OCT_OT_OriginPositionToCursor(bpy.types.Operator):
     bl_idname = "oct.origin_position_to_cursor"
     bl_label = "Origin Position to Cursor Position"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        try:
-            bpy.ops.object.origin_set(type='ORIGIN_CURSOR', center='MEDIAN')
-        except RuntimeError as ex:
-            self.report({'WARNING'}, str(ex))
+        ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
+        if not ok:
+            self.report({'WARNING'}, msg)
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -145,10 +173,9 @@ class OCT_OT_OriginPositionToComponent(bpy.types.Operator):
             return {'CANCELLED'}
 
         context.scene.cursor.location = pos
-        try:
-            bpy.ops.object.origin_set(type='ORIGIN_CURSOR', center='MEDIAN')
-        except RuntimeError as ex:
-            self.report({'WARNING'}, str(ex))
+        ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
+        if not ok:
+            self.report({'WARNING'}, msg)
             return {'CANCELLED'}
         return {'FINISHED'}
 
