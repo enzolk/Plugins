@@ -413,16 +413,6 @@ def _set_status(scene, msg: str):
         s.status = msg or ""
 
 
-def _log_debug(scene, msg: str):
-    """Minimal debug logger for operator diagnostics."""
-    scn_name = "?"
-    try:
-        scn_name = scene.name
-    except Exception:
-        pass
-    print(f"[CursorAutoAttach][{scn_name}] {msg}")
-
-
 def _find_object(scene, name: str):
     if not name:
         return None
@@ -1459,29 +1449,6 @@ def _resolve_origin_reference(context):
     return _cursor_world(scene), _cursor_world_quat(scene), None, "CURSOR"
 
 
-def _resolve_origin_base_and_current(context):
-    """Return base transform and current virtual origin transform used by origin tools."""
-    scene = context.scene
-    s = _get_settings(scene)
-    depsgraph = context.evaluated_depsgraph_get()
-
-    base_pos, base_q, source_obj = _get_attachment_component_transform(scene, depsgraph)
-    if base_pos is None or base_q is None:
-        cur_loc = _cursor_world(scene)
-        cur_q = _cursor_world_quat(scene)
-        _log_debug(scene, "Origin tools fallback to cursor frame (no attachment transform found).")
-        return cur_loc, cur_q, cur_loc, cur_q, None, "CURSOR"
-
-    basis = base_q.to_matrix()
-    current_origin_pos = base_pos + (basis @ _get_pos_offset(scene))
-    if s and s.follow_rotation:
-        current_origin_q = _safe_quat(base_q @ _get_rot_offset(scene))
-    else:
-        current_origin_q = _get_rot_offset(scene)
-
-    return base_pos, base_q, current_origin_pos, current_origin_q, source_obj, "ATTACHMENT"
-
-
 def _aim_z_quaternion(origin_world: Vector, target_world: Vector, x_hint: Vector = None):
     """Return a quaternion where Z axis points from origin to target."""
     aim_vec = target_world - origin_world
@@ -1491,18 +1458,10 @@ def _aim_z_quaternion(origin_world: Vector, target_world: Vector, x_hint: Vector
     z_axis = _safe_normalize(aim_vec, Vector((0.0, 0.0, 1.0)))
     if x_hint is None:
         x_hint = Vector((1.0, 0.0, 0.0))
+        if abs(x_hint.dot(z_axis)) > 0.98:
+            x_hint = Vector((0.0, 1.0, 0.0))
 
-    x_axis = x_hint - z_axis * x_hint.dot(z_axis)
-    if x_axis.length_squared < _EPS:
-        fallback = Vector((1.0, 0.0, 0.0))
-        if abs(fallback.dot(z_axis)) > 0.98:
-            fallback = Vector((0.0, 1.0, 0.0))
-        x_axis = fallback - z_axis * fallback.dot(z_axis)
-
-    x_axis = _safe_normalize(x_axis, Vector((1.0, 0.0, 0.0)))
-    y_axis = _safe_normalize(z_axis.cross(x_axis), Vector((0.0, 1.0, 0.0)))
-    x_axis = _safe_normalize(y_axis.cross(z_axis), Vector((1.0, 0.0, 0.0)))
-    basis = Matrix((x_axis, y_axis, z_axis)).transposed()
+    basis = _make_orthonormal_basis(x_hint, z_axis, z_axis)
     return _basis_to_quat(basis)
 
 
@@ -1772,12 +1731,11 @@ class CAA_OT_set_origin_pos_to_cursor(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context)
+        origin_pos, origin_q, origin_obj, source = _resolve_origin_reference(context)
         cur_loc = _cursor_world(scene)
-        pos_off_local = base_q.conjugated() @ (cur_loc - base_pos)
+        pos_off_local = origin_q.conjugated() @ (cur_loc - origin_pos)
         _set_pos_offset(scene, pos_off_local)
         src_name = origin_obj.name if origin_obj else source
-        _log_debug(scene, f"Set origin position to cursor. source={src_name}, pos_off={tuple(round(v, 6) for v in pos_off_local)}")
         _set_status(scene, f"Origin position set to cursor position ({src_name}).")
         return {'FINISHED'}
 
@@ -1789,15 +1747,13 @@ class CAA_OT_set_origin_rot_to_cursor(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _base_pos, base_q, _origin_pos, _origin_q, origin_obj, source = _resolve_origin_base_and_current(context)
+        _origin_pos, origin_q, origin_obj, source = _resolve_origin_reference(context)
         cur_q = _cursor_world_quat(scene)
         if s and s.follow_rotation:
-            rot_off = base_q.conjugated() @ cur_q
+            _set_rot_offset(scene, origin_q.conjugated() @ cur_q)
         else:
-            rot_off = cur_q
-        _set_rot_offset(scene, rot_off)
+            _set_rot_offset(scene, cur_q)
         src_name = origin_obj.name if origin_obj else source
-        _log_debug(scene, f"Set origin orientation to cursor. source={src_name}, follow_rotation={bool(s and s.follow_rotation)}")
         _set_status(scene, f"Origin orientation set to cursor orientation ({src_name}).")
         return {'FINISHED'}
 
@@ -1808,15 +1764,13 @@ class CAA_OT_set_origin_pos_to_selected(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        base_pos, base_q, _origin_pos, _origin_q, _origin_obj, _source = _resolve_origin_base_and_current(context)
+        origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
         sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
         if sel_loc is None:
-            _log_debug(scene, "Set origin position from selection failed: no selected component/object.")
             self.report({'WARNING'}, "No selected component/object.")
             return {'CANCELLED'}
-        pos_off_local = base_q.conjugated() @ (sel_loc - base_pos)
+        pos_off_local = origin_q.conjugated() @ (sel_loc - origin_pos)
         _set_pos_offset(scene, pos_off_local)
-        _log_debug(scene, f"Set origin position from selection. selected={sel_obj.name}, pos_off={tuple(round(v, 6) for v in pos_off_local)}")
         _set_status(scene, f"Origin position set from selection ({sel_obj.name}).")
         return {'FINISHED'}
 
@@ -1828,18 +1782,15 @@ class CAA_OT_set_origin_rot_to_selected(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _base_pos, base_q, _origin_pos, _origin_q, _origin_obj, _source = _resolve_origin_base_and_current(context)
+        _origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
         _sel_loc, sel_rot, sel_obj = _selected_component_transform(context)
         if sel_rot is None:
-            _log_debug(scene, "Set origin orientation from selection failed: no selected component/object.")
             self.report({'WARNING'}, "No selected component/object.")
             return {'CANCELLED'}
         if s and s.follow_rotation:
-            rot_off = base_q.conjugated() @ sel_rot
+            _set_rot_offset(scene, origin_q.conjugated() @ sel_rot)
         else:
-            rot_off = sel_rot
-        _set_rot_offset(scene, rot_off)
-        _log_debug(scene, f"Set origin orientation from selection. selected={sel_obj.name}, follow_rotation={bool(s and s.follow_rotation)}")
+            _set_rot_offset(scene, sel_rot)
         _set_status(scene, f"Origin orientation set from selection ({sel_obj.name}).")
         return {'FINISHED'}
 
@@ -1851,26 +1802,22 @@ class CAA_OT_aim_origin_z_to_selected(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         s = _get_settings(scene)
-        _base_pos, base_q, origin_pos, origin_q, _origin_obj, _source = _resolve_origin_base_and_current(context)
+        origin_pos, origin_q, _origin_obj, _source = _resolve_origin_reference(context)
         sel_loc, _sel_rot, sel_obj = _selected_component_transform(context)
         if sel_loc is None:
-            _log_debug(scene, "Aim origin Z failed: no selected component/object.")
             self.report({'WARNING'}, "No selected component/object.")
             return {'CANCELLED'}
 
         x_hint = origin_q.to_matrix().col[0].xyz.copy()
         aimed_q = _aim_z_quaternion(origin_pos, sel_loc, x_hint)
         if aimed_q is None:
-            _log_debug(scene, "Aim origin Z cancelled: origin and selection are coincident.")
             self.report({'WARNING'}, "Origin is already at selection.")
             return {'CANCELLED'}
 
         if s and s.follow_rotation:
-            rot_off = base_q.conjugated() @ aimed_q
+            _set_rot_offset(scene, origin_q.conjugated() @ aimed_q)
         else:
-            rot_off = aimed_q
-        _set_rot_offset(scene, rot_off)
-        _log_debug(scene, f"Aim origin Z to selection. selected={sel_obj.name}, follow_rotation={bool(s and s.follow_rotation)}")
+            _set_rot_offset(scene, aimed_q)
         _set_status(scene, f"Origin Z aimed to selection ({sel_obj.name}).")
         return {'FINISHED'}
 
