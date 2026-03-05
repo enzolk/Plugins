@@ -222,6 +222,31 @@ def is_capture_combo(kmi):
         return False
 
 
+def extract_button_icon(context):
+    """
+    Best-effort icon extraction from the current UI button context.
+    Returns (icon_name, icon_value).
+    """
+    icon_name = ""
+    icon_value = 0
+
+    try:
+        raw_name = getattr(context, "button_icon", "")
+        if raw_name:
+            icon_name = str(raw_name)
+    except Exception:
+        pass
+
+    try:
+        raw_val = getattr(context, "button_icon_value", 0)
+        if raw_val:
+            icon_value = max(0, int(raw_val))
+    except Exception:
+        pass
+
+    return icon_name, icon_value
+
+
 def _remove_capture_combo_from_keyconfig(kc):
     removed = 0
     if not kc:
