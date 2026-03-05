@@ -231,16 +231,31 @@ def extract_button_icon(context):
     icon_value = 0
 
     try:
-        raw_name = getattr(context, "button_icon", "")
-        if raw_name:
-            icon_name = str(raw_name)
+        raw_val = getattr(context, "button_icon_value", 0)
+        if raw_val:
+            icon_value = max(0, int(raw_val))
     except Exception:
         pass
 
     try:
-        raw_val = getattr(context, "button_icon_value", 0)
-        if raw_val:
-            icon_value = max(0, int(raw_val))
+        raw_icon = getattr(context, "button_icon", "")
+
+        # Blender can expose the icon as either a symbolic enum name
+        # (e.g. "OUTLINER_OB_MESH") or a numeric id depending on context.
+        # If it's numeric, keep it as icon_value so UI drawing resolves it.
+        if isinstance(raw_icon, int):
+            if raw_icon > 0 and icon_value <= 0:
+                icon_value = int(raw_icon)
+        elif raw_icon:
+            as_text = str(raw_icon).strip()
+
+            # Some contexts return numbers as text ("101").
+            if as_text.isdigit():
+                maybe_icon_value = int(as_text)
+                if maybe_icon_value > 0 and icon_value <= 0:
+                    icon_value = maybe_icon_value
+            elif as_text not in {"NONE", "0"}:
+                icon_name = as_text
     except Exception:
         pass
 
