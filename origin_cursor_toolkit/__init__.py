@@ -301,50 +301,6 @@ class OCT_OT_ResetCursorPositionObject(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class OCT_OT_ResetOriginOrientationWorld(bpy.types.Operator):
-    bl_idname = "oct.reset_origin_orientation_world"
-    bl_label = "Reset Origin Orientation to World Orientation"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
-        ok, msg = _set_object_origin_orientation_keep_appearance(obj, Matrix.Identity(3))
-        if not ok:
-            self.report({'WARNING'}, msg)
-            return {'CANCELLED'}
-        return {'FINISHED'}
-
-
-class OCT_OT_ResetOriginOrientationSelectedBBox(bpy.types.Operator):
-    bl_idname = "oct.reset_origin_orientation_selected_bbox"
-    bl_label = "Reset Origin Orientation to selected object bouding Box"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
-        selected = context.selected_objects
-        if not selected:
-            self.report({'WARNING'}, "No selected object")
-            return {'CANCELLED'}
-
-        ref_obj = next((o for o in selected if o != obj), obj)
-        ref_rot = ref_obj.matrix_world.to_3x3().normalized()
-
-        ok, msg = _set_object_origin_orientation_keep_appearance(obj, ref_rot)
-        if not ok:
-            self.report({'WARNING'}, msg)
-            return {'CANCELLED'}
-        return {'FINISHED'}
-
-
 class OCT_OT_AimCursorZ(bpy.types.Operator):
     bl_idname = "oct.aim_cursor_z"
     bl_label = "Aim Cursor (Z)"
@@ -422,8 +378,6 @@ class VIEW3D_PT_OriginCursorToolkit(bpy.types.Panel):
         col.operator("oct.reset_cursor_orientation_world", icon='WORLD')
         col.operator("oct.reset_cursor_position_object", icon='OBJECT_ORIGIN')
         col.operator("oct.reset_cursor_orientation_object", icon='OBJECT_ORIGIN')
-        col.operator("oct.reset_origin_orientation_world", icon='WORLD')
-        col.operator("oct.reset_origin_orientation_selected_bbox", icon='SHADING_BBOX')
         col.separator()
         col.operator("oct.aim_cursor_z", icon='TRACKING')
         col.operator("oct.aim_origin_z", icon='TRACKING_FORWARDS')
@@ -440,8 +394,6 @@ classes = (
     OCT_OT_ResetCursorPositionWorld,
     OCT_OT_ResetCursorOrientationObject,
     OCT_OT_ResetCursorPositionObject,
-    OCT_OT_ResetOriginOrientationWorld,
-    OCT_OT_ResetOriginOrientationSelectedBBox,
     OCT_OT_AimCursorZ,
     OCT_OT_AimOriginZ,
     VIEW3D_PT_OriginCursorToolkit,
