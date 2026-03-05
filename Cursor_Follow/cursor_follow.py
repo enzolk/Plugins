@@ -29,6 +29,7 @@ from mathutils import geometry
 
 _HANDLER_TAG = "CURSOR_AUTO_ATTACH_HANDLER"
 _TIMER_TAG = "CURSOR_AUTO_ATTACH_TIMER"
+_UNDO_REDO_TAG = "CURSOR_AUTO_ATTACH_UNDO_REDO"
 
 _EPS = 1e-12
 
@@ -283,8 +284,21 @@ def _cursor_inside_object_bbox_world(obj, depsgraph, cursor_world: Vector, margi
 def _ensure_handler_registered():
     for fn in bpy.app.handlers.depsgraph_update_post:
         if getattr(fn, "__name__", "") == _HANDLER_TAG:
-            return
-    bpy.app.handlers.depsgraph_update_post.append(_depsgraph_handler)
+            break
+    else:
+        bpy.app.handlers.depsgraph_update_post.append(_depsgraph_handler)
+
+    for fn in bpy.app.handlers.undo_post:
+        if getattr(fn, "__name__", "") == _UNDO_REDO_TAG:
+            break
+    else:
+        bpy.app.handlers.undo_post.append(_undo_redo_handler)
+
+    for fn in bpy.app.handlers.redo_post:
+        if getattr(fn, "__name__", "") == _UNDO_REDO_TAG:
+            break
+    else:
+        bpy.app.handlers.redo_post.append(_undo_redo_handler)
 
 
 def _ensure_handler_unregistered():
@@ -294,6 +308,58 @@ def _ensure_handler_unregistered():
             to_remove.append(fn)
     for fn in to_remove:
         bpy.app.handlers.depsgraph_update_post.remove(fn)
+
+    to_remove = []
+    for fn in bpy.app.handlers.undo_post:
+        if getattr(fn, "__name__", "") == _UNDO_REDO_TAG:
+            to_remove.append(fn)
+    for fn in to_remove:
+        bpy.app.handlers.undo_post.remove(fn)
+
+    to_remove = []
+    for fn in bpy.app.handlers.redo_post:
+        if getattr(fn, "__name__", "") == _UNDO_REDO_TAG:
+            to_remove.append(fn)
+    for fn in to_remove:
+        bpy.app.handlers.redo_post.remove(fn)
+
+
+def _undo_redo_handler(_dummy=None):
+    _undo_redo_handler.__name__ = _UNDO_REDO_TAG
+
+    for scene in bpy.data.scenes:
+        s = _get_settings(scene)
+        if not s or not s.auto_attach:
+            continue
+
+        if not _has_attachment(scene):
+            continue
+
+        obj = _find_object(scene, s.object_name)
+        if not obj or obj.type != "MESH":
+            continue
+
+        mode, payload = _get_mesh_access_for_follow(obj, None)
+        if mode == "NONE" or not payload:
+            continue
+
+        try:
+            if mode == "EDIT":
+                bm = payload
+                comp_point_world = _compute_comp_point_world_from_attachment(s, obj, bm, "EDIT")
+                comp_q = _component_world_quat_from_data(s, obj, bm, "EDIT")
+            else:
+                obj_like, me = payload
+                comp_point_world = _compute_comp_point_world_from_attachment(s, obj_like, me, "MESH")
+                comp_q = _component_world_quat_from_data(s, obj_like, me, "MESH")
+
+            if comp_point_world is None or comp_q is None:
+                continue
+
+            _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=obj)
+            _obj_save_state(scene, obj)
+        finally:
+            _free_mesh_access(mode, payload)
 
 
 def _timer_func():
