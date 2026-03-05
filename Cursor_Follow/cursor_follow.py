@@ -1090,6 +1090,8 @@ def _component_world_quat_from_data(s, obj_like, mesh_or_bm, mode: str):
             v = verts[s.v_index]
             nrm = v.normal.copy()
             t_idx = s.v_tangent
+            if not (0 <= t_idx < len(verts)):
+                t_idx = _find_vertex_tangent_neighbor_mesh(me, s.v_index)
             tang = (verts[t_idx].co - v.co) if (0 <= t_idx < len(verts)) else Vector((1.0, 0.0, 0.0))
             basis_w = _basis_world_from_vertex_local(obj_like, v.co, nrm, tang)
             return _basis_to_quat(basis_w)
@@ -1127,7 +1129,7 @@ def _component_world_quat_from_data(s, obj_like, mesh_or_bm, mode: str):
                 return None
             a = verts[i1].co
             b = verts[i2].co
-            nrm = _safe_normalize(verts[i1].normal + verts[i2].normal, Vector((0.0, 0.0, 1.0)))
+            nrm = _edge_normal_from_mesh(me, i1, i2)
             basis_w = _basis_world_from_edge_local(obj_like, a, b, nrm)
             return _basis_to_quat(basis_w)
 
@@ -1158,6 +1160,67 @@ def _component_world_quat_from_data(s, obj_like, mesh_or_bm, mode: str):
     return None
 
 
+def _find_vertex_tangent_neighbor_mesh(me, v_index: int) -> int:
+    """Pick a stable tangent neighbor for vertex orientation in object mode."""
+    if not me:
+        return -1
+    verts = me.vertices
+    if v_index < 0 or v_index >= len(verts):
+        return -1
+
+    best = -1
+    best_d2 = float("inf")
+    vco = verts[v_index].co
+
+    try:
+        edges = me.edges
+        for e in edges:
+            a = e.vertices[0]
+            b = e.vertices[1]
+            if a == v_index:
+                o = b
+            elif b == v_index:
+                o = a
+            else:
+                continue
+            d2 = (verts[o].co - vco).length_squared
+            if d2 < best_d2:
+                best_d2 = d2
+                best = o
+    except Exception:
+        return -1
+
+    return best
+
+
+def _edge_normal_from_mesh(me, i1: int, i2: int) -> Vector:
+    """Compute edge normal from linked polygon normals to match edit mode behavior."""
+    if not me:
+        return Vector((0.0, 0.0, 1.0))
+
+    nrm = Vector((0.0, 0.0, 0.0))
+    try:
+        for poly in me.polygons:
+            vids = poly.vertices
+            for j in range(len(vids)):
+                a = vids[j]
+                b = vids[(j + 1) % len(vids)]
+                if (a == i1 and b == i2) or (a == i2 and b == i1):
+                    nrm += poly.normal
+                    break
+    except Exception:
+        pass
+
+    if nrm.length_squared < _EPS:
+        try:
+            verts = me.vertices
+            nrm = verts[i1].normal + verts[i2].normal
+        except Exception:
+            nrm = Vector((0.0, 0.0, 1.0))
+
+    return _safe_normalize(nrm, Vector((0.0, 0.0, 1.0)))
+
+
 # ------------------------------------------------------------
 # Attachment bookkeeping
 # ------------------------------------------------------------
@@ -1182,6 +1245,8 @@ def _set_attachment_from_best(scene, obj, best):
         if obj.mode == "EDIT" and obj.data and obj.data.is_editmode:
             bm = bmesh.from_edit_mesh(obj.data)
             s.v_tangent = _find_vertex_tangent_neighbor_edit(bm, s.v_index)
+        elif obj.data:
+            s.v_tangent = _find_vertex_tangent_neighbor_mesh(obj.data, s.v_index)
         else:
             s.v_tangent = -1
 
