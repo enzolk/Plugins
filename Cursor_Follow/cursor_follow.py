@@ -1501,7 +1501,7 @@ class CursorAutoAttachSettings(PropertyGroup):
     auto_attach: BoolProperty(
         name="Auto Attach",
         description="Auto attach cursor to nearest component. Compatible with other cursor tools (Maya Pivot etc.).",
-        default=False,
+        default=True,
     )
     follow_rotation: BoolProperty(
         name="Follow Rotation",
