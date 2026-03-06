@@ -140,28 +140,15 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
             self.log(step, f"Vertex B déplacé vers le point projeté: co_finale={_format_vec(vertex_b.co)}")
 
             step = "MERGE_A_TO_B"
-            for v in bm.verts:
-                v.select = False
-            vertex_a.select = True
-            vertex_b.select = True
-
-            try:
-                bm.select_history.clear()
-            except Exception:
-                pass
-            bm.select_history.add(vertex_a)
-            bm.select_history.add(vertex_b)
+            self.log(step, f"Fusion BMesh en cours: A(index={vertex_a.index}) -> B(index={vertex_b.index})")
+            bmesh.ops.pointmerge(
+                bm,
+                verts=[vertex_a, vertex_b],
+                merge_co=vertex_b.co.copy(),
+            )
 
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-
-            self.log(step, f"Merge At Last en cours: A(index={vertex_a.index}) -> B(index={vertex_b.index})")
-            merge_result = bpy.ops.mesh.merge(type='LAST')
-            self.log(step, f"Résultat opérateur merge: {merge_result}")
-
-            if 'FINISHED' not in merge_result:
-                self.log(step, "Erreur: échec de l'opération bpy.ops.mesh.merge(type='LAST').")
-                self.report({'ERROR'}, "Échec de l'opération Merge At Last.")
-                return {'CANCELLED'}
+            self.log(step, "Fusion BMesh terminée.")
 
             step = "DONE"
             self.log(step, "Opération terminée avec succès.")
