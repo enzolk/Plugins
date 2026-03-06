@@ -68,6 +68,8 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
 
             active_vert = bm.select_history.active if isinstance(bm.select_history.active, bmesh.types.BMVert) else None
             vertex_a = active_vert if (active_vert and active_vert.select) else selected_verts[0]
+            vertex_a_initial_index = vertex_a.index
+            vertex_a_initial_co = vertex_a.co.copy()
             self.log(step, f"Vertex A choisi: index={vertex_a.index}, co={_format_vec(vertex_a.co)}")
 
             step = "FIND_NEAREST_EDGE"
@@ -135,16 +137,59 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
             vertex_b = min(new_verts, key=lambda v: (v.co - nearest_point).length_squared)
             self.log(step, f"Vertex B identifié: index={vertex_b.index}, co_initiale={_format_vec(vertex_b.co)}")
 
+            bm.verts.index_update()
+            bm.verts.ensure_lookup_table()
+
+            if not vertex_a.is_valid:
+                self.log(
+                    step,
+                    (
+                        "Référence de Vertex A invalide après subdivision; "
+                        f"tentative de récupération par index initial={vertex_a_initial_index}."
+                    )
+                )
+                recovered_a = None
+                for vert in bm.verts:
+                    if vert.index == vertex_a_initial_index and vert.is_valid:
+                        recovered_a = vert
+                        break
+
+                if recovered_a is None:
+                    recovered_a = min(
+                        (vert for vert in bm.verts if vert.is_valid),
+                        key=lambda v: (v.co - vertex_a_initial_co).length_squared,
+                        default=None,
+                    )
+
+                if recovered_a is None:
+                    self.log(step, "Erreur: impossible de récupérer Vertex A valide après subdivision.")
+                    self.report({'ERROR'}, "Vertex A invalide après subdivision.")
+                    return {'CANCELLED'}
+
+                vertex_a = recovered_a
+                self.log(step, f"Vertex A récupéré: index={vertex_a.index}, co={_format_vec(vertex_a.co)}")
+
             step = "MOVE_VERTEX_B"
             vertex_b.co = nearest_point
             self.log(step, f"Vertex B déplacé vers le point projeté: co_finale={_format_vec(vertex_b.co)}")
 
             step = "MERGE_A_TO_B"
+            if not vertex_a.is_valid or not vertex_b.is_valid:
+                self.log(
+                    step,
+                    (
+                        "Erreur: vertex invalide avant fusion "
+                        f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid})."
+                    )
+                )
+                self.report({'ERROR'}, "Vertex invalide détecté avant la fusion.")
+                return {'CANCELLED'}
+
             self.log(step, f"Fusion BMesh en cours: A(index={vertex_a.index}) -> B(index={vertex_b.index})")
             bmesh.ops.pointmerge(
                 bm,
                 verts=[vertex_a, vertex_b],
-                merge_co=vertex_b.co.copy(),
+                merge_co=nearest_point.copy(),
             )
 
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
