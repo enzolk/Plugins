@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Merge Selected Vertex to Nearest Non-Connected Edge",
     "author": "Codex",
-    "version": (1, 0, 1),
+    "version": (1, 0, 2),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Edit",
     "description": "Find nearest non-connected edge from selected vertex, create point on edge, and merge to it",
@@ -37,6 +37,90 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
     def log(self, step: str, message: str):
         print(f"[MergeToNearestEdge][{step}] {message}")
 
+    def _process_vertex(self, bm: bmesh.types.BMesh, vertex_a: bmesh.types.BMVert, vertex_label: str):
+        step = "FIND_NEAREST_EDGE"
+        self.log(step, f"[{vertex_label}] Début du traitement: index={vertex_a.index}, co={_format_vec(vertex_a.co)}")
+
+        nearest_edge = None
+        nearest_point = None
+        nearest_dist_sq = float('inf')
+        nearest_t = 0.0
+
+        non_connected_edges_count = 0
+        for edge in bm.edges:
+            if vertex_a in edge.verts:
+                continue
+            non_connected_edges_count += 1
+
+            v1, v2 = edge.verts
+            point_on_edge, t = _closest_point_on_segment(vertex_a.co, v1.co, v2.co)
+            dist_sq = (vertex_a.co - point_on_edge).length_squared
+
+            if dist_sq < nearest_dist_sq:
+                nearest_dist_sq = dist_sq
+                nearest_edge = edge
+                nearest_point = point_on_edge
+                nearest_t = t
+
+        self.log(step, f"[{vertex_label}] Edges non-connectées examinées: {non_connected_edges_count}")
+
+        if nearest_edge is None:
+            raise RuntimeError(f"[{vertex_label}] Aucune edge non connectée au vertex courant trouvée.")
+
+        e_v1, e_v2 = nearest_edge.verts
+        self.log(
+            step,
+            (
+                f"[{vertex_label}] Edge la plus proche trouvée: "
+                f"index={nearest_edge.index}, verts=({e_v1.index}, {e_v2.index}), "
+                f"t={nearest_t:.6f}, point={_format_vec(nearest_point)}, "
+                f"distance={nearest_dist_sq ** 0.5:.6f}"
+            )
+        )
+
+        step = "SUBDIVIDE_EDGE"
+        old_verts = set(bm.verts)
+        self.log(step, f"[{vertex_label}] Subdivision de l'edge index={nearest_edge.index} avec cuts=1")
+        result = bmesh.ops.subdivide_edges(
+            bm,
+            edges=[nearest_edge],
+            cuts=1,
+            use_grid_fill=False,
+        )
+
+        new_verts = [elem for elem in result.get("geom_split", []) if isinstance(elem, bmesh.types.BMVert)]
+        if not new_verts:
+            # Fallback robuste au cas où geom_split serait vide selon version.
+            new_verts = [v for v in bm.verts if v not in old_verts]
+
+        self.log(step, f"[{vertex_label}] Nouveaux vertices créés après subdivision: {len(new_verts)}")
+
+        if len(new_verts) == 0:
+            raise RuntimeError(f"[{vertex_label}] Subdivision effectuée mais vertex B introuvable.")
+
+        vertex_b = min(new_verts, key=lambda v: (v.co - nearest_point).length_squared)
+        self.log(step, f"[{vertex_label}] Vertex B identifié: index={vertex_b.index}, co_initiale={_format_vec(vertex_b.co)}")
+
+        step = "MOVE_VERTEX_B"
+        vertex_b.co = nearest_point
+        self.log(step, f"[{vertex_label}] Vertex B déplacé vers le point projeté: co_finale={_format_vec(vertex_b.co)}")
+
+        step = "MERGE_A_TO_B"
+        if not vertex_a.is_valid or not vertex_b.is_valid:
+            raise RuntimeError(
+                f"[{vertex_label}] Vertex invalide avant fusion "
+                f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid})."
+            )
+
+        self.log(step, f"[{vertex_label}] Fusion BMesh en cours: A(index={vertex_a.index}) -> B(index={vertex_b.index})")
+        bmesh.ops.pointmerge(
+            bm,
+            verts=[vertex_a, vertex_b],
+            merge_co=nearest_point.copy(),
+        )
+
+        self.log(step, f"[{vertex_label}] Fusion BMesh terminée.")
+
     def execute(self, context):
         step = "INIT"
         try:
@@ -66,142 +150,45 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
                 self.report({'ERROR'}, "Sélectionnez un vertex (A).")
                 return {'CANCELLED'}
 
-            active_vert = bm.select_history.active if isinstance(bm.select_history.active, bmesh.types.BMVert) else None
-            vertex_a = active_vert if (active_vert and active_vert.select) else selected_verts[0]
-            vertex_a_initial_index = vertex_a.index
-            vertex_a_initial_co = vertex_a.co.copy()
-            self.log(step, f"Vertex A choisi: index={vertex_a.index}, co={_format_vec(vertex_a.co)}")
+            selected_vertices_data = [
+                {
+                    "index": v.index,
+                    "initial_co": v.co.copy(),
+                }
+                for v in selected_verts
+            ]
 
-            step = "FIND_NEAREST_EDGE"
-            nearest_edge = None
-            nearest_point = None
-            nearest_dist_sq = float('inf')
-            nearest_t = 0.0
+            for i, vertex_data in enumerate(selected_vertices_data, start=1):
+                step = "FIND_VERTEX_A"
+                vertex_label = f"Vertex {i}/{len(selected_vertices_data)} (index_initial={vertex_data['index']})"
+                self.log(step, f"[{vertex_label}] Recherche du vertex à traiter.")
 
-            non_connected_edges_count = 0
-            for edge in bm.edges:
-                if vertex_a in edge.verts:
-                    continue
-                non_connected_edges_count += 1
+                bm.verts.index_update()
+                bm.verts.ensure_lookup_table()
+                bm.edges.ensure_lookup_table()
 
-                v1, v2 = edge.verts
-                point_on_edge, t = _closest_point_on_segment(vertex_a.co, v1.co, v2.co)
-                dist_sq = (vertex_a.co - point_on_edge).length_squared
-
-                if dist_sq < nearest_dist_sq:
-                    nearest_dist_sq = dist_sq
-                    nearest_edge = edge
-                    nearest_point = point_on_edge
-                    nearest_t = t
-
-            self.log(step, f"Edges non-connectées examinées: {non_connected_edges_count}")
-
-            if nearest_edge is None:
-                self.log(step, "Erreur: aucune edge non connectée trouvée.")
-                self.report({'ERROR'}, "Aucune edge non connectée au vertex A trouvée.")
-                return {'CANCELLED'}
-
-            e_v1, e_v2 = nearest_edge.verts
-            self.log(
-                step,
-                (
-                    "Edge la plus proche trouvée: "
-                    f"index={nearest_edge.index}, verts=({e_v1.index}, {e_v2.index}), "
-                    f"t={nearest_t:.6f}, point={_format_vec(nearest_point)}, "
-                    f"distance={nearest_dist_sq ** 0.5:.6f}"
+                candidates = [v for v in bm.verts if v.is_valid]
+                vertex_a = min(
+                    candidates,
+                    key=lambda v: (v.co - vertex_data["initial_co"]).length_squared,
+                    default=None,
                 )
-            )
 
-            step = "SUBDIVIDE_EDGE"
-            old_verts = set(bm.verts)
-            self.log(step, f"Subdivision de l'edge index={nearest_edge.index} avec cuts=1")
-            result = bmesh.ops.subdivide_edges(
-                bm,
-                edges=[nearest_edge],
-                cuts=1,
-                use_grid_fill=False,
-            )
+                if vertex_a is None:
+                    raise RuntimeError(f"[{vertex_label}] Impossible de retrouver un vertex valide à traiter.")
 
-            new_verts = [elem for elem in result.get("geom_split", []) if isinstance(elem, bmesh.types.BMVert)]
-            if not new_verts:
-                # Fallback robuste au cas où geom_split serait vide selon version.
-                new_verts = [v for v in bm.verts if v not in old_verts]
-
-            self.log(step, f"Nouveaux vertices créés après subdivision: {len(new_verts)}")
-
-            if len(new_verts) == 0:
-                self.log(step, "Erreur: impossible d'identifier le vertex B après subdivision.")
-                self.report({'ERROR'}, "Subdivision effectuée mais vertex B introuvable.")
-                return {'CANCELLED'}
-
-            vertex_b = min(new_verts, key=lambda v: (v.co - nearest_point).length_squared)
-            self.log(step, f"Vertex B identifié: index={vertex_b.index}, co_initiale={_format_vec(vertex_b.co)}")
-
-            bm.verts.index_update()
-            bm.verts.ensure_lookup_table()
-
-            if not vertex_a.is_valid:
-                self.log(
-                    step,
-                    (
-                        "Référence de Vertex A invalide après subdivision; "
-                        f"tentative de récupération par index initial={vertex_a_initial_index}."
-                    )
-                )
-                recovered_a = None
-                for vert in bm.verts:
-                    if vert.index == vertex_a_initial_index and vert.is_valid:
-                        recovered_a = vert
-                        break
-
-                if recovered_a is None:
-                    recovered_a = min(
-                        (vert for vert in bm.verts if vert.is_valid),
-                        key=lambda v: (v.co - vertex_a_initial_co).length_squared,
-                        default=None,
-                    )
-
-                if recovered_a is None:
-                    self.log(step, "Erreur: impossible de récupérer Vertex A valide après subdivision.")
-                    self.report({'ERROR'}, "Vertex A invalide après subdivision.")
-                    return {'CANCELLED'}
-
-                vertex_a = recovered_a
-                self.log(step, f"Vertex A récupéré: index={vertex_a.index}, co={_format_vec(vertex_a.co)}")
-
-            step = "MOVE_VERTEX_B"
-            vertex_b.co = nearest_point
-            self.log(step, f"Vertex B déplacé vers le point projeté: co_finale={_format_vec(vertex_b.co)}")
-
-            step = "MERGE_A_TO_B"
-            if not vertex_a.is_valid or not vertex_b.is_valid:
-                self.log(
-                    step,
-                    (
-                        "Erreur: vertex invalide avant fusion "
-                        f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid})."
-                    )
-                )
-                self.report({'ERROR'}, "Vertex invalide détecté avant la fusion.")
-                return {'CANCELLED'}
-
-            self.log(step, f"Fusion BMesh en cours: A(index={vertex_a.index}) -> B(index={vertex_b.index})")
-            bmesh.ops.pointmerge(
-                bm,
-                verts=[vertex_a, vertex_b],
-                merge_co=nearest_point.copy(),
-            )
+                self._process_vertex(bm, vertex_a, vertex_label)
 
             # IMPORTANT: la topologie est modifiée (subdivide + merge),
             # il faut donc forcer une mise à jour destructive pour éviter
             # des caches de dessin incohérents côté Blender.
             bm.normal_update()
             bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
-            self.log(step, "Fusion BMesh terminée.")
+            self.log("UPDATE_MESH", "Mise à jour BMesh/mesh terminée.")
 
             step = "DONE"
             self.log(step, "Opération terminée avec succès.")
-            self.report({'INFO'}, "Vertex A fusionné vers le point de l'edge la plus proche.")
+            self.report({'INFO'}, f"{len(selected_vertices_data)} vertex(s) traité(s) vers l'edge la plus proche.")
             return {'FINISHED'}
 
         except Exception as ex:
