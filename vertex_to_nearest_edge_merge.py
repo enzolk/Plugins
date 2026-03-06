@@ -40,6 +40,8 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
     def _process_vertex(self, bm: bmesh.types.BMesh, vertex_a: bmesh.types.BMVert, vertex_label: str):
         step = "FIND_NEAREST_EDGE"
         self.log(step, f"[{vertex_label}] Début du traitement: index={vertex_a.index}, co={_format_vec(vertex_a.co)}")
+        vertex_a_initial_index = vertex_a.index
+        vertex_a_initial_co = vertex_a.co.copy()
 
         nearest_edge = None
         nearest_point = None
@@ -110,28 +112,48 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
         self.log(step, f"[{vertex_label}] Déplacement explicite ignoré; la position finale sera appliquée pendant la fusion: cible={_format_vec(nearest_point)}")
 
         step = "MERGE_A_TO_B"
-        if not vertex_a.is_valid or not vertex_b.is_valid:
-            if not vertex_a.is_valid and vertex_b.is_valid:
+        if not vertex_a.is_valid:
+            self.log(
+                step,
+                (
+                    f"[{vertex_label}] Vertex A invalide après subdivision "
+                    f"(index_initial={vertex_a_initial_index}). Tentative de récupération par proximité."
+                ),
+            )
+
+            candidates = [v for v in bm.verts if v.is_valid and v != vertex_b]
+            recovered_vertex_a = min(
+                candidates,
+                key=lambda v: (v.co - vertex_a_initial_co).length_squared,
+                default=None,
+            )
+
+            if recovered_vertex_a is not None:
+                recovery_dist = (recovered_vertex_a.co - vertex_a_initial_co).length
                 self.log(
                     step,
                     (
-                        f"[{vertex_label}] Vertex A déjà invalide avant fusion "
-                        f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid}). "
-                        "Fusion considérée comme déjà effectuée par Blender; étape ignorée."
+                        f"[{vertex_label}] Vertex A récupéré: index={recovered_vertex_a.index}, "
+                        f"co={_format_vec(recovered_vertex_a.co)}, distance_depuis_A_initial={recovery_dist:.6f}"
                     ),
                 )
-                return
+                vertex_a = recovered_vertex_a
+
+        if not vertex_a.is_valid or not vertex_b.is_valid:
             raise RuntimeError(
                 f"[{vertex_label}] Vertex invalide avant fusion "
                 f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid})."
             )
 
         self.log(step, f"[{vertex_label}] Fusion BMesh en cours: A(index={vertex_a.index}) -> B(index={vertex_b.index})")
-        bmesh.ops.pointmerge(
+        bmesh.ops.weld_verts(
             bm,
-            verts=[vertex_a, vertex_b],
-            merge_co=nearest_point.copy(),
+            targetmap={vertex_a: vertex_b},
         )
+
+        if vertex_b.is_valid:
+            vertex_b.co = nearest_point.copy()
+            self.log(step, f"[{vertex_label}] Position finale appliquée sur B: index={vertex_b.index}, co={_format_vec(vertex_b.co)}")
 
         self.log(step, f"[{vertex_label}] Fusion BMesh terminée.")
 
