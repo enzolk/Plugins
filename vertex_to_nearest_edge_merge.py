@@ -102,11 +102,25 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
         self.log(step, f"[{vertex_label}] Vertex B identifié: index={vertex_b.index}, co_initiale={_format_vec(vertex_b.co)}")
 
         step = "MOVE_VERTEX_B"
-        vertex_b.co = nearest_point
-        self.log(step, f"[{vertex_label}] Vertex B déplacé vers le point projeté: co_finale={_format_vec(vertex_b.co)}")
+        # NOTE:
+        # Ne pas déplacer explicitement B avant la fusion.
+        # Dans certains contextes Blender (ex: auto-merge actif), déplacer B
+        # exactement sur A peut invalider A avant l'appel à pointmerge.
+        # pointmerge placera de toute façon le vertex final à merge_co.
+        self.log(step, f"[{vertex_label}] Déplacement explicite ignoré; la position finale sera appliquée pendant la fusion: cible={_format_vec(nearest_point)}")
 
         step = "MERGE_A_TO_B"
         if not vertex_a.is_valid or not vertex_b.is_valid:
+            if not vertex_a.is_valid and vertex_b.is_valid:
+                self.log(
+                    step,
+                    (
+                        f"[{vertex_label}] Vertex A déjà invalide avant fusion "
+                        f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid}). "
+                        "Fusion considérée comme déjà effectuée par Blender; étape ignorée."
+                    ),
+                )
+                return
             raise RuntimeError(
                 f"[{vertex_label}] Vertex invalide avant fusion "
                 f"(A_valide={vertex_a.is_valid}, B_valide={vertex_b.is_valid})."
