@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Merge Selected Vertex to Nearest Non-Connected Edge",
     "author": "Codex",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Edit",
     "description": "Find nearest non-connected edge from selected vertex, create point on edge, and merge to it",
@@ -192,7 +192,11 @@ class MESH_OT_merge_to_nearest_edge_point(bpy.types.Operator):
                 merge_co=nearest_point.copy(),
             )
 
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            # IMPORTANT: la topologie est modifiée (subdivide + merge),
+            # il faut donc forcer une mise à jour destructive pour éviter
+            # des caches de dessin incohérents côté Blender.
+            bm.normal_update()
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
             self.log(step, "Fusion BMesh terminée.")
 
             step = "DONE"
