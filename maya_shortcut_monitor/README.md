@@ -79,10 +79,12 @@ st.stop_tracker()
 - Une fenêtre **Maya Shortcut Monitor** s'ouvre automatiquement dans Maya.
 - Utilisez quelques raccourcis: le tableau de la fenêtre se met à jour.
 - Le tracking privilégie l'action réellement exécutée (commande `repeatLast`) pour mieux gérer les raccourcis contextuels.
+- Le tracker croise maintenant plusieurs signaux d'exécution (`repeatLast`, `undoInfo`, outil actif, mapping hotkey + `ctxClient`) pour mieux distinguer les raccourcis ambigus selon le contexte.
 - Ouvrez `maya_shortcut_monitor/shortcuts_used.json` : vous devez voir des entrées avec:
   - `shortcut`
   - `command`
   - `category`
+  - `context`
   - `hits`
   - `last_seen`
 
