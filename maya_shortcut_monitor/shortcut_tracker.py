@@ -16,6 +16,11 @@ try:
 except Exception as exc:  # pragma: no cover
     raise RuntimeError("This script must run inside Autodesk Maya.") from exc
 
+try:
+    from maya import OpenMaya as om1
+except Exception:  # pragma: no cover
+    om1 = None
+
 QT_API = ""
 try:
     from shiboken2 import wrapInstance
@@ -40,11 +45,68 @@ SAVE_FILE = os.path.join(MODULE_DIR, "shortcuts_used.json")
 WINDOW_NAME = "MayaShortcutMonitorWindow"
 
 
+class CommandOutputBuffer:
+    def __init__(self):
+        self._lines = []
+        self._callback_id = None
+
+    def start(self):
+        if om1 is None or self._callback_id is not None:
+            return
+        try:
+            self._callback_id = om1.MCommandMessage.addCommandOutputCallback(self._on_output)
+        except Exception:
+            self._callback_id = None
+
+    def stop(self):
+        if om1 is None or self._callback_id is None:
+            return
+        try:
+            om1.MMessage.removeCallback(self._callback_id)
+        except Exception:
+            pass
+        self._callback_id = None
+
+    def mark(self) -> int:
+        return len(self._lines)
+
+    def _on_output(self, message, message_type, _client_data):
+        text = clean_command_text(str(message))
+        if not text:
+            return
+        self._lines.append(text)
+        if len(self._lines) > 500:
+            self._lines = self._lines[-500:]
+
+    def newest_command_since(self, mark: int) -> str:
+        ignored_prefixes = (
+            "textureWindowUpdateTextures",
+            "textureWindowUpdateUVSets",
+            "uvTbUpdateTextureItems",
+            "updateEditPivot",
+            "import ufe",
+            "# Result:",
+        )
+        for line in reversed(self._lines[mark:]):
+            if not line:
+                continue
+            if line.startswith(ignored_prefixes):
+                continue
+            if line.endswith(";"):
+                return line[:-1]
+            return line
+        return ""
+
+
+COMMAND_OUTPUT = CommandOutputBuffer()
+
+
 @dataclass
 class ShortcutEntry:
     shortcut: str
     command: str
     category: str
+    context: str = ""
     hits: int = 1
     last_seen: str = ""
 
@@ -75,13 +137,17 @@ class ShortcutRepository:
             shortcut = item.get("shortcut")
             if not shortcut:
                 continue
-            self._entries[shortcut] = ShortcutEntry(
+            command = item.get("command", "Unknown")
+            context = item.get("context", "")
+            entry = ShortcutEntry(
                 shortcut=shortcut,
-                command=item.get("command", "Unknown"),
+                command=command,
                 category=item.get("category", "Autres"),
+                context=context,
                 hits=int(item.get("hits", 1)),
                 last_seen=item.get("last_seen", ""),
             )
+            self._entries[self._entry_key(shortcut, command, context)] = entry
 
     def sorted_entries(self):
         return sorted(
@@ -97,23 +163,31 @@ class ShortcutRepository:
         with open(self.file_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
-    def upsert(self, shortcut: str, command: str, category: str) -> None:
+    @staticmethod
+    def _entry_key(shortcut: str, command: str, context: str = "") -> str:
+        return "{0}|{1}|{2}".format(shortcut, command or "Unknown", context or "")
+
+    def upsert(self, shortcut: str, command: str, category: str, context: str = "") -> None:
         now = datetime.now().isoformat(timespec="seconds")
-        existing = self._entries.get(shortcut)
+        safe_command = command or "Unknown"
+        safe_context = context or ""
+        existing = self._entries.get(self._entry_key(shortcut, safe_command, safe_context))
         if existing:
-            if command and command != "Unknown":
-                existing.command = command
+            if safe_command and safe_command != "Unknown":
+                existing.command = safe_command
             if category and category != "Autres":
                 existing.category = category
+            existing.context = safe_context
             existing.hits += 1
             existing.last_seen = now
             self.save()
             return
 
-        self._entries[shortcut] = ShortcutEntry(
+        self._entries[self._entry_key(shortcut, safe_command, safe_context)] = ShortcutEntry(
             shortcut=shortcut,
-            command=command or "Unknown",
+            command=safe_command,
             category=category or "Autres",
+            context=safe_context,
             hits=1,
             last_seen=now,
         )
@@ -304,31 +378,69 @@ def _resolve_name_command(name_cmd: str) -> str:
     return name_cmd
 
 
-def resolve_hotkey_command(shortcut: str) -> str:
+def _is_generic_tool_action(action: str) -> bool:
+    lowered = (action or "").lower()
+    return lowered.startswith("tool:") and any(t in lowered for t in ["move", "rotate", "scale", "manip"])
+
+
+def resolve_hotkey_command(shortcut: str, ctx_clients=None) -> str:
     query = shortcut_to_maya_query(shortcut)
     if query is None:
         return "Unknown"
 
     key, mods = query
-    candidates = []
-    if len(key) == 1:
-        candidates = [key.lower(), key.upper()]
-    else:
-        candidates = [key]
+    candidates = [key.lower(), key.upper()] if len(key) == 1 else [key]
+
+    contextual_matches = []
+    global_matches = []
+
+    if ctx_clients:
+        for ctx_client in ctx_clients:
+            for candidate_key in candidates:
+                try:
+                    name_cmd = cmds.hotkey(k=candidate_key, q=True, name=True, ctxClient=ctx_client, **mods)
+                    resolved = _resolve_name_command(name_cmd)
+                    if resolved:
+                        contextual_matches.append(resolved)
+
+                    release_cmd = cmds.hotkey(
+                        k=candidate_key,
+                        q=True,
+                        releaseName=True,
+                        ctxClient=ctx_client,
+                        **mods,
+                    )
+                    resolved_release = _resolve_name_command(release_cmd)
+                    if resolved_release:
+                        contextual_matches.append(resolved_release)
+                except Exception:
+                    continue
 
     for candidate_key in candidates:
         try:
             name_cmd = cmds.hotkey(k=candidate_key, q=True, name=True, **mods)
             resolved = _resolve_name_command(name_cmd)
             if resolved:
-                return resolved
+                global_matches.append(resolved)
 
             release_cmd = cmds.hotkey(k=candidate_key, q=True, releaseName=True, **mods)
             resolved_release = _resolve_name_command(release_cmd)
             if resolved_release:
-                return resolved_release
+                global_matches.append(resolved_release)
         except Exception:
             continue
+
+    for action in contextual_matches:
+        if not _is_generic_tool_action(action):
+            return action
+    if contextual_matches:
+        return contextual_matches[0]
+
+    for action in global_matches:
+        if not _is_generic_tool_action(action):
+            return action
+    if global_matches:
+        return global_matches[0]
 
     return "Unknown"
 
@@ -354,17 +466,78 @@ def get_last_executed_command() -> str:
         return ""
 
 
-def resolve_executed_action(pre_last: str, pre_tool: str, mapped_action: str) -> str:
+def get_last_undo_label() -> str:
+    try:
+        return clean_command_text(cmds.undoInfo(q=True, undoName=True))
+    except Exception:
+        return ""
+
+
+def resolve_active_context() -> str:
+    panel = ""
+    try:
+        panel = cmds.getPanel(withFocus=True) or ""
+    except Exception:
+        panel = ""
+
+    panel_type = ""
+    if panel:
+        try:
+            panel_type = cmds.getPanel(typeOf=panel) or ""
+        except Exception:
+            panel_type = ""
+
+    tool = resolve_current_tool()
+    parts = [p for p in [panel_type, panel, tool] if p and p != "Unknown"]
+    return " | ".join(parts)
+
+
+def resolve_context_clients() -> list:
+    clients = []
+    try:
+        panel = cmds.getPanel(withFocus=True)
+        if panel:
+            clients.append(panel)
+            panel_type = cmds.getPanel(typeOf=panel)
+            if panel_type:
+                clients.append(panel_type)
+    except Exception:
+        pass
+    try:
+        ctx = cmds.currentCtx()
+        if ctx:
+            clients.append(ctx)
+    except Exception:
+        pass
+    # unique order-preserving
+    seen = set()
+    unique = []
+    for c in clients:
+        if c and c not in seen:
+            unique.append(c)
+            seen.add(c)
+    return unique
+
+
+def resolve_executed_action(pre_last: str, pre_tool: str, pre_undo: str, pre_output_mark: int, mapped_action: str) -> str:
     post_last = get_last_executed_command()
     if post_last and post_last != pre_last:
         return post_last
 
-    if mapped_action and mapped_action != "Unknown":
-        return mapped_action
+    post_undo = get_last_undo_label()
+    if post_undo and post_undo != pre_undo:
+        return post_undo
+
+    command_output = COMMAND_OUTPUT.newest_command_since(pre_output_mark)
+    if command_output:
+        return command_output
 
     post_tool = resolve_current_tool()
     if post_tool != "Unknown" and post_tool != pre_tool:
         return post_tool
+
+    if mapped_action and mapped_action != "Unknown":
+        return mapped_action
 
     if post_tool != "Unknown":
         return post_tool
@@ -381,8 +554,8 @@ class ShortcutMonitorWindow(QtWidgets.QDialog):
         self.resize(900, 460)
 
         self.table = QtWidgets.QTableWidget(self)
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Shortcut", "Action/Commande", "Catégorie", "Hits", "Last Seen"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Shortcut", "Action/Commande", "Catégorie", "Contexte", "Hits", "Last Seen"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -400,7 +573,7 @@ class ShortcutMonitorWindow(QtWidgets.QDialog):
         entries = self.repository.sorted_entries()
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            values = [entry.shortcut, entry.command, entry.category, str(entry.hits), entry.last_seen]
+            values = [entry.shortcut, entry.command, entry.category, entry.context, str(entry.hits), entry.last_seen]
             for col, val in enumerate(values):
                 self.table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
         self.table.resizeColumnsToContents()
@@ -417,21 +590,27 @@ class ShortcutEventFilter(QtCore.QObject):
         if shortcut:
             pre_last = get_last_executed_command()
             pre_tool = resolve_current_tool()
+            pre_undo = get_last_undo_label()
+            pre_output_mark = COMMAND_OUTPUT.mark()
+            ctx_clients = resolve_context_clients()
             QtCore.QTimer.singleShot(
                 0,
-                lambda s=shortcut, pl=pre_last, pt=pre_tool: self._record_shortcut(
+                lambda s=shortcut, pl=pre_last, pt=pre_tool, pu=pre_undo, po=pre_output_mark, cc=ctx_clients: self._record_shortcut(
                     s,
                     pl,
                     pt,
+                    pu,
+                    po,
+                    cc,
                 ),
             )
         return False
 
-    def _record_shortcut(self, shortcut: str, pre_last: str, pre_tool: str):
-        mapped_action = resolve_hotkey_command(shortcut)
-        executed_action = resolve_executed_action(pre_last, pre_tool, mapped_action)
+    def _record_shortcut(self, shortcut: str, pre_last: str, pre_tool: str, pre_undo: str, pre_output_mark: int, ctx_clients):
+        mapped_action = resolve_hotkey_command(shortcut, ctx_clients=ctx_clients)
+        executed_action = resolve_executed_action(pre_last, pre_tool, pre_undo, pre_output_mark, mapped_action)
         category = categorize_command(executed_action)
-        self.repository.upsert(shortcut, executed_action, category)
+        self.repository.upsert(shortcut, executed_action, category, resolve_active_context())
         if self.on_update:
             self.on_update()
 
@@ -462,6 +641,7 @@ class MayaShortcutTracker:
         if self.running:
             self._create_or_show_window()
             return
+        COMMAND_OUTPUT.start()
         self.main_window.installEventFilter(self.filter)
         self.running = True
         self._create_or_show_window()
@@ -471,6 +651,7 @@ class MayaShortcutTracker:
         if not self.running:
             return
         self.main_window.removeEventFilter(self.filter)
+        COMMAND_OUTPUT.stop()
         self.running = False
         print("[ShortcutTracker] Tracking stopped.")
 
