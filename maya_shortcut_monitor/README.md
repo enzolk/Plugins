@@ -79,10 +79,18 @@ st.stop_tracker()
 - Une fenêtre **Maya Shortcut Monitor** s'ouvre automatiquement dans Maya.
 - Utilisez quelques raccourcis: le tableau de la fenêtre se met à jour.
 - Le tracking privilégie l'action réellement exécutée (commande `repeatLast`) pour mieux gérer les raccourcis contextuels.
+- Le tracker croise maintenant plusieurs signaux d'exécution (`repeatLast`, `undoInfo`, outil actif, mapping hotkey + `ctxClient`) pour mieux distinguer les raccourcis ambigus selon le contexte.
+- Si disponible, il écoute aussi la sortie des commandes Maya (`MCommandMessage`) pour capturer la commande réellement exécutée (ex: `FrameSelectedWithoutChildren`) avant les fallbacks.
+- La commande issue de la sortie Maya est résolue en prenant la **première commande utile** après le keypress (pas la dernière), pour mieux refléter l'action réellement déclenchée (ex: `Ctrl+Z` -> `Undo`).
+- Les sorties parasites (ex: `# Result:`, valeurs numériques seules, refresh HUD/UI comme `dR_*`) sont filtrées pour éviter des faux positifs comme `"1"`.
+- Les commandes techniques de changement d’outil (ex: `setToolTo nexMultiCutCtx1`) sont normalisées en libellés lisibles (ex: `Tool: Multi-Cut`).
+- Les commandes MEL/Python brutes sont aussi remappées vers des labels lisibles quand possible (ex: `fitPanel -selectedNoChildren` → `Frame Selected without children`).
+- Le fallback vers `Tool: ...` est désormais limité aux vrais raccourcis de changement d’outil (Q/W/E/R/T/Y) pour éviter des faux positifs sur des touches comme `Ctrl+Z`, `D`, `N`.
 - Ouvrez `maya_shortcut_monitor/shortcuts_used.json` : vous devez voir des entrées avec:
   - `shortcut`
   - `command`
   - `category`
+  - `context`
   - `hits`
   - `last_seen`
 
