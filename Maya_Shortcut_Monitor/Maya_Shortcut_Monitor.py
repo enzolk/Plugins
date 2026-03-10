@@ -13,7 +13,6 @@ Compatible Maya PySide2 / PySide6
 """
 
 import os
-import json
 import time
 import traceback
 
@@ -34,7 +33,7 @@ except ImportError:
 # CONFIG
 # =========================================================
 
-LOG_FILE = os.path.join(cmds.internalVar(userAppDir=True), "shortcut_possible_actions_log.json")
+LOG_FILE = os.path.join(cmds.internalVar(userAppDir=True), "shortcut_possible_actions_log.txt")
 PRINT_IN_SCRIPT_EDITOR = True
 DEDUP_WINDOW_SECONDS = 0.12
 
@@ -51,20 +50,22 @@ def maya_main_window():
 
 
 def load_log():
-    if os.path.exists(LOG_FILE):
-        try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
-        except Exception:
-            pass
-    return []
+    if not os.path.exists(LOG_FILE):
+        return []
+
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            data = [line.rstrip("\n") for line in f.readlines()]
+            return [x for x in data if x]
+    except Exception:
+        return []
 
 
 def save_log(data):
     with open(LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n\n".join(data))
+        if data:
+            f.write("\n")
 
 
 def safe_str(value):
@@ -74,6 +75,13 @@ def safe_str(value):
         return str(value)
     except Exception:
         return repr(value)
+
+
+def is_readable_key_text(value):
+    text = safe_str(value)
+    if not text:
+        return False
+    return all(ch.isprintable() for ch in text)
 
 
 # =========================================================
@@ -141,8 +149,10 @@ def qt_key_to_maya_key(event):
             return chr(key).lower()
         if QtCore.Qt.Key_0 <= key <= QtCore.Qt.Key_9:
             return chr(key)
-        seq = QtGui.QKeySequence(key).toString()
-        return safe_str(seq)
+        seq = safe_str(QtGui.QKeySequence(key).toString())
+        if is_readable_key_text(seq):
+            return seq
+        return "KeyCode_{}".format(key)
 
     text = event.text()
     if text and len(text) == 1 and text.isprintable():
@@ -154,8 +164,10 @@ def qt_key_to_maya_key(event):
     if QtCore.Qt.Key_0 <= key <= QtCore.Qt.Key_9:
         return chr(key)
 
-    seq = QtGui.QKeySequence(key).toString()
-    return safe_str(seq)
+    seq = safe_str(QtGui.QKeySequence(key).toString())
+    if is_readable_key_text(seq):
+        return seq
+    return "KeyCode_{}".format(key)
 
 
 def build_shortcut_label(maya_key, ctrl=False, alt=False, shift=False):
@@ -457,6 +469,7 @@ class MayaShortcutPossibleActionsLogger(QtCore.QObject):
         super(MayaShortcutPossibleActionsLogger, self).__init__(parent)
         self.log_data = load_log()
         self.last_emit = {}
+        self.logged_shortcuts = set()
 
     def should_skip_event(self, shortcut_label, press_type):
         now = time.time()
@@ -492,10 +505,16 @@ class MayaShortcutPossibleActionsLogger(QtCore.QObject):
             if not maya_key:
                 return False
 
-            press_type = "press" if event.type() == QtCore.QEvent.KeyPress else "release"
+            if event.type() != QtCore.QEvent.KeyPress:
+                return False
+
+            press_type = "press"
             shortcut_label = build_shortcut_label(maya_key, ctrl=ctrl, alt=alt, shift=shift)
 
             if self.should_skip_event(shortcut_label, press_type):
+                return False
+
+            if shortcut_label in self.logged_shortcuts:
                 return False
 
             possible_actions = resolve_possible_actions(
@@ -506,29 +525,26 @@ class MayaShortcutPossibleActionsLogger(QtCore.QObject):
                 release=(press_type == "release")
             )
 
-            entry = {
-                "timestamp": time.time(),
-                "qt_api": QT_API,
-                "shortcut": shortcut_label,
-                "maya_key": maya_key,
-                "mods": {
-                    "ctrl": ctrl,
-                    "alt": alt,
-                    "shift": shift
-                },
-                "press_type": press_type,
-                "current_hotkey_set": get_current_hotkey_set(),
-                "known_hotkey_context_types": list_hotkey_context_types(),
-                "possible_actions": possible_actions
-            }
+            action_lines = []
+            for action in possible_actions:
+                label = safe_str(action.get("nameCommand")) or safe_str(action.get("annotation")) or safe_str(action.get("command"))
+                if label:
+                    action_lines.append("- {}".format(label))
+
+            if not action_lines:
+                action_lines = ["- Aucun"]
+
+            entry = 'Shortcut : "{}"\nPossible actions :\n{}'.format(
+                shortcut_label,
+                "\n".join(action_lines)
+            )
 
             self.log_data.append(entry)
+            self.logged_shortcuts.add(shortcut_label)
             save_log(self.log_data)
 
             if PRINT_IN_SCRIPT_EDITOR:
-                print("[ShortcutPossibleActions] {}".format(
-                    json.dumps(entry, ensure_ascii=False)
-                ))
+                print(entry)
 
         except Exception:
             print("[ShortcutPossibleActions][ERROR]")
