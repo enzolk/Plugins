@@ -15,6 +15,7 @@ Compatible Maya PySide2 / PySide6
 import os
 import time
 import traceback
+import json
 
 import maya.cmds as cmds
 import maya.OpenMayaUI as omui
@@ -55,16 +56,60 @@ def load_log():
 
     try:
         with open(LOG_FILE, "r", encoding="utf-8") as f:
-            data = [line.rstrip("\n") for line in f.readlines()]
-            return [x for x in data if x]
+            raw = f.read()
+
+        if not raw.strip():
+            return []
+
+        # Compat ancien format JSON (liste d'entrées)
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+
+        data = [line.rstrip("\n") for line in raw.splitlines()]
+        return [x for x in data if x]
     except Exception:
         return []
 
 
+def log_entry_to_text(entry):
+    if isinstance(entry, str):
+        return entry
+
+    if isinstance(entry, dict):
+        shortcut = safe_str(entry.get("shortcut") or entry.get("shortcut_label"))
+        actions = entry.get("possible_actions") or entry.get("actions") or []
+        if not isinstance(actions, list):
+            actions = [actions]
+
+        action_lines = []
+        for action in actions:
+            if isinstance(action, dict):
+                label = safe_str(action.get("nameCommand")) or safe_str(action.get("annotation")) or safe_str(action.get("command"))
+            else:
+                label = safe_str(action)
+            if label:
+                action_lines.append("- {}".format(label))
+
+        if not action_lines:
+            action_lines = ["- Aucun"]
+
+        if shortcut:
+            return 'Shortcut : "{}"\nPossible actions :\n{}'.format(shortcut, "\n".join(action_lines))
+
+    return safe_str(entry)
+
+
 def save_log(data):
+    normalized = [log_entry_to_text(item) for item in (data or [])]
+    normalized = [x for x in normalized if x]
+
     with open(LOG_FILE, "w", encoding="utf-8") as f:
-        f.write("\n\n".join(data))
-        if data:
+        f.write("\n\n".join(normalized))
+        if normalized:
             f.write("\n")
 
 
