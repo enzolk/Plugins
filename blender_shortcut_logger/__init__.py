@@ -17,6 +17,7 @@ from bpy.app.handlers import persistent
 
 _TABLE_FILENAME = "shortcut_table.json"
 _modal_operator_running = False
+_suspend_auto_save = False
 
 _SPECIAL_KEY_LABELS = {
     "SPACE": "Space",
@@ -33,14 +34,21 @@ _SPECIAL_KEY_LABELS = {
 }
 
 
+def _auto_save_update(self, context):
+    del self
+    if context is None or _suspend_auto_save:
+        return
+    _save_table(context)
+
+
 class BSL_ActionItem(bpy.types.PropertyGroup):
     internal_name: bpy.props.StringProperty(name="Internal")
-    display_name: bpy.props.StringProperty(name="Display")
+    display_name: bpy.props.StringProperty(name="Display", update=_auto_save_update)
 
 
 class BSL_RowItem(bpy.types.PropertyGroup):
     is_separator: bpy.props.BoolProperty(default=False)
-    separator_label: bpy.props.StringProperty(name="Separator", default="────────")
+    separator_label: bpy.props.StringProperty(name="Separator", default="────────", update=_auto_save_update)
     shortcut: bpy.props.StringProperty(name="Shortcut")
     actions: bpy.props.CollectionProperty(type=BSL_ActionItem)
 
@@ -95,13 +103,15 @@ class BSL_OT_shortcut_listener(bpy.types.Operator):
 class BSL_UL_rows(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         del context, data, icon, active_data, active_propname, index
+        split = layout.split(factor=0.35, align=True)
         if item.is_separator:
-            row = layout.row(align=True)
-            row.label(text=f"— {item.separator_label}", icon="REMOVE")
+            split.label(text="— Separator", icon="REMOVE")
+            split.label(text=item.separator_label)
         else:
             action_names = [a.display_name or a.internal_name for a in item.actions]
             actions_text = ", ".join(action_names) if action_names else "(No action)"
-            layout.label(text=f"{item.shortcut} | {actions_text}", icon="EVENT_K")
+            split.label(text=item.shortcut, icon="EVENT_K")
+            split.label(text=actions_text)
 
 
 class BSL_OT_move_row(bpy.types.Operator):
@@ -162,15 +172,6 @@ class BSL_OT_remove_row(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class BSL_OT_save_table(bpy.types.Operator):
-    bl_idname = "bsl.save_table"
-    bl_label = "Save Shortcut Table"
-
-    def execute(self, context):
-        _save_table(context)
-        return {"FINISHED"}
-
-
 class BSL_PT_panel(bpy.types.Panel):
     bl_label = "Shortcut Logger"
     bl_space_type = "VIEW_3D"
@@ -185,15 +186,18 @@ class BSL_PT_panel(bpy.types.Panel):
         col = layout.column(align=True)
         col.prop(prefs, "enable_listener")
 
-        row = layout.row()
-        row.template_list("BSL_UL_rows", "", wm, "bsl_rows", wm, "bsl_active_row_index", rows=8)
+        table = layout.box()
+        header = table.row(align=True)
+        split = header.split(factor=0.35, align=True)
+        split.label(text="Shortcut")
+        split.label(text="Executed Actions")
+        table.template_list("BSL_UL_rows", "", wm, "bsl_rows", wm, "bsl_active_row_index", rows=8)
 
-        controls = row.column(align=True)
+        controls = layout.row(align=True)
         op = controls.operator("bsl.move_row", text="Move Up", icon="TRIA_UP")
         op.direction = "UP"
         op = controls.operator("bsl.move_row", text="Move Down", icon="TRIA_DOWN")
         op.direction = "DOWN"
-        controls.separator()
         controls.operator("bsl.add_separator", text="Add Separator", icon="ADD")
         controls.operator("bsl.remove_row", text="Remove", icon="X")
 
@@ -210,8 +214,6 @@ class BSL_PT_panel(bpy.types.Panel):
                         box.prop(action, "display_name", text=action.internal_name)
                 else:
                     box.label(text="No action logged yet")
-
-        layout.operator("bsl.save_table", icon="FILE_TICK")
 
 
 def _table_file_path() -> Path:
@@ -562,35 +564,40 @@ def _save_table(context):
 
 
 def _load_table(context):
+    global _suspend_auto_save
     wm = context.window_manager
-    wm.bsl_rows.clear()
-    wm.bsl_active_row_index = -1
-
-    table_path = _table_file_path()
-    if not table_path.exists():
-        return
-
+    _suspend_auto_save = True
     try:
-        data = json.loads(table_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"[Blender Shortcut Logger] Failed to load table: {exc}")
-        return
+        wm.bsl_rows.clear()
+        wm.bsl_active_row_index = -1
 
-    for row_data in data.get("rows", []):
-        row = wm.bsl_rows.add()
-        if row_data.get("type") == "separator":
-            row.is_separator = True
-            row.separator_label = row_data.get("label", "Separator")
-            continue
+        table_path = _table_file_path()
+        if not table_path.exists():
+            return
 
-        row.shortcut = row_data.get("shortcut", "")
-        for action_data in row_data.get("actions", []):
-            action = row.actions.add()
-            action.internal_name = action_data.get("internal", "Unknown")
-            action.display_name = action_data.get("display", action.internal_name)
+        try:
+            data = json.loads(table_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[Blender Shortcut Logger] Failed to load table: {exc}")
+            return
 
-    if len(wm.bsl_rows) > 0:
-        wm.bsl_active_row_index = 0
+        for row_data in data.get("rows", []):
+            row = wm.bsl_rows.add()
+            if row_data.get("type") == "separator":
+                row.is_separator = True
+                row.separator_label = row_data.get("label", "Separator")
+                continue
+
+            row.shortcut = row_data.get("shortcut", "")
+            for action_data in row_data.get("actions", []):
+                action = row.actions.add()
+                action.internal_name = action_data.get("internal", "Unknown")
+                action.display_name = action_data.get("display", action.internal_name)
+
+        if len(wm.bsl_rows) > 0:
+            wm.bsl_active_row_index = 0
+    finally:
+        _suspend_auto_save = False
 
 
 def _start_shortcut_listener():
@@ -634,7 +641,6 @@ classes = (
     BSL_OT_move_row,
     BSL_OT_add_separator,
     BSL_OT_remove_row,
-    BSL_OT_save_table,
     BSL_PT_panel,
 )
 
