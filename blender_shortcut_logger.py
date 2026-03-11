@@ -39,13 +39,12 @@ class WM_OT_shortcut_listener(bpy.types.Operator):
             return {"PASS_THROUGH"}
 
         _logged_shortcuts.add(shortcut)
-        possible_entries = _collect_possible_action_entries(event)
-        actions = [entry["label"] for entry in possible_entries]
+        actions = _collect_possible_actions(event)
 
         before_signature = _current_execution_signature(context)
 
         def _delayed_log():
-            executed_action = _resolve_executed_action(context, before_signature, possible_entries)
+            executed_action = _resolve_executed_action(context, before_signature, actions)
             _print_shortcut_block(shortcut, actions, executed_action)
             return None
 
@@ -159,29 +158,9 @@ def _indirect_actions_from_kmi(kmi) -> list[str]:
     return actions
 
 
-def _add_possible_action(entries, seen_labels, label: str, *match_values: str) -> None:
-    if label in seen_labels:
-        return
-
-    match_keys = set()
-    for value in match_values:
-        if not isinstance(value, str):
-            continue
-        normalized = _normalized(value)
-        if normalized:
-            match_keys.add(normalized)
-
-    label_key = _normalized(label)
-    if label_key:
-        match_keys.add(label_key)
-
-    seen_labels.add(label)
-    entries.append({"label": label, "match_keys": match_keys})
-
-
-def _collect_possible_action_entries(event):
-    entries = []
-    seen_labels = set()
+def _collect_possible_actions(event) -> list[str]:
+    actions = []
+    seen = set()
 
     wm = bpy.context.window_manager
     keyconfigs = [wm.keyconfigs.user, wm.keyconfigs.addon, wm.keyconfigs.default]
@@ -193,30 +172,20 @@ def _collect_possible_action_entries(event):
             for kmi in keymap.keymap_items:
                 if not _keymap_item_matches_event(kmi, event):
                     continue
-
                 action = _action_label_from_kmi(kmi)
-                _add_possible_action(
-                    entries,
-                    seen_labels,
-                    action,
-                    action,
-                    kmi.idname,
-                    _nice_label_from_identifier(kmi.idname),
-                )
+                if action not in seen:
+                    seen.add(action)
+                    actions.append(action)
 
                 for indirect_action in _indirect_actions_from_kmi(kmi):
-                    _add_possible_action(
-                        entries,
-                        seen_labels,
-                        indirect_action,
-                        indirect_action,
-                        kmi.idname,
-                        _nice_label_from_identifier(kmi.idname),
-                    )
+                    if indirect_action in seen:
+                        continue
+                    seen.add(indirect_action)
+                    actions.append(indirect_action)
 
-    if not entries:
-        _add_possible_action(entries, seen_labels, "No action found")
-    return entries
+    if not actions:
+        actions.append("No action found")
+    return actions
 
 
 def _normalized(text: str) -> str:
@@ -226,15 +195,8 @@ def _normalized(text: str) -> str:
 def _current_execution_signature(context):
     wm = context.window_manager
     op_count = len(wm.operators)
-    last_operator_signature = ""
     tool_id = ""
     tool_label = ""
-
-    if wm.operators:
-        op = wm.operators[-1]
-        op_id = getattr(op, "bl_idname", "") or getattr(op, "bl_rna", None) and op.bl_rna.identifier or ""
-        op_name = getattr(op, "name", "") or ""
-        last_operator_signature = f"{op_id}|{op_name}"
 
     ws = context.workspace
     if ws:
@@ -247,27 +209,24 @@ def _current_execution_signature(context):
             tool_id = getattr(tool, "idname", "") or ""
             tool_label = getattr(tool, "label", "") or ""
 
-    return op_count, last_operator_signature, tool_id, tool_label
+    return op_count, tool_id, tool_label
 
 
-def _resolve_executed_action(context, before_signature, possible_entries):
+def _resolve_executed_action(context, before_signature, possible_actions):
     wm = context.window_manager
-    prev_count, prev_last_operator, prev_tool_id, prev_tool_label = before_signature
+    prev_count, prev_tool_id, prev_tool_label = before_signature
 
     candidates = []
 
-    if len(wm.operators) > prev_count or wm.operators:
+    if len(wm.operators) > prev_count:
         op = wm.operators[-1]
         op_id = getattr(op, "bl_idname", "") or getattr(op, "bl_rna", None) and op.bl_rna.identifier or ""
         op_name = getattr(op, "name", "") or ""
-        current_signature = f"{op_id}|{op_name}"
-
-        if len(wm.operators) > prev_count or current_signature != prev_last_operator:
-            if op_name:
-                candidates.append(op_name)
-            if op_id:
-                candidates.append(op_id)
-                candidates.append(_nice_label_from_identifier(op_id))
+        if op_name:
+            candidates.append(op_name)
+        if op_id:
+            candidates.append(op_id)
+            candidates.append(_nice_label_from_identifier(op_id))
 
     ws = context.workspace
     if ws:
@@ -284,26 +243,20 @@ def _resolve_executed_action(context, before_signature, possible_entries):
                     candidates.append(new_tool_label)
                     candidates.append(f"{new_tool_label} Tool")
                 if new_tool_id:
-                    pretty_tool = _nice_label_from_identifier(new_tool_id)
-                    candidates.append(pretty_tool)
-                    candidates.append(f"{pretty_tool} Tool")
+                    candidates.append(_nice_label_from_identifier(new_tool_id))
+                    candidates.append(f"{_nice_label_from_identifier(new_tool_id)} Tool")
+
+    normalized_possible = {_normalized(action): action for action in possible_actions}
+    for cand in candidates:
+        key = _normalized(cand)
+        if key in normalized_possible:
+            return normalized_possible[key]
 
     for cand in candidates:
         ckey = _normalized(cand)
-        if not ckey:
-            continue
-        for entry in possible_entries:
-            if ckey in entry["match_keys"]:
-                return entry["label"]
-
-    for cand in candidates:
-        ckey = _normalized(cand)
-        if not ckey:
-            continue
-        for entry in possible_entries:
-            for pkey in entry["match_keys"]:
-                if ckey in pkey or pkey in ckey:
-                    return entry["label"]
+        for pkey, action in normalized_possible.items():
+            if ckey and (ckey in pkey or pkey in ckey):
+                return action
 
     return "Unknown"
 
