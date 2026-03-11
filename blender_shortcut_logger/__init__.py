@@ -514,20 +514,29 @@ def _upsert_shortcut_action(shortcut: str, executed_action: str):
     context = bpy.context
     wm = context.window_manager
 
+    shortcut_key = (shortcut or "").strip()
+    if not shortcut_key:
+        return
+
+    internal_key = (executed_action or "").strip() or "Unknown"
+
+    # De-duplicate only exact (shortcut + action) pairs.
+    # A known action on a different shortcut must still be logged.
     row = None
     for item in wm.bsl_rows:
-        if not item.is_separator and item.shortcut == shortcut:
-            row = item
-            break
+        if item.is_separator:
+            continue
+        if (item.shortcut or "").strip() != shortcut_key:
+            continue
+        row = item
+        for action in item.actions:
+            if (action.internal_name or "").strip() == internal_key:
+                return
+        break
 
     if row is None:
         row = wm.bsl_rows.add()
-        row.shortcut = shortcut
-
-    internal_key = executed_action.strip() or "Unknown"
-    for action in row.actions:
-        if action.internal_name == internal_key:
-            return
+        row.shortcut = shortcut_key
 
     action = row.actions.add()
     action.internal_name = internal_key
