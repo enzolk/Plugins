@@ -187,6 +187,7 @@ class BSL_PT_panel(bpy.types.Panel):
         layout = self.layout
         wm = context.window_manager
         prefs = _get_prefs()
+        visible_rows = _visible_table_rows(context, len(wm.bsl_rows))
 
         col = layout.column(align=True)
         col.prop(prefs, "enable_listener")
@@ -196,7 +197,16 @@ class BSL_PT_panel(bpy.types.Panel):
         split = header.split(factor=0.35, align=True)
         split.label(text="Shortcut")
         split.label(text="Executed Actions")
-        table.template_list("BSL_UL_rows", "", wm, "bsl_rows", wm, "bsl_active_row_index", rows=8)
+        table.template_list(
+            "BSL_UL_rows",
+            "",
+            wm,
+            "bsl_rows",
+            wm,
+            "bsl_active_row_index",
+            rows=visible_rows,
+            maxrows=visible_rows,
+        )
 
         controls = layout.row(align=True)
         op = controls.operator("bsl.move_row", text="Move Up", icon="TRIA_UP")
@@ -220,6 +230,21 @@ class BSL_PT_panel(bpy.types.Panel):
                         box.prop(action, "display_name", text=label)
                 else:
                     box.label(text="No action logged yet")
+
+
+def _visible_table_rows(context, row_count: int) -> int:
+    region_height = getattr(context.region, "height", 0)
+    if region_height <= 0:
+        return min(max(row_count, 8), 18)
+
+    reserved_height = 280
+    pixels_per_row = 22
+    available_height = max(region_height - reserved_height, pixels_per_row * 6)
+    fitted_rows = max(6, available_height // pixels_per_row)
+
+    if row_count > 0:
+        return max(6, min(fitted_rows, row_count))
+    return 6
 
 
 def _is_unknown_action(value: str) -> bool:
