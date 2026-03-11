@@ -9,7 +9,6 @@ bl_info = {
 }
 
 import bpy
-import bmesh
 from mathutils import Matrix, Vector
 
 
@@ -34,37 +33,6 @@ def _basis_from_z_and_hint(z_axis: Vector, x_hint: Vector) -> Matrix:
 
 
 def _selected_component_world_position(context):
-    obj = context.active_object
-    if obj and obj.type == 'MESH' and obj.mode == 'EDIT':
-        bm = bmesh.from_edit_mesh(obj.data)
-
-        active = bm.select_history.active
-        if active and getattr(active, "select", False):
-            if isinstance(active, bmesh.types.BMVert):
-                return obj.matrix_world @ active.co.copy()
-            if isinstance(active, bmesh.types.BMEdge):
-                center = (active.verts[0].co + active.verts[1].co) * 0.5
-                return obj.matrix_world @ center
-            if isinstance(active, bmesh.types.BMFace):
-                return obj.matrix_world @ active.calc_center_median()
-
-        selected_verts = [v for v in bm.verts if v.select]
-        if selected_verts:
-            local_pos = sum((v.co for v in selected_verts), Vector((0.0, 0.0, 0.0))) / len(selected_verts)
-            return obj.matrix_world @ local_pos
-
-        selected_edges = [e for e in bm.edges if e.select]
-        if selected_edges:
-            edge_centers = [(e.verts[0].co + e.verts[1].co) * 0.5 for e in selected_edges]
-            local_pos = sum(edge_centers, Vector((0.0, 0.0, 0.0))) / len(edge_centers)
-            return obj.matrix_world @ local_pos
-
-        selected_faces = [f for f in bm.faces if f.select]
-        if selected_faces:
-            face_centers = [f.calc_center_median() for f in selected_faces]
-            local_pos = sum(face_centers, Vector((0.0, 0.0, 0.0))) / len(face_centers)
-            return obj.matrix_world @ local_pos
-
     cursor = context.scene.cursor
     old_loc = cursor.location.copy()
     try:
