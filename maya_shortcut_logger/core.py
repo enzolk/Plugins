@@ -189,6 +189,9 @@ class MayaShortcutLogger(QtCore.QObject):
     def _finalize(self, shortcut, possible, t0):
         commands = [txt for ts, txt in self.command_history if ts >= t0]
         executed = self._infer_executed(possible, commands)
+        fallback_actions = []
+        if not executed:
+            fallback_actions = self._fallback_actions(possible)
 
         print(f'Shortcut : "{shortcut}"')
         print("\nPossible actions :")
@@ -199,7 +202,26 @@ class MayaShortcutLogger(QtCore.QObject):
             print("\nExecuted action :")
             print(f"- {official}")
             self.store.add_link(shortcut, official)
+        elif fallback_actions:
+            print("\nRecorded action(s) (fallback) :")
+            for action in fallback_actions:
+                official = self._official_action_name(action)
+                print(f"- {official}")
+                self.store.add_link(shortcut, official)
         print("")
+
+    def _fallback_actions(self, possible_actions):
+        valid = [a for a in possible_actions if a and a != "No action found"]
+        if not valid:
+            return []
+
+        press_actions = [a for a in valid if str(a).strip().lower().endswith("press")]
+        if press_actions:
+            return press_actions
+
+        if len(valid) == 1:
+            return valid
+        return []
 
     def _build_shortcut(self, event):
         key = event.key()
