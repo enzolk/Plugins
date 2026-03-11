@@ -54,6 +54,27 @@ _last_active_by_scene = {}  # scene_key -> {"ptr": int, "name": str}
 # Track last known transform of objects (for Undo/Redo / fast moves)
 _last_obj_xform = {}  # obj_ptr -> (loc(Vector3), rot(Quat), scale(Vector3))
 
+# Edit-mode safety throttling (scene_ptr -> remaining ticks to skip)
+_scene_edit_skip_ticks = {}
+
+# Operators known to mutate topology in edit mode.
+_SENSITIVE_EDIT_OP_KEYWORDS = (
+    "MESH_OT_crease",
+    "MESH_OT_bevel",
+    "MESH_OT_merge",
+    "MESH_OT_delete",
+    "MESH_OT_dissolve",
+    "MESH_OT_split",
+    "MESH_OT_rip",
+    "MESH_OT_subdivide",
+    "MESH_OT_unsubdivide",
+    "MESH_OT_poke",
+    "MESH_OT_extrude",
+    "MESH_OT_duplicate",
+    "MESH_OT_separate",
+    "MESH_OT_symmetrize",
+)
+
 # thresholds for object transform change detection
 OBJ_LOC_EPS = 1e-12
 OBJ_ROT_EPS = 1e-12
@@ -184,6 +205,67 @@ def _update_obj_xform_cache(obj):
     except Exception:
         ptr = id(obj)
     _last_obj_xform[ptr] = _decompose_matrix_world(obj)
+
+
+def _scene_key(scene) -> int:
+    try:
+        return scene.as_pointer()
+    except Exception:
+        return id(scene)
+
+
+def _schedule_edit_skip(scene, ticks: int = 1):
+    if not scene:
+        return
+    key = _scene_key(scene)
+    _scene_edit_skip_ticks[key] = max(int(ticks), int(_scene_edit_skip_ticks.get(key, 0)))
+
+
+def _consume_edit_skip(scene) -> bool:
+    if not scene:
+        return False
+    key = _scene_key(scene)
+    ticks = int(_scene_edit_skip_ticks.get(key, 0))
+    if ticks <= 0:
+        return False
+    if ticks == 1:
+        _scene_edit_skip_ticks.pop(key, None)
+    else:
+        _scene_edit_skip_ticks[key] = ticks - 1
+    return True
+
+
+def _has_sensitive_running_operator() -> bool:
+    try:
+        wm = bpy.context.window_manager
+        ops = getattr(wm, "operators", None)
+        if not ops:
+            return False
+        for op in ops:
+            op_id = getattr(op, "bl_idname", "") or getattr(op, "idname", "")
+            op_id_norm = str(op_id).replace(".", "_OT_").upper()
+            if any(k in op_id_norm for k in _SENSITIVE_EDIT_OP_KEYWORDS):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _is_safe_edit_mesh_context(scene, obj) -> bool:
+    if not scene or not obj or obj.type != "MESH":
+        return False
+    if obj.mode != "EDIT" or not obj.data or not obj.data.is_editmode:
+        return False
+    try:
+        if bpy.context.scene is not scene:
+            return False
+        if bpy.context.active_object is not obj:
+            return False
+    except Exception:
+        return False
+    if _has_sensitive_running_operator():
+        return False
+    return True
 
 
 # ------------------------------------------------------------
@@ -899,10 +981,18 @@ def _find_vertex_tangent_neighbor_edit(bm, v_index: int):
 
 
 def _find_nearest_component_in_edit(obj, cursor_world: Vector, snap_tol: float):
-    bm = bmesh.from_edit_mesh(obj.data)
-    bm.verts.ensure_lookup_table()
-    bm.edges.ensure_lookup_table()
-    bm.faces.ensure_lookup_table()
+    if not obj or obj.type != "MESH" or not obj.data or not obj.data.is_editmode:
+        return None
+
+    try:
+        bm = bmesh.from_edit_mesh(obj.data)
+        if bm is None:
+            return None
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+    except Exception:
+        return None
 
     M = obj.matrix_world
 
@@ -914,14 +1004,20 @@ def _find_nearest_component_in_edit(obj, cursor_world: Vector, snap_tol: float):
     d2_edge = None
     d2_face = None
 
-    for v in bm.verts:
+    try:
+        verts = list(bm.verts)
+        edges = list(bm.edges)
+    except Exception:
+        return None
+
+    for v in verts:
         pw = M @ v.co
         d2 = (pw - cursor_world).length_squared
         if d2_vert is None or d2 < d2_vert:
             d2_vert = d2
             best_vert = {"type": "VERT", "v": v.index, "p": pw}
 
-    for e in bm.edges:
+    for e in edges:
         v1, v2 = e.verts[0], e.verts[1]
         a = M @ v1.co
         b = M @ v2.co
@@ -933,7 +1029,13 @@ def _find_nearest_component_in_edit(obj, cursor_world: Vector, snap_tol: float):
             d2_edge = d2
             best_edge = {"type": "EDGE", "v1": v1.index, "v2": v2.index, "t": t, "p": p}
 
-    bm2 = bm.copy()
+    try:
+        bm2 = bm.copy()
+    except Exception:
+        bm2 = None
+    if bm2 is None:
+        return _choose_best_with_priority(best_vert, d2_vert, best_edge, d2_edge, best_face, d2_face, snap_tol)
+
     try:
         bm2.verts.ensure_lookup_table()
         bm2.faces.ensure_lookup_table()
@@ -993,9 +1095,12 @@ def _nearest_component_distance(obj, depsgraph, cursor_world: Vector, snap_tol: 
     if not obj or obj.type != "MESH":
         return None
 
-    nearest = _find_nearest_component_in_edit(obj, cursor_world, snap_tol) if (
-        obj.mode == "EDIT" and obj.data and obj.data.is_editmode
-    ) else _find_nearest_component_objectmode(obj, depsgraph, cursor_world, snap_tol)
+    if obj.mode == "EDIT" and obj.data and obj.data.is_editmode:
+        if not _is_safe_edit_mesh_context(getattr(bpy.context, "scene", None), obj):
+            return None
+        nearest = _find_nearest_component_in_edit(obj, cursor_world, snap_tol)
+    else:
+        nearest = _find_nearest_component_objectmode(obj, depsgraph, cursor_world, snap_tol)
 
     if not nearest:
         return None
@@ -1372,12 +1477,22 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     if not s or not s.auto_attach:
         return
 
+    if _consume_edit_skip(scene):
+        _set_status(scene, "Auto Attach: edit update in progress (deferred).")
+        return
+
     # Per-object cursor state swap on active object change (context scene only)
     _handle_active_object_switch(scene, depsgraph)
 
     obj = bpy.context.active_object
     if not obj or obj.type != "MESH":
         _clear_attachment(scene, "Auto Attach: no active Mesh object.")
+        return
+
+    in_edit_mesh = bool(obj.mode == "EDIT" and obj.data and obj.data.is_editmode)
+    if in_edit_mesh and (not _is_safe_edit_mesh_context(scene, obj)):
+        _schedule_edit_skip(scene, ticks=1)
+        _set_status(scene, "Auto Attach: unsafe edit context, tick skipped.")
         return
 
     # Ensure binding points to current object if it has a saved state
@@ -1396,7 +1511,7 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     if (not _has_attachment(scene)) or user_moved:
         tol = max(0.0, float(s.snap_tolerance))
 
-        if obj.mode == "EDIT" and obj.data and obj.data.is_editmode:
+        if in_edit_mesh:
             best = _find_nearest_component_in_edit(obj, cur_loc, tol)
         else:
             best = _find_nearest_component_objectmode(obj, depsgraph, cur_loc, tol)
@@ -1410,6 +1525,11 @@ def _auto_attach_tick(scene, depsgraph, source=""):
         mode, payload = _get_mesh_access_for_follow(obj, depsgraph)
         if mode == "NONE" or not payload:
             _clear_attachment(scene, "Auto Attach: cannot access mesh data.")
+            return
+
+        if mode == "EDIT" and (not _is_safe_edit_mesh_context(scene, obj)):
+            _schedule_edit_skip(scene, ticks=1)
+            _set_status(scene, "Auto Attach: edit topology update detected, deferred.")
             return
 
         try:
@@ -1446,6 +1566,11 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     mode, payload = _get_mesh_access_for_follow(attach_obj, depsgraph)
     if mode == "NONE" or not payload:
         _clear_attachment(scene, "Auto Attach: cannot access mesh data.")
+        return
+
+    if mode == "EDIT" and (not _is_safe_edit_mesh_context(scene, attach_obj)):
+        _schedule_edit_skip(scene, ticks=1)
+        _set_status(scene, "Auto Attach: attached mesh in unsafe edit state, deferred.")
         return
 
     try:
@@ -1507,11 +1632,21 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
 def _depsgraph_handler(depsgraph):
     _depsgraph_handler.__name__ = _HANDLER_TAG
+
+    if _has_sensitive_running_operator():
+        for scene in bpy.data.scenes:
+            _schedule_edit_skip(scene, ticks=2)
+        return
+
     for scene in bpy.data.scenes:
         s = _get_settings(scene)
         if not s or not s.auto_attach:
             continue
-        _auto_attach_tick(scene, depsgraph, source="DEPSGRAPH")
+        try:
+            _auto_attach_tick(scene, depsgraph, source="DEPSGRAPH")
+        except Exception:
+            # Never let the depsgraph callback propagate unexpected errors.
+            _schedule_edit_skip(scene, ticks=2)
 
 
 # ------------------------------------------------------------
@@ -1678,6 +1813,7 @@ def unregister():
 
     _last_active_by_scene.clear()
     _last_obj_xform.clear()
+    _scene_edit_skip_ticks.clear()
 
 
 if __name__ == "__main__":
