@@ -54,4 +54,7 @@ The summary table groups links without duplicates:
 ## Interface behavior
 - The summary window stays on top of Maya (always-on-top).
 - The table refreshes automatically when a new shortcut→executed-action link is recorded.
-- `Refresh` remains available for manual refresh, but is no longer required in normal use.
+- Rows can be reordered with drag-and-drop.
+- You can add separator rows to organize groups.
+- `Delete` removes only the selected row (entry or separator).
+- Executed action labels are editable in the UI. The original internal action id is still stored for duplicate detection.
