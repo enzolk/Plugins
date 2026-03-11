@@ -33,139 +33,34 @@ _SPECIAL_KEYS = {
 class ShortcutStore:
     def __init__(self, file_path: Path):
         self.file_path = file_path
-        self.rows = []
+        self.edges = {}  # shortcut -> set(actions)
         self._listeners = []
         self.load()
 
     def load(self):
         if not self.file_path.exists():
-            self.rows = []
+            self.edges = {}
             return
         try:
             data = json.loads(self.file_path.read_text(encoding="utf-8"))
-            rows = data.get("rows")
-            if isinstance(rows, list):
-                self.rows = []
-                for row in rows:
-                    normalized = self._normalize_row(row)
-                    if normalized:
-                        self.rows.append(normalized)
-                return
-
-            # Backward compatibility with older data format.
-            self.rows = []
-            edges = data.get("edges") or {}
-            for shortcut in sorted(edges):
-                for action in sorted(edges.get(shortcut) or []):
-                    self.rows.append(
-                        {
-                            "type": "entry",
-                            "shortcut": str(shortcut),
-                            "action_original": str(action),
-                            "action_display": str(action),
-                        }
-                    )
+            self.edges = {k: set(v) for k, v in (data.get("edges") or {}).items()}
         except Exception:
-            self.rows = []
+            self.edges = {}
 
     def save(self):
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"rows": self.rows}
+        payload = {"edges": {k: sorted(v) for k, v in self.edges.items()}}
         self.file_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def add_link(self, shortcut: str, action: str):
         if not shortcut or not action:
             return
-        shortcut = str(shortcut).strip()
-        action = str(action).strip()
-        if not shortcut or not action:
-            return
-
-        for row in self.rows:
-            if row.get("type") != "entry":
-                continue
-            if row.get("shortcut") == shortcut and row.get("action_original") == action:
-                return
-
-        self.rows.append(
-            {
-                "type": "entry",
-                "shortcut": shortcut,
-                "action_original": action,
-                "action_display": action,
-            }
-        )
-        self.save()
-        self._notify()
-
-    def add_separator(self, label: str = "──────────"):
-        self.rows.append({"type": "separator", "label": str(label or "──────────")})
-        self.save()
-        self._notify()
-
-    def delete_row(self, index: int):
-        if index < 0 or index >= len(self.rows):
-            return
-        self.rows.pop(index)
-        self.save()
-        self._notify()
-
-    def move_row(self, index: int, target_index: int):
-        if index < 0 or target_index < 0:
-            return
-        if index >= len(self.rows) or target_index >= len(self.rows):
-            return
-        if index == target_index:
-            return
-        row = self.rows.pop(index)
-        self.rows.insert(target_index, row)
-        self.save()
-        self._notify()
-
-    def rename_action(self, index: int, display_name: str):
-        if index < 0 or index >= len(self.rows):
-            return False
-        row = self.rows[index]
-        if row.get("type") != "entry":
-            return False
-        row["action_display"] = str(display_name or row.get("action_original") or "").strip() or row.get("action_original")
-        self.save()
-        self._notify()
-        return True
-
-    def rename_separator(self, index: int, label: str):
-        if index < 0 or index >= len(self.rows):
-            return False
-        row = self.rows[index]
-        if row.get("type") != "separator":
-            return False
-        row["label"] = str(label or "──────────")
-        self.save()
-        self._notify()
-        return True
-
-    def table_rows(self):
-        return [dict(row) for row in self.rows]
-
-    def _normalize_row(self, row):
-        if not isinstance(row, dict):
-            return None
-
-        row_type = str(row.get("type") or "entry")
-        if row_type == "separator":
-            return {"type": "separator", "label": str(row.get("label") or "──────────")}
-
-        shortcut = str(row.get("shortcut") or "").strip()
-        action_original = str(row.get("action_original") or "").strip()
-        action_display = str(row.get("action_display") or action_original).strip()
-        if not shortcut or not action_original:
-            return None
-        return {
-            "type": "entry",
-            "shortcut": shortcut,
-            "action_original": action_original,
-            "action_display": action_display or action_original,
-        }
+        before = len(self.edges.get(shortcut, set()))
+        self.edges.setdefault(shortcut, set()).add(action)
+        after = len(self.edges.get(shortcut, set()))
+        if after != before:
+            self.save()
+            self._notify()
 
     def add_listener(self, callback):
         if callback and callback not in self._listeners:
@@ -179,21 +74,15 @@ class ShortcutStore:
                 continue
 
     def components(self):
-        edges = {}
-        for row in self.rows:
-            if row.get("type") != "entry":
-                continue
-            edges.setdefault(row.get("shortcut"), set()).add(row.get("action_original"))
-
         # bipartite components: shortcuts <-> actions
         action_to_shortcuts = {}
-        for s, acts in edges.items():
+        for s, acts in self.edges.items():
             for a in acts:
                 action_to_shortcuts.setdefault(a, set()).add(s)
 
         visited_shortcuts = set()
         rows = []
-        for shortcut in sorted(edges.keys()):
+        for shortcut in sorted(self.edges.keys()):
             if shortcut in visited_shortcuts:
                 continue
             q_short = [shortcut]
@@ -208,7 +97,7 @@ class ShortcutStore:
                         continue
                     comp_short.add(s)
                     visited_shortcuts.add(s)
-                    for a in edges.get(s, set()):
+                    for a in self.edges.get(s, set()):
                         if a not in comp_act:
                             q_act.append(a)
 
