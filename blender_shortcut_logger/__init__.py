@@ -113,8 +113,8 @@ class BSL_UL_rows(bpy.types.UIList):
             split.label(text="— Separator", icon="REMOVE")
             split.label(text=item.separator_label)
         else:
-            action_names = [a.display_name or a.internal_name for a in item.actions]
-            actions_text = ", ".join(action_names) if action_names else "(No action)"
+            action_names = [_visible_action_name(a) for a in item.actions]
+            actions_text = ", ".join(name for name in action_names if name)
             split.label(text=item.shortcut, icon="EVENT_K")
             split.label(text=actions_text)
 
@@ -216,9 +216,34 @@ class BSL_PT_panel(bpy.types.Panel):
                 box.label(text=f"Shortcut: {item.shortcut}")
                 if item.actions:
                     for action in item.actions:
-                        box.prop(action, "display_name", text=action.internal_name)
+                        label = "" if _is_unknown_action(action.internal_name) else action.internal_name
+                        box.prop(action, "display_name", text=label)
                 else:
                     box.label(text="No action logged yet")
+
+
+def _is_unknown_action(value: str) -> bool:
+    return _normalized(value or "") == "unknown"
+
+
+def _visible_action_name(action) -> str:
+    display_name = (action.display_name or "").strip()
+    if display_name:
+        return display_name
+
+    internal_name = (action.internal_name or "").strip()
+    if _is_unknown_action(internal_name):
+        return ""
+    return internal_name
+
+
+def _stored_display_name(internal_name: str, display_name: str) -> str:
+    display = (display_name or "").strip()
+    if _is_unknown_action(internal_name) and _is_unknown_action(display):
+        return ""
+    if display:
+        return display
+    return "" if _is_unknown_action(internal_name) else (internal_name or "")
 
 
 def _table_file_path() -> Path:
@@ -563,7 +588,7 @@ def _upsert_shortcut_action(shortcut: str, executed_action: str):
 
     action = row.actions.add()
     action.internal_name = internal_key
-    action.display_name = internal_key
+    action.display_name = _stored_display_name(internal_key, "")
     _save_table(context)
 
 
@@ -624,7 +649,10 @@ def _load_table(context):
             for action_data in row_data.get("actions", []):
                 action = row.actions.add()
                 action.internal_name = action_data.get("internal", "Unknown")
-                action.display_name = action_data.get("display", action.internal_name)
+                action.display_name = _stored_display_name(
+                    action.internal_name,
+                    action_data.get("display", action.internal_name),
+                )
 
         if len(wm.bsl_rows) > 0:
             wm.bsl_active_row_index = 0
