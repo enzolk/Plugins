@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Cursor Auto Attach (Vertex/Edge/Face) - Edit+Object + Manual Cursor Editing (Timer Safe)",
     "author": "ChatGPT",
-    "version": (2, 1, 0),
+    "version": (2, 1, 1),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar (N) > Cursor",
     "description": "Auto-attach 3D Cursor to nearest mesh component. Cursor stays editable and compatible with other cursor tools (timer poll + depsgraph follow).",
@@ -58,6 +58,40 @@ _last_obj_xform = {}  # obj_ptr -> (loc(Vector3), rot(Quat), scale(Vector3))
 OBJ_LOC_EPS = 1e-12
 OBJ_ROT_EPS = 1e-12
 OBJ_SCL_EPS = 1e-12
+
+
+def _is_transform_operator_running() -> bool:
+    """True while a modal transform operator (gizmo/grab/rotate/scale) is running."""
+    wm = getattr(bpy.context, "window_manager", None)
+    if wm is None:
+        return False
+    try:
+        for op in wm.operators:
+            op_id = getattr(op, "bl_idname", "")
+            if isinstance(op_id, str) and op_id.startswith("TRANSFORM_OT_"):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _uses_cursor_transform_reference(scene) -> bool:
+    """True when pivot/orientation depends on the 3D cursor."""
+    try:
+        if getattr(scene.tool_settings, "transform_pivot_point", "") == "CURSOR":
+            return True
+    except Exception:
+        pass
+
+    try:
+        slots = getattr(scene, "transform_orientation_slots", None)
+        slot0 = slots[0] if slots else None
+        if slot0 and getattr(slot0, "type", "") == "CURSOR":
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 # ------------------------------------------------------------
@@ -1383,6 +1417,16 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
     user_moved = _loc_changed(cur_loc, last_loc)
     user_rotated = _rot_changed(cur_rot, last_rot)
+
+    is_transforming = _is_transform_operator_running()
+    cursor_ref_transform = _uses_cursor_transform_reference(scene)
+
+    # While a transform modal operator is active and uses cursor references,
+    # do not move the cursor from this addon (it would fight gizmo interaction).
+    if is_transforming and cursor_ref_transform:
+        _set_last_applied_cursor(scene, cur_loc, cur_rot)
+        _update_obj_xform_cache(obj)
+        return
 
     # If cursor changed (manual or by another addon/operator), adapt offsets / reattach
     if (not _has_attachment(scene)) or user_moved:
