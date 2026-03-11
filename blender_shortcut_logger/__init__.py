@@ -33,6 +33,11 @@ _SPECIAL_KEY_LABELS = {
     "PAGE_DOWN": "PageDown",
 }
 
+_KNOWN_GLOBAL_ACTIONS = (
+    ("Undo", {"undo", "edundo"}),
+    ("Redo", {"redo", "edredo"}),
+)
+
 
 def _auto_save_update(self, context):
     del self
@@ -425,6 +430,24 @@ def _collect_possible_action_entries(event):
     return entries
 
 
+def _fallback_action_from_possible_entries(possible_entries):
+    valid_entries = [entry for entry in possible_entries if entry["label"] != "No action found"]
+    if not valid_entries:
+        return "Unknown"
+
+    for canonical_label, known_keys in _KNOWN_GLOBAL_ACTIONS:
+        for entry in valid_entries:
+            if known_keys.intersection(entry["match_keys"]):
+                if _normalized(entry["label"]) == _normalized(canonical_label):
+                    return entry["label"]
+                return canonical_label
+
+    if len(valid_entries) == 1:
+        return valid_entries[0]["label"]
+
+    return "Unknown"
+
+
 def _current_execution_signature(context):
     wm = context.window_manager
     op_count = len(wm.operators)
@@ -507,7 +530,7 @@ def _resolve_executed_action(context, before_signature, possible_entries):
                 if ckey in pkey or pkey in ckey:
                     return entry["label"]
 
-    return "Unknown"
+    return _fallback_action_from_possible_entries(possible_entries)
 
 
 def _upsert_shortcut_action(shortcut: str, executed_action: str):
