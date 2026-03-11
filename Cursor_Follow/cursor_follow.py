@@ -1328,7 +1328,7 @@ def _update_offsets_to_match_current_cursor(scene, comp_point_world: Vector, com
 
 
 def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quaternion, attach_obj=None):
-    """Follow: write cursor only when it wasn't manually changed this tick."""
+    """Follow: write cursor only when needed to avoid gizmo interaction jitter."""
     s = _get_settings(scene)
 
     basis = comp_q.to_matrix()
@@ -1344,8 +1344,16 @@ def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quatern
         else:
             out_rot = comp_q @ rot_off
 
-    _set_cursor_world(scene, out_loc)
-    if s.follow_rotation:
+    # IMPORTANT:
+    # Avoid rewriting the cursor transform when values are effectively unchanged.
+    # Continuous no-op writes (timer + depsgraph) can disturb gizmo picking,
+    # especially when Transform Orientation/Pivot are both set to Cursor.
+    cur_loc = _cursor_world(scene)
+    cur_rot = _cursor_world_quat(scene)
+
+    if _loc_changed(cur_loc, out_loc):
+        _set_cursor_world(scene, out_loc)
+    if s.follow_rotation and _rot_changed(cur_rot, out_rot):
         _set_cursor_world_quat(scene, out_rot)
 
     _set_last_applied_cursor(scene, out_loc, out_rot)
