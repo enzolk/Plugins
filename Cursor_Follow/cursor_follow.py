@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Cursor Auto Attach (Vertex/Edge/Face) - Edit+Object + Manual Cursor Editing (Timer Safe)",
     "author": "ChatGPT",
-    "version": (2, 1, 0),
+    "version": (2, 1, 4),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar (N) > Cursor",
     "description": "Auto-attach 3D Cursor to nearest mesh component. Cursor stays editable and compatible with other cursor tools (timer poll + depsgraph follow).",
@@ -10,6 +10,7 @@ bl_info = {
 
 import bpy
 import bmesh
+import time
 from bpy.props import (
     BoolProperty,
     StringProperty,
@@ -54,10 +55,47 @@ _last_active_by_scene = {}  # scene_key -> {"ptr": int, "name": str}
 # Track last known transform of objects (for Undo/Redo / fast moves)
 _last_obj_xform = {}  # obj_ptr -> (loc(Vector3), rot(Quat), scale(Vector3))
 
+# temporary follow suspension per scene while interactive cursor-referenced transforms run
+_suspend_follow_until = {}  # scene_ptr -> monotonic_time
+
 # thresholds for object transform change detection
 OBJ_LOC_EPS = 1e-12
 OBJ_ROT_EPS = 1e-12
 OBJ_SCL_EPS = 1e-12
+
+
+def _is_transform_operator_running() -> bool:
+    """True while a modal transform operator (gizmo/grab/rotate/scale) is running."""
+    wm = getattr(bpy.context, "window_manager", None)
+    if wm is None:
+        return False
+    try:
+        for op in wm.operators:
+            op_id = getattr(op, "bl_idname", "")
+            if isinstance(op_id, str) and op_id.startswith("TRANSFORM_OT_"):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _uses_cursor_transform_reference(scene) -> bool:
+    """True when pivot/orientation depends on the 3D cursor."""
+    try:
+        if getattr(scene.tool_settings, "transform_pivot_point", "") == "CURSOR":
+            return True
+    except Exception:
+        pass
+
+    try:
+        slots = getattr(scene, "transform_orientation_slots", None)
+        slot0 = slots[0] if slots else None
+        if slot0 and getattr(slot0, "type", "") == "CURSOR":
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 # ------------------------------------------------------------
@@ -1384,8 +1422,29 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     user_moved = _loc_changed(cur_loc, last_loc)
     user_rotated = _rot_changed(cur_rot, last_rot)
 
+    is_transforming = _is_transform_operator_running()
+    cursor_ref_transform = _uses_cursor_transform_reference(scene)
+
+    # Robust guard for interactive cursor-referenced transforms:
+    # while object transform keeps changing, suspend follow writes briefly,
+    # then resume automatically right after interaction settles.
+    scene_ptr = scene.as_pointer() if hasattr(scene, "as_pointer") else id(scene)
+    now = time.monotonic()
+    if cursor_ref_transform and _obj_xform_changed(obj):
+        _suspend_follow_until[scene_ptr] = now + (TIMER_INTERVAL * 2.5)
+        # Refresh cache immediately so suspension is short-lived and does not loop forever.
+        _update_obj_xform_cache(obj)
+
+    if now < _suspend_follow_until.get(scene_ptr, 0.0):
+        _set_last_applied_cursor(scene, cur_loc, cur_rot)
+        return
+
+    # During cursor-referenced modal transforms, keep the current attachment follow
+    # but ignore manual-cursor reattach/offset updates to avoid gizmo feedback loops.
+    suppress_cursor_rebind = is_transforming and cursor_ref_transform and _has_attachment(scene)
+
     # If cursor changed (manual or by another addon/operator), adapt offsets / reattach
-    if (not _has_attachment(scene)) or user_moved:
+    if ((not _has_attachment(scene)) or user_moved) and (not suppress_cursor_rebind):
         tol = max(0.0, float(s.snap_tolerance))
 
         if obj.mode == "EDIT" and obj.data and obj.data.is_editmode:
@@ -1455,7 +1514,7 @@ def _auto_attach_tick(scene, depsgraph, source=""):
             return
 
         # If user rotated manually: update offsets (do not write cursor)
-        if user_rotated:
+        if user_rotated and (not suppress_cursor_rebind):
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
             _obj_save_state(scene, obj)
             _update_obj_xform_cache(attach_obj)
