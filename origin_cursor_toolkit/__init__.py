@@ -80,61 +80,61 @@ def _selected_component_data(context):
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
     x_hint_world = world_matrix.to_3x3().col[0].xyz
 
+    v_mode, e_mode, f_mode = context.tool_settings.mesh_select_mode
+    if f_mode:
+        selected_components = [f for f in bm.faces if f.select]
+        selected_type = bmesh.types.BMFace
+    elif e_mode:
+        selected_components = [e for e in bm.edges if e.select]
+        selected_type = bmesh.types.BMEdge
+    else:
+        selected_components = [v for v in bm.verts if v.select]
+        selected_type = bmesh.types.BMVert
+
+    if not selected_components:
+        return None
+
     active = bm.select_history.active
-    if active and getattr(active, "select", False):
-        if isinstance(active, bmesh.types.BMVert):
-            position = world_matrix @ active.co.copy()
-            normal = _normal_to_world(normal_matrix, active.normal)
-            orientation = _basis_from_z_and_hint(normal, x_hint_world)
-            return {"position": position, "orientation": orientation}
-
-        if isinstance(active, bmesh.types.BMEdge):
-            local_center = (active.verts[0].co + active.verts[1].co) * 0.5
-            position = world_matrix @ local_center
-            normal = _edge_world_normal(active, normal_matrix)
-            edge_dir_world = world_matrix.to_3x3() @ (active.verts[1].co - active.verts[0].co)
-            orientation = _basis_from_z_and_hint(normal, edge_dir_world)
-            return {"position": position, "orientation": orientation}
-
-        if isinstance(active, bmesh.types.BMFace):
-            position = world_matrix @ active.calc_center_median()
-            normal = _normal_to_world(normal_matrix, active.normal)
-            tangent = world_matrix.to_3x3() @ active.calc_tangent_edge_pair()
-            orientation = _basis_from_z_and_hint(normal, tangent)
-            return {"position": position, "orientation": orientation}
+    has_single_selection = len(selected_components) == 1
+    if has_single_selection and active and isinstance(active, selected_type) and getattr(active, "select", False):
+        selected_components = [active]
 
     components = []
-    selected_verts = [v for v in bm.verts if v.select]
-    if selected_verts:
-        for vert in selected_verts:
-            components.append((world_matrix @ vert.co.copy(), _normal_to_world(normal_matrix, vert.normal)))
-    else:
-        selected_edges = [e for e in bm.edges if e.select]
-        if selected_edges:
-            for edge in selected_edges:
-                local_center = (edge.verts[0].co + edge.verts[1].co) * 0.5
-                components.append((world_matrix @ local_center, _edge_world_normal(edge, normal_matrix)))
+    for component in selected_components:
+        if isinstance(component, bmesh.types.BMVert):
+            position = world_matrix @ component.co.copy()
+            normal = _normal_to_world(normal_matrix, component.normal)
+            hint = x_hint_world
+        elif isinstance(component, bmesh.types.BMEdge):
+            local_center = (component.verts[0].co + component.verts[1].co) * 0.5
+            position = world_matrix @ local_center
+            normal = _edge_world_normal(component, normal_matrix)
+            hint = world_matrix.to_3x3() @ (component.verts[1].co - component.verts[0].co)
         else:
-            selected_faces = [f for f in bm.faces if f.select]
-            for face in selected_faces:
-                components.append((world_matrix @ face.calc_center_median(), _normal_to_world(normal_matrix, face.normal)))
+            position = world_matrix @ component.calc_center_median()
+            normal = _normal_to_world(normal_matrix, component.normal)
+            hint = world_matrix.to_3x3() @ component.calc_tangent_edge_pair()
+
+        components.append((position, normal, hint))
 
     if not components:
         return None
 
     if len(components) == 1:
-        position, normal = components[0]
+        position, normal, hint = components[0]
         return {
             "position": position,
-            "orientation": _basis_from_z_and_hint(normal, x_hint_world),
+            "orientation": _basis_from_z_and_hint(normal, hint),
         }
 
-    positions = [position for position, _normal in components]
-    normals = [normal for _position, normal in components]
+    positions = [position for position, _normal, _hint in components]
+    normals = [normal for _position, normal, _hint in components]
+    hints = [hint for _position, _normal, hint in components]
     average_normal = _safe_normalize(sum(normals, Vector((0.0, 0.0, 0.0))), Vector((0, 0, 1)))
+    average_hint = _safe_normalize(sum(hints, Vector((0.0, 0.0, 0.0))), x_hint_world)
     return {
         "position": _bbox_center(positions),
-        "orientation": _basis_from_z_and_hint(average_normal, x_hint_world),
+        "orientation": _basis_from_z_and_hint(average_normal, average_hint),
     }
 
 
