@@ -10,11 +10,6 @@ bl_info = {
 
 import bpy
 import bmesh
-import time
-import os
-import tempfile
-import json
-import addon_utils
 from bpy.props import (
     BoolProperty,
     StringProperty,
@@ -43,7 +38,7 @@ CURSOR_LOC_EPS = 1e-10
 CURSOR_ROT_EPS = 1e-10
 
 # Timer interval (seconds)
-TIMER_INTERVAL = 0.02
+TIMER_INTERVAL = 0.08
 _timer_running = False
 
 # Follow freeze distance (meters)
@@ -61,46 +56,6 @@ _last_obj_xform = {}  # obj_ptr -> (loc(Vector3), rot(Quat), scale(Vector3))
 
 # Edit-mode safety throttling (scene_ptr -> remaining ticks to skip)
 _scene_edit_skip_ticks = {}
-
-# Scene-level recovery/throttling helpers
-_scene_force_follow_ticks = {}
-_scene_last_depsgraph_tick = {}
-
-# Frozen-idle throttling (scene-level)
-_scene_idle_until = {}
-_scene_frozen_streak = {}
-_scene_last_frozen_sig = {}
-_scene_last_cursor_obs = {}  # scene_key -> (loc, rot)
-_scene_last_active_obs = {}  # scene_key -> active_obj_ptr
-_scene_stable_streak = {}  # scene_key -> stable timer ticks
-
-# If a depsgraph tick happened very recently, timer can skip this scene.
-_TIMER_AFTER_DEPSGRAPH_SKIP_SEC = 0.015
-
-# idle backoff when scene is repeatedly frozen and unchanged
-_IDLE_MIN_INTERVAL = 0.08
-_IDLE_MAX_INTERVAL = 0.40
-_IDLE_STREAK_FOR_BACKOFF = 3
-
-# deep idle tier (very stable frozen state)
-_DEEP_IDLE_STREAK = 12
-_DEEP_IDLE_INTERVAL = 0.75
-
-# runtime soft refresh (no data loss)
-_RUNTIME_REFRESH_PERIOD = 300.0  # 5 minutes
-_next_runtime_refresh_at = 0.0
-_hard_reload_pending = False
-_hard_reload_in_progress = False
-
-_RELOAD_STATE_KEY = "_caa_reload_state_json"
-_SESSION_RELOAD_FLAG = "_caa_session_start_hard_reload_done"
-
-# non-frozen stable idle backoff
-_STABLE_IDLE_STREAK = 2
-_STABLE_IDLE_BASE_INTERVAL = 0.25
-_STABLE_IDLE_MAX_INTERVAL = 1.00
-
-_DEBUG_LOG_DEFAULT_PATH = os.path.join(tempfile.gettempdir(), "cursor_follow_debug.log")
 
 # Operators known to mutate topology in edit mode.
 _SENSITIVE_EDIT_OP_KEYWORDS = (
@@ -121,15 +76,9 @@ _SENSITIVE_EDIT_OP_KEYWORDS = (
 )
 
 # thresholds for object transform change detection
-# NOTE: previous values (1e-12) were too strict and caused false positives
-# from floating-point/evaluated-mesh jitter.
-OBJ_LOC_EPS = 1e-8
-OBJ_ROT_EPS = 1e-10
-OBJ_SCL_EPS = 1e-8
-
-# require N consecutive transform-change detections before applying obj-changed follow
-OBJ_CHANGE_CONFIRM_TICKS = 2
-_obj_change_streak = {}  # obj_ptr -> consecutive changed ticks
+OBJ_LOC_EPS = 1e-12
+OBJ_ROT_EPS = 1e-12
+OBJ_SCL_EPS = 1e-12
 
 
 # ------------------------------------------------------------
@@ -214,13 +163,10 @@ def _decompose_matrix_world(obj) -> tuple:
         return loc, rot, scl
 
 
-def _obj_xform_changed(obj) -> tuple:
-    """
-    Detect if object transform changed since last tick (Undo/Redo etc.).
-    Returns: (changed: bool, details: dict)
-    """
+def _obj_xform_changed(obj) -> bool:
+    """Detect if object transform changed since last tick (Undo/Redo etc.)."""
     if not obj:
-        return False, {"ptr": 0, "loc_d2": 0.0, "rot_d2": 0.0, "scl_d2": 0.0}
+        return False
     try:
         ptr = obj.as_pointer()
     except Exception:
@@ -230,23 +176,25 @@ def _obj_xform_changed(obj) -> tuple:
     prev = _last_obj_xform.get(ptr)
     if prev is None:
         _last_obj_xform[ptr] = (loc, rot, scl)
-        return False, {"ptr": ptr, "loc_d2": 0.0, "rot_d2": 0.0, "scl_d2": 0.0}
+        return False
 
     ploc, prot, pscl = prev
 
-    loc_d2 = float((loc - ploc).length_squared)
+    if (loc - ploc).length_squared > OBJ_LOC_EPS:
+        return True
 
     # quat difference (sign invariant)
     qa = _safe_quat(rot)
     qb = _safe_quat(prot)
     d1 = (qa.w - qb.w) ** 2 + (qa.x - qb.x) ** 2 + (qa.y - qb.y) ** 2 + (qa.z - qb.z) ** 2
     d2 = (qa.w + qb.w) ** 2 + (qa.x + qb.x) ** 2 + (qa.y + qb.y) ** 2 + (qa.z + qb.z) ** 2
-    rot_d2 = float(min(d1, d2))
+    if min(d1, d2) > OBJ_ROT_EPS:
+        return True
 
-    scl_d2 = float((scl - pscl).length_squared)
+    if (scl - pscl).length_squared > OBJ_SCL_EPS:
+        return True
 
-    changed = (loc_d2 > OBJ_LOC_EPS) or (rot_d2 > OBJ_ROT_EPS) or (scl_d2 > OBJ_SCL_EPS)
-    return changed, {"ptr": ptr, "loc_d2": loc_d2, "rot_d2": rot_d2, "scl_d2": scl_d2}
+    return False
 
 
 def _update_obj_xform_cache(obj):
@@ -285,115 +233,6 @@ def _consume_edit_skip(scene) -> bool:
     else:
         _scene_edit_skip_ticks[key] = ticks - 1
     return True
-
-
-def _schedule_force_follow(scene, ticks: int = 1):
-    if not scene:
-        return
-    key = _scene_key(scene)
-    _scene_force_follow_ticks[key] = max(int(ticks), int(_scene_force_follow_ticks.get(key, 0)))
-
-
-def _consume_force_follow(scene) -> bool:
-    if not scene:
-        return False
-    key = _scene_key(scene)
-    ticks = int(_scene_force_follow_ticks.get(key, 0))
-    if ticks <= 0:
-        return False
-    if ticks == 1:
-        _scene_force_follow_ticks.pop(key, None)
-    else:
-        _scene_force_follow_ticks[key] = ticks - 1
-    return True
-
-
-def _scene_idle_active(scene, now: float) -> bool:
-    if not scene:
-        return False
-    key = _scene_key(scene)
-    return float(_scene_idle_until.get(key, 0.0)) > float(now)
-
-
-def _scene_idle_set(scene, now: float, frozen_sig: tuple):
-    if not scene:
-        return
-    key = _scene_key(scene)
-    last_sig = _scene_last_frozen_sig.get(key)
-    if frozen_sig == last_sig:
-        streak = int(_scene_frozen_streak.get(key, 0)) + 1
-    else:
-        streak = 1
-    _scene_frozen_streak[key] = streak
-    _scene_last_frozen_sig[key] = frozen_sig
-
-    if streak >= _DEEP_IDLE_STREAK:
-        interval = _DEEP_IDLE_INTERVAL
-    elif streak < _IDLE_STREAK_FOR_BACKOFF:
-        interval = TIMER_INTERVAL
-    else:
-        step = streak - _IDLE_STREAK_FOR_BACKOFF + 1
-        interval = min(_IDLE_MIN_INTERVAL + 0.02 * step, _IDLE_MAX_INTERVAL)
-
-    _scene_idle_until[key] = float(now + interval)
-
-
-def _scene_idle_clear(scene):
-    if not scene:
-        return
-    key = _scene_key(scene)
-    _scene_idle_until.pop(key, None)
-    _scene_frozen_streak.pop(key, None)
-    _scene_last_frozen_sig.pop(key, None)
-
-
-def _scene_cursor_observed_changed(scene) -> bool:
-    if not scene:
-        return False
-    key = _scene_key(scene)
-    cur_loc = _cursor_world(scene)
-    cur_rot = _cursor_world_quat(scene)
-    prev = _scene_last_cursor_obs.get(key)
-    _scene_last_cursor_obs[key] = (cur_loc, cur_rot)
-    if prev is None:
-        return True
-    ploc, prot = prev
-    return _loc_changed(cur_loc, ploc) or _rot_changed(cur_rot, prot)
-
-
-def _scene_active_observed_changed(scene) -> bool:
-    if not scene:
-        return False
-    key = _scene_key(scene)
-    try:
-        active = bpy.context.view_layer.objects.active
-        cur_ptr = active.as_pointer() if active else 0
-    except Exception:
-        cur_ptr = 0
-    prev_ptr = int(_scene_last_active_obs.get(key, -1))
-    _scene_last_active_obs[key] = int(cur_ptr)
-    return cur_ptr != prev_ptr
-
-
-def _scene_stable_idle_set(scene, now: float):
-    if not scene:
-        return
-    key = _scene_key(scene)
-    streak = int(_scene_stable_streak.get(key, 0)) + 1
-    _scene_stable_streak[key] = streak
-
-    if streak < _STABLE_IDLE_STREAK:
-        return
-
-    step = streak - _STABLE_IDLE_STREAK
-    interval = min(_STABLE_IDLE_BASE_INTERVAL + 0.03 * step, _STABLE_IDLE_MAX_INTERVAL)
-    _scene_idle_until[key] = max(float(_scene_idle_until.get(key, 0.0)), float(now + interval))
-
-
-def _scene_stable_idle_clear(scene):
-    if not scene:
-        return
-    _scene_stable_streak[_scene_key(scene)] = 0
 
 
 def _has_sensitive_running_operator() -> bool:
@@ -539,25 +378,15 @@ def _undo_redo_handler(_dummy=None):
         if not s or not s.auto_attach:
             continue
 
-        _debug_log(scene, "undo_redo_handler", attached=_has_attachment(scene), object_name=s.object_name or "")
-
         if not _has_attachment(scene):
-            _debug_log(scene, "undo_redo_skip", reason="no_attachment")
             continue
 
         obj = _find_object(scene, s.object_name)
         if not obj or obj.type != "MESH":
-            _debug_log(scene, "undo_redo_skip", reason="missing_or_non_mesh", object_name=s.object_name or "")
             continue
-
-        # Force a couple of follow ticks after undo/redo to guarantee a stable resync,
-        # even if mesh access is temporarily unavailable in this callback.
-        _schedule_force_follow(scene, ticks=2)
-        _debug_log(scene, "undo_redo_schedule", object=obj.name, force_ticks=2)
 
         mode, payload = _get_mesh_access_for_follow(obj, None)
         if mode == "NONE" or not payload:
-            _debug_log(scene, "undo_redo_skip", reason="mesh_access_none", object=obj.name)
             continue
 
         try:
@@ -571,153 +400,12 @@ def _undo_redo_handler(_dummy=None):
                 comp_q = _component_world_quat_from_data(s, obj_like, me, "MESH")
 
             if comp_point_world is None or comp_q is None:
-                _debug_log(scene, "undo_redo_skip", reason="component_compute_failed", object=obj.name, mode=mode)
                 continue
 
-            loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=obj)
-            if loc_written or rot_written:
-                _obj_save_state(scene, obj)
-            _debug_log(scene, "undo_redo_apply", object=obj.name, component=s.component_type, loc_written=loc_written, rot_written=rot_written)
+            _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=obj)
+            _obj_save_state(scene, obj)
         finally:
             _free_mesh_access(mode, payload)
-
-
-def _capture_reload_state() -> str:
-    """Capture scene-level settings so hard reload is transparent."""
-    try:
-        wm = bpy.context.window_manager
-    except Exception:
-        wm = None
-
-    if wm is None:
-        return ""
-
-    fields = (
-        "auto_attach", "follow_rotation", "snap_tolerance", "freeze_distance",
-        "object_name", "mesh_name", "component_type",
-        "v_index", "v_tangent", "e_v1", "e_v2", "e_t",
-        "f_v1", "f_v2", "f_v3", "f_w1", "f_w2", "f_w3",
-        "off_w", "off_x", "off_y", "off_z",
-        "pos_off_x", "pos_off_y", "pos_off_z",
-        "last_cur_x", "last_cur_y", "last_cur_z",
-        "last_rot_w", "last_rot_x", "last_rot_y", "last_rot_z",
-        "debug_logging", "debug_log_to_file", "debug_log_path",
-        "status",
-    )
-
-    payload = {"scenes": {}}
-    try:
-        scenes = getattr(bpy.data, "scenes", None)
-    except Exception:
-        scenes = None
-
-    if not scenes:
-        return ""
-
-    for scene in scenes:
-        s = _get_settings(scene)
-        if not s:
-            continue
-        item = {}
-        for f in fields:
-            try:
-                item[f] = getattr(s, f)
-            except Exception:
-                pass
-        payload["scenes"][scene.name] = item
-
-    try:
-        return json.dumps(payload)
-    except Exception:
-        return ""
-
-
-def _restore_reload_state_if_any():
-    try:
-        wm = bpy.context.window_manager
-    except Exception:
-        wm = None
-    if wm is None:
-        return
-
-    raw = wm.get(_RELOAD_STATE_KEY, "")
-    if not raw:
-        return
-
-    try:
-        data = json.loads(raw)
-    except Exception:
-        wm.pop(_RELOAD_STATE_KEY, None)
-        return
-
-    # During addon register, Blender can expose RestrictData; defer restore until scenes exist.
-    try:
-        scenes = getattr(bpy.data, "scenes", None)
-    except Exception:
-        scenes = None
-
-    if not scenes:
-        return
-
-    scene_map = data.get("scenes", {}) if isinstance(data, dict) else {}
-    for scene in scenes:
-        s = _get_settings(scene)
-        if not s:
-            continue
-        item = scene_map.get(scene.name)
-        if not isinstance(item, dict):
-            continue
-        for k, v in item.items():
-            try:
-                setattr(s, k, v)
-            except Exception:
-                pass
-
-    wm.pop(_RELOAD_STATE_KEY, None)
-
-
-def _do_hard_reload(reason: str = ""):
-    global _hard_reload_in_progress, _next_runtime_refresh_at
-
-    if _hard_reload_in_progress:
-        return
-    _hard_reload_in_progress = True
-
-    try:
-        try:
-            wm = bpy.context.window_manager
-        except Exception:
-            wm = None
-
-        if wm is not None:
-            snap = _capture_reload_state()
-            if snap:
-                wm[_RELOAD_STATE_KEY] = snap
-
-        mod_name = (__package__ or "").split(".")[0]
-        if not mod_name:
-            return
-
-        addon_utils.disable(mod_name, default_set=False)
-        addon_utils.enable(mod_name, default_set=False)
-    finally:
-        _hard_reload_in_progress = False
-        _next_runtime_refresh_at = time.monotonic() + _RUNTIME_REFRESH_PERIOD
-
-
-def _request_hard_reload(reason: str = "periodic"):
-    global _hard_reload_pending
-    if _hard_reload_pending:
-        return
-    _hard_reload_pending = True
-
-    def _runner():
-        global _hard_reload_pending
-        _hard_reload_pending = False
-        _do_hard_reload(reason=reason)
-        return None
-
-    bpy.app.timers.register(_runner, first_interval=0.01)
 
 
 def _timer_func():
@@ -735,39 +423,13 @@ def _timer_func():
     except Exception:
         depsgraph = None
 
-    now = time.monotonic()
-
-    if _next_runtime_refresh_at > 0.0 and now >= _next_runtime_refresh_at:
-        _request_hard_reload(reason="periodic")
-        return max(TIMER_INTERVAL, _DEEP_IDLE_INTERVAL)
-
-    next_due = _DEEP_IDLE_INTERVAL
-
     for scene in bpy.data.scenes:
         s = _get_settings(scene)
         if not s or not s.auto_attach:
             continue
-
-        key = _scene_key(scene)
-
-        # If scene is in frozen idle mode, skip full tick until next due time.
-        # Depsgraph/undo/redo callbacks still wake immediately.
-        if _scene_idle_active(scene, now):
-            if int(_scene_force_follow_ticks.get(key, 0)) <= 0:
-                # Wake early if cursor/active object changed while idle.
-                cursor_changed = _scene_cursor_observed_changed(scene)
-                active_changed = _scene_active_observed_changed(scene)
-                if (not cursor_changed) and (not active_changed):
-                    due = float(_scene_idle_until.get(key, now + TIMER_INTERVAL)) - now
-                    if due > 0.0:
-                        next_due = min(next_due, max(TIMER_INTERVAL, due))
-                    continue
-                _scene_idle_clear(scene)
-
         _auto_attach_tick(scene, depsgraph, source="TIMER")
-        next_due = min(next_due, TIMER_INTERVAL)
 
-    return max(TIMER_INTERVAL, min(next_due, _DEEP_IDLE_INTERVAL))
+    return TIMER_INTERVAL
 
 
 def _ensure_timer_registered():
@@ -795,35 +457,6 @@ def _set_status(scene, msg: str):
     s = _get_settings(scene)
     if s:
         s.status = msg or ""
-
-
-def _debug_enabled(scene) -> bool:
-    s = _get_settings(scene)
-    return bool(s and getattr(s, "debug_logging", False))
-
-
-def _debug_log(scene, event: str, **data):
-    if not _debug_enabled(scene):
-        return
-
-    s = _get_settings(scene)
-    ts = time.monotonic()
-    bits = [f"t={ts:.6f}", f"event={event}"]
-    for k, v in data.items():
-        bits.append(f"{k}={v}")
-    line = "[CursorFollow] " + " | ".join(bits)
-
-    print(line)
-
-    if not s or not getattr(s, "debug_log_to_file", False):
-        return
-
-    path = getattr(s, "debug_log_path", "") or _DEBUG_LOG_DEFAULT_PATH
-    try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
 
 
 def _find_object(scene, name: str):
@@ -1800,10 +1433,7 @@ def _update_offsets_to_match_current_cursor(scene, comp_point_world: Vector, com
 
 
 def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quaternion, attach_obj=None):
-    """
-    Follow: write cursor only when needed to avoid gizmo interaction jitter.
-    Returns (loc_written: bool, rot_written: bool).
-    """
+    """Follow: write cursor only when needed to avoid gizmo interaction jitter."""
     s = _get_settings(scene)
 
     basis = comp_q.to_matrix()
@@ -1826,23 +1456,16 @@ def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quatern
     cur_loc = _cursor_world(scene)
     cur_rot = _cursor_world_quat(scene)
 
-    loc_written = False
-    rot_written = False
-
     if _loc_changed(cur_loc, out_loc):
         _set_cursor_world(scene, out_loc)
-        loc_written = True
     if s.follow_rotation and _rot_changed(cur_rot, out_rot):
         _set_cursor_world_quat(scene, out_rot)
-        rot_written = True
 
     _set_last_applied_cursor(scene, out_loc, out_rot)
 
     # update xform cache so Undo/Redo is detected properly next time
     if attach_obj is not None:
         _update_obj_xform_cache(attach_obj)
-
-    return loc_written, rot_written
 
 
 # ------------------------------------------------------------
@@ -1854,26 +1477,8 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     if not s or not s.auto_attach:
         return
 
-    now = time.monotonic()
-    if source == "TIMER":
-        last_deps = float(_scene_last_depsgraph_tick.get(_scene_key(scene), 0.0))
-        delta = (now - last_deps)
-        if delta < _TIMER_AFTER_DEPSGRAPH_SKIP_SEC:
-            _debug_log(scene, "timer_skip_after_depsgraph", dt=f"{delta:.6f}")
-            return
-
-    _scene_cursor_observed_changed(scene)
-
-    force_follow = _consume_force_follow(scene)
-    if force_follow:
-        _scene_idle_clear(scene)
-
-    if (source != "TIMER") or force_follow:
-        _debug_log(scene, "tick_start", source=source or "UNKNOWN", force_follow=force_follow)
-
     if _consume_edit_skip(scene):
         _set_status(scene, "Auto Attach: edit update in progress (deferred).")
-        _debug_log(scene, "tick_skip_edit_deferred", source=source or "UNKNOWN")
         return
 
     # Per-object cursor state swap on active object change (context scene only)
@@ -1882,7 +1487,6 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     obj = bpy.context.active_object
     if not obj or obj.type != "MESH":
         _clear_attachment(scene, "Auto Attach: no active Mesh object.")
-        _debug_log(scene, "tick_no_active_mesh", source=source or "UNKNOWN")
         return
 
     in_edit_mesh = bool(obj.mode == "EDIT" and obj.data and obj.data.is_editmode)
@@ -1902,15 +1506,9 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
     user_moved = _loc_changed(cur_loc, last_loc)
     user_rotated = _rot_changed(cur_rot, last_rot)
-    if (source != "TIMER") or user_moved or user_rotated:
-        _debug_log(scene, "tick_state", user_moved=user_moved, user_rotated=user_rotated, attached=_has_attachment(scene), active=obj.name)
-
-    if user_moved or user_rotated:
-        _scene_idle_clear(scene)
-        _scene_stable_idle_clear(scene)
 
     # If cursor changed (manual or by another addon/operator), adapt offsets / reattach
-    if (not _has_attachment(scene)) or (user_moved and not force_follow):
+    if (not _has_attachment(scene)) or user_moved:
         tol = max(0.0, float(s.snap_tolerance))
 
         if in_edit_mesh:
@@ -1950,12 +1548,9 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
             _set_status(scene, f"Auto Attached: {s.component_type}")
-            _debug_log(scene, "reattach", component=s.component_type, active=obj.name)
 
             _obj_save_state(scene, obj)
             _update_obj_xform_cache(obj)
-            _scene_idle_clear(scene)
-            _scene_stable_idle_clear(scene)
 
         finally:
             _free_mesh_access(mode, payload)
@@ -1966,24 +1561,11 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     attach_obj = _find_object(scene, s.object_name)
     if not attach_obj or attach_obj.type != "MESH":
         _clear_attachment(scene, "Auto Attach: attached object missing.")
-        _scene_idle_clear(scene)
-        _scene_stable_idle_clear(scene)
         return
-
-    pre_obj_changed = None
-    pre_obj_delta = None
-
-    if (source == "TIMER") and (not force_follow) and (not user_moved) and (not user_rotated) and (attach_obj.mode != "EDIT"):
-        pre_obj_changed, pre_obj_delta = _obj_xform_changed(attach_obj)
-        if not pre_obj_changed:
-            _scene_stable_idle_set(scene, now)
-            return
 
     mode, payload = _get_mesh_access_for_follow(attach_obj, depsgraph)
     if mode == "NONE" or not payload:
         _clear_attachment(scene, "Auto Attach: cannot access mesh data.")
-        _scene_idle_clear(scene)
-        _scene_stable_idle_clear(scene)
         return
 
     if mode == "EDIT" and (not _is_safe_edit_mesh_context(scene, attach_obj)):
@@ -2008,57 +1590,16 @@ def _auto_attach_tick(scene, depsgraph, source=""):
         # If user rotated manually: update offsets (do not write cursor)
         if user_rotated:
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
-            _obj_save_state(scene, attach_obj)
+            _obj_save_state(scene, obj)
             _update_obj_xform_cache(attach_obj)
-            _scene_stable_idle_clear(scene)
             return
 
         # NEW: if object transform changed (Undo/Redo etc.), force follow (unless user is moving cursor)
-        if pre_obj_changed is None:
-            obj_changed, obj_delta = _obj_xform_changed(attach_obj)
-        else:
-            obj_changed, obj_delta = pre_obj_changed, pre_obj_delta
-        if force_follow:
-            loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-            if loc_written or rot_written:
-                _obj_save_state(scene, attach_obj)
-            _set_status(scene, "Auto Attach: follow resynced.")
-            _scene_stable_idle_clear(scene)
-            _debug_log(scene, "force_follow_applied", object=attach_obj.name, component=s.component_type, loc_written=loc_written, rot_written=rot_written)
-            return
-
+        obj_changed = _obj_xform_changed(attach_obj)
         if obj_changed and (not user_moved) and (not user_rotated):
-            _scene_stable_idle_clear(scene)
-            try:
-                obj_ptr = attach_obj.as_pointer()
-            except Exception:
-                obj_ptr = id(attach_obj)
-            streak = int(_obj_change_streak.get(obj_ptr, 0)) + 1
-            _obj_change_streak[obj_ptr] = streak
-
-            _debug_log(
-                scene,
-                "obj_changed_detected",
-                object=attach_obj.name,
-                streak=streak,
-                loc_d2=f"{obj_delta.get('loc_d2', 0.0):.12g}",
-                rot_d2=f"{obj_delta.get('rot_d2', 0.0):.12g}",
-                scl_d2=f"{obj_delta.get('scl_d2', 0.0):.12g}",
-            )
-
-            if streak >= OBJ_CHANGE_CONFIRM_TICKS:
-                loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-                if loc_written or rot_written:
-                    _obj_save_state(scene, attach_obj)
-                _obj_change_streak[obj_ptr] = 0
-                _debug_log(scene, "follow_obj_changed", object=attach_obj.name, component=s.component_type, confirm=streak, loc_written=loc_written, rot_written=rot_written)
-                return
-        else:
-            try:
-                obj_ptr = attach_obj.as_pointer()
-            except Exception:
-                obj_ptr = id(attach_obj)
-            _obj_change_streak[obj_ptr] = 0
+            _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
+            _obj_save_state(scene, obj)
+            return
 
         # Distance-only freeze with anti-spike protection:
         # freeze only if both the current cursor and the predicted follow cursor
@@ -2075,22 +1616,11 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
         if (dist_now is not None) and (dist_pred is not None) and (dist_now > freeze_dist) and (dist_pred > freeze_dist):
             _set_status(scene, "Auto Attach: distance too high (follow frozen).")
-            now2 = time.monotonic()
-            frozen_sig = (attach_obj.name, s.component_type, round(float(dist_now), 6), round(float(dist_pred), 6), round(float(freeze_dist), 6))
-            prev_sig = _scene_last_frozen_sig.get(_scene_key(scene))
-            _scene_idle_set(scene, now2, frozen_sig)
-            if frozen_sig != prev_sig:
-                _debug_log(scene, "follow_frozen", dist_now=f"{dist_now:.6f}", dist_pred=f"{dist_pred:.6f}", freeze=f"{freeze_dist:.6f}")
             return
 
-        _scene_idle_clear(scene)
-        _scene_stable_idle_clear(scene)
-
         # Follow: write cursor
-        loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-        if loc_written or rot_written:
-            _obj_save_state(scene, attach_obj)
-            _debug_log(scene, "follow_applied", object=attach_obj.name, component=s.component_type, loc_written=loc_written, rot_written=rot_written)
+        _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
+        _obj_save_state(scene, obj)
 
     finally:
         _free_mesh_access(mode, payload)
@@ -2113,14 +1643,10 @@ def _depsgraph_handler(depsgraph):
         if not s or not s.auto_attach:
             continue
         try:
-            _scene_last_depsgraph_tick[_scene_key(scene)] = time.monotonic()
-            _scene_idle_clear(scene)
-            _scene_stable_idle_clear(scene)
             _auto_attach_tick(scene, depsgraph, source="DEPSGRAPH")
-        except Exception as ex:
+        except Exception:
             # Never let the depsgraph callback propagate unexpected errors.
             _schedule_edit_skip(scene, ticks=2)
-            _debug_log(scene, "depsgraph_exception", error=str(ex))
 
 
 # ------------------------------------------------------------
@@ -2155,23 +1681,6 @@ class CursorAutoAttachSettings(PropertyGroup):
         soft_max=10.0,
         subtype="DISTANCE",
         unit="LENGTH",
-    )
-
-    debug_logging: BoolProperty(
-        name="Debug Logging",
-        description="Enable verbose diagnostic logs for follow instability analysis",
-        default=False,
-    )
-    debug_log_to_file: BoolProperty(
-        name="Log To File",
-        description="Also append debug logs to a file",
-        default=False,
-    )
-    debug_log_path: StringProperty(
-        name="Log File",
-        description="Path used when Log To File is enabled",
-        default=_DEBUG_LOG_DEFAULT_PATH,
-        subtype="FILE_PATH",
     )
 
     status: StringProperty(default="")
@@ -2247,13 +1756,6 @@ class VIEW3D_PT_cursor_auto_attach(Panel):
         layout.prop(s, "snap_tolerance")
         layout.prop(s, "freeze_distance")
 
-        dbg = layout.box()
-        dbg.label(text="Debug")
-        dbg.prop(s, "debug_logging", toggle=True)
-        dbg.prop(s, "debug_log_to_file", toggle=True)
-        if s.debug_log_to_file:
-            dbg.prop(s, "debug_log_path")
-
         layout.separator()
 
         box = layout.box()
@@ -2290,25 +1792,13 @@ CLASSES = (
 
 
 def register():
-    global _next_runtime_refresh_at
-
     for c in CLASSES:
         bpy.utils.register_class(c)
 
     bpy.types.Scene.cursor_auto_attach_settings = PointerProperty(type=CursorAutoAttachSettings)
 
-    _restore_reload_state_if_any()
-
     _ensure_handler_registered()
     _ensure_timer_registered()
-
-    _next_runtime_refresh_at = time.monotonic() + _RUNTIME_REFRESH_PERIOD
-
-    # One true hard reload at session start (equivalent disable/enable), once per Blender session.
-    flag = bpy.app.driver_namespace.get(_SESSION_RELOAD_FLAG, False)
-    if not flag:
-        bpy.app.driver_namespace[_SESSION_RELOAD_FLAG] = True
-        _request_hard_reload(reason="session_start")
 
 
 def unregister():
@@ -2324,20 +1814,6 @@ def unregister():
     _last_active_by_scene.clear()
     _last_obj_xform.clear()
     _scene_edit_skip_ticks.clear()
-    _scene_force_follow_ticks.clear()
-    _scene_last_depsgraph_tick.clear()
-    _scene_idle_until.clear()
-    _scene_frozen_streak.clear()
-    _scene_last_frozen_sig.clear()
-    _scene_last_cursor_obs.clear()
-    _scene_last_active_obs.clear()
-    _scene_stable_streak.clear()
-    _obj_change_streak.clear()
-
-    global _next_runtime_refresh_at, _hard_reload_pending, _hard_reload_in_progress
-    _next_runtime_refresh_at = 0.0
-    _hard_reload_pending = False
-    _hard_reload_in_progress = False
 
 
 if __name__ == "__main__":
