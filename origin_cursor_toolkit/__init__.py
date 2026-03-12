@@ -401,6 +401,68 @@ class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class OCT_OT_ResetOriginEachToOwnBBox(bpy.types.Operator):
+    bl_idname = "oct.reset_origin_each_to_own_bbox"
+    bl_label = "Reset Origin to Each Object Bounding Box"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        selected_objects = list(context.selected_objects)
+        if not selected_objects:
+            self.report({'WARNING'}, "No selected objects")
+            return {'CANCELLED'}
+
+        cursor = context.scene.cursor
+        previous_cursor_location = cursor.location.copy()
+
+        view_layer = context.view_layer
+        previous_active = view_layer.objects.active
+        previous_selection = [obj for obj in context.selectable_objects if obj.select_get()]
+
+        previous_mode = previous_active.mode if previous_active else 'OBJECT'
+        switched_mode = False
+        if previous_active and previous_mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+                switched_mode = True
+            except RuntimeError as ex:
+                self.report({'WARNING'}, str(ex))
+                return {'CANCELLED'}
+
+        try:
+            for obj in selected_objects:
+                bbox_world = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+                target_pos = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
+
+                bpy.ops.object.select_all(action='DESELECT')
+                obj.select_set(True)
+                view_layer.objects.active = obj
+
+                cursor.location = target_pos
+                bpy.ops.object.origin_set(type='ORIGIN_CURSOR', center='MEDIAN')
+        except RuntimeError as ex:
+            self.report({'WARNING'}, str(ex))
+            return {'CANCELLED'}
+        finally:
+            cursor.location = previous_cursor_location
+
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in previous_selection:
+                if obj.name in bpy.data.objects:
+                    obj.select_set(True)
+
+            if previous_active and previous_active.name in bpy.data.objects:
+                view_layer.objects.active = previous_active
+
+            if switched_mode:
+                try:
+                    bpy.ops.object.mode_set(mode=previous_mode)
+                except RuntimeError:
+                    pass
+
+        return {'FINISHED'}
+
+
 class OCT_OT_AimCursorZ(bpy.types.Operator):
     bl_idname = "oct.aim_cursor_z"
     bl_label = "Aim Cursor (Z)"
@@ -481,6 +543,7 @@ class VIEW3D_PT_OriginCursorToolkit(bpy.types.Panel):
         col.operator("oct.reset_cursor_orientation_object", icon='OBJECT_ORIGIN')
         col.operator("oct.reset_origin_orientation_world", icon='WORLD')
         col.operator("oct.reset_origin_position_selected_bbox", icon='SHADING_BBOX')
+        col.operator("oct.reset_origin_each_to_own_bbox", icon='SHADING_BBOX')
         col.separator()
         col.operator("oct.aim_cursor_z", icon='TRACKING')
         col.operator("oct.aim_origin_z", icon='TRACKING_FORWARDS')
@@ -500,6 +563,7 @@ classes = (
     OCT_OT_ResetCursorPositionSelectedBBox,
     OCT_OT_ResetOriginOrientationWorld,
     OCT_OT_ResetOriginPositionSelectedBBox,
+    OCT_OT_ResetOriginEachToOwnBBox,
     OCT_OT_AimCursorZ,
     OCT_OT_AimOriginZ,
     VIEW3D_PT_OriginCursorToolkit,
