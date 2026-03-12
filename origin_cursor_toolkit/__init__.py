@@ -333,6 +333,26 @@ class OCT_OT_ResetCursorPositionObject(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class OCT_OT_ResetCursorPositionSelectedBBox(bpy.types.Operator):
+    bl_idname = "oct.reset_cursor_position_selected_bbox"
+    bl_label = "Reset Cursor Position to Object Bounding Box"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            self.report({'WARNING'}, "No active object")
+            return {'CANCELLED'}
+
+        # Prefer another selected object as reference, but gracefully fall back
+        # to the active object so the operator also works with a single object.
+        ref_obj = next((o for o in context.selected_objects if o != obj), obj)
+
+        bbox_world = [ref_obj.matrix_world @ Vector(corner) for corner in ref_obj.bound_box]
+        context.scene.cursor.location = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
+        return {'FINISHED'}
+
+
 class OCT_OT_ResetOriginOrientationWorld(bpy.types.Operator):
     bl_idname = "oct.reset_origin_orientation_world"
     bl_label = "Reset Origin Orientation to World Orientation"
@@ -457,6 +477,7 @@ class VIEW3D_PT_OriginCursorToolkit(bpy.types.Panel):
         col.operator("oct.reset_cursor_position_world", icon='WORLD')
         col.operator("oct.reset_cursor_orientation_world", icon='WORLD')
         col.operator("oct.reset_cursor_position_object", icon='OBJECT_ORIGIN')
+        col.operator("oct.reset_cursor_position_selected_bbox", icon='SHADING_BBOX')
         col.operator("oct.reset_cursor_orientation_object", icon='OBJECT_ORIGIN')
         col.operator("oct.reset_origin_orientation_world", icon='WORLD')
         col.operator("oct.reset_origin_position_selected_bbox", icon='SHADING_BBOX')
@@ -476,6 +497,7 @@ classes = (
     OCT_OT_ResetCursorPositionWorld,
     OCT_OT_ResetCursorOrientationObject,
     OCT_OT_ResetCursorPositionObject,
+    OCT_OT_ResetCursorPositionSelectedBBox,
     OCT_OT_ResetOriginOrientationWorld,
     OCT_OT_ResetOriginPositionSelectedBBox,
     OCT_OT_AimCursorZ,
