@@ -10,6 +10,7 @@ bl_info = {
 
 import bpy
 import bmesh
+import time
 from bpy.props import (
     BoolProperty,
     StringProperty,
@@ -38,7 +39,7 @@ CURSOR_LOC_EPS = 1e-10
 CURSOR_ROT_EPS = 1e-10
 
 # Timer interval (seconds)
-TIMER_INTERVAL = 0.08
+TIMER_INTERVAL = 0.02
 _timer_running = False
 
 # Follow freeze distance (meters)
@@ -56,6 +57,13 @@ _last_obj_xform = {}  # obj_ptr -> (loc(Vector3), rot(Quat), scale(Vector3))
 
 # Edit-mode safety throttling (scene_ptr -> remaining ticks to skip)
 _scene_edit_skip_ticks = {}
+
+# Scene-level recovery/throttling helpers
+_scene_force_follow_ticks = {}
+_scene_last_depsgraph_tick = {}
+
+# If a depsgraph tick happened very recently, timer can skip this scene.
+_TIMER_AFTER_DEPSGRAPH_SKIP_SEC = 0.015
 
 # Operators known to mutate topology in edit mode.
 _SENSITIVE_EDIT_OP_KEYWORDS = (
@@ -235,6 +243,27 @@ def _consume_edit_skip(scene) -> bool:
     return True
 
 
+def _schedule_force_follow(scene, ticks: int = 1):
+    if not scene:
+        return
+    key = _scene_key(scene)
+    _scene_force_follow_ticks[key] = max(int(ticks), int(_scene_force_follow_ticks.get(key, 0)))
+
+
+def _consume_force_follow(scene) -> bool:
+    if not scene:
+        return False
+    key = _scene_key(scene)
+    ticks = int(_scene_force_follow_ticks.get(key, 0))
+    if ticks <= 0:
+        return False
+    if ticks == 1:
+        _scene_force_follow_ticks.pop(key, None)
+    else:
+        _scene_force_follow_ticks[key] = ticks - 1
+    return True
+
+
 def _has_sensitive_running_operator() -> bool:
     try:
         wm = bpy.context.window_manager
@@ -384,6 +413,10 @@ def _undo_redo_handler(_dummy=None):
         obj = _find_object(scene, s.object_name)
         if not obj or obj.type != "MESH":
             continue
+
+        # Force a couple of follow ticks after undo/redo to guarantee a stable resync,
+        # even if mesh access is temporarily unavailable in this callback.
+        _schedule_force_follow(scene, ticks=2)
 
         mode, payload = _get_mesh_access_for_follow(obj, None)
         if mode == "NONE" or not payload:
@@ -1477,6 +1510,14 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     if not s or not s.auto_attach:
         return
 
+    now = time.monotonic()
+    if source == "TIMER":
+        last_deps = float(_scene_last_depsgraph_tick.get(_scene_key(scene), 0.0))
+        if (now - last_deps) < _TIMER_AFTER_DEPSGRAPH_SKIP_SEC:
+            return
+
+    force_follow = _consume_force_follow(scene)
+
     if _consume_edit_skip(scene):
         _set_status(scene, "Auto Attach: edit update in progress (deferred).")
         return
@@ -1508,7 +1549,7 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     user_rotated = _rot_changed(cur_rot, last_rot)
 
     # If cursor changed (manual or by another addon/operator), adapt offsets / reattach
-    if (not _has_attachment(scene)) or user_moved:
+    if (not _has_attachment(scene)) or (user_moved and not force_follow):
         tol = max(0.0, float(s.snap_tolerance))
 
         if in_edit_mesh:
@@ -1590,15 +1631,21 @@ def _auto_attach_tick(scene, depsgraph, source=""):
         # If user rotated manually: update offsets (do not write cursor)
         if user_rotated:
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
-            _obj_save_state(scene, obj)
+            _obj_save_state(scene, attach_obj)
             _update_obj_xform_cache(attach_obj)
             return
 
         # NEW: if object transform changed (Undo/Redo etc.), force follow (unless user is moving cursor)
         obj_changed = _obj_xform_changed(attach_obj)
+        if force_follow:
+            _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
+            _obj_save_state(scene, attach_obj)
+            _set_status(scene, "Auto Attach: follow resynced.")
+            return
+
         if obj_changed and (not user_moved) and (not user_rotated):
             _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-            _obj_save_state(scene, obj)
+            _obj_save_state(scene, attach_obj)
             return
 
         # Distance-only freeze with anti-spike protection:
@@ -1620,7 +1667,7 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
         # Follow: write cursor
         _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-        _obj_save_state(scene, obj)
+        _obj_save_state(scene, attach_obj)
 
     finally:
         _free_mesh_access(mode, payload)
@@ -1643,6 +1690,7 @@ def _depsgraph_handler(depsgraph):
         if not s or not s.auto_attach:
             continue
         try:
+            _scene_last_depsgraph_tick[_scene_key(scene)] = time.monotonic()
             _auto_attach_tick(scene, depsgraph, source="DEPSGRAPH")
         except Exception:
             # Never let the depsgraph callback propagate unexpected errors.
