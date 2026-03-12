@@ -10,9 +10,6 @@ bl_info = {
 
 import bpy
 import bmesh
-import time
-import os
-import tempfile
 from bpy.props import (
     BoolProperty,
     StringProperty,
@@ -41,7 +38,7 @@ CURSOR_LOC_EPS = 1e-10
 CURSOR_ROT_EPS = 1e-10
 
 # Timer interval (seconds)
-TIMER_INTERVAL = 0.02
+TIMER_INTERVAL = 0.08
 _timer_running = False
 
 # Follow freeze distance (meters)
@@ -59,15 +56,6 @@ _last_obj_xform = {}  # obj_ptr -> (loc(Vector3), rot(Quat), scale(Vector3))
 
 # Edit-mode safety throttling (scene_ptr -> remaining ticks to skip)
 _scene_edit_skip_ticks = {}
-
-# Scene-level recovery/throttling helpers
-_scene_force_follow_ticks = {}
-_scene_last_depsgraph_tick = {}
-
-# If a depsgraph tick happened very recently, timer can skip this scene.
-_TIMER_AFTER_DEPSGRAPH_SKIP_SEC = 0.015
-
-_DEBUG_LOG_DEFAULT_PATH = os.path.join(tempfile.gettempdir(), "cursor_follow_debug.log")
 
 # Operators known to mutate topology in edit mode.
 _SENSITIVE_EDIT_OP_KEYWORDS = (
@@ -88,15 +76,9 @@ _SENSITIVE_EDIT_OP_KEYWORDS = (
 )
 
 # thresholds for object transform change detection
-# NOTE: previous values (1e-12) were too strict and caused false positives
-# from floating-point/evaluated-mesh jitter.
-OBJ_LOC_EPS = 1e-8
-OBJ_ROT_EPS = 1e-10
-OBJ_SCL_EPS = 1e-8
-
-# require N consecutive transform-change detections before applying obj-changed follow
-OBJ_CHANGE_CONFIRM_TICKS = 2
-_obj_change_streak = {}  # obj_ptr -> consecutive changed ticks
+OBJ_LOC_EPS = 1e-12
+OBJ_ROT_EPS = 1e-12
+OBJ_SCL_EPS = 1e-12
 
 
 # ------------------------------------------------------------
@@ -181,13 +163,10 @@ def _decompose_matrix_world(obj) -> tuple:
         return loc, rot, scl
 
 
-def _obj_xform_changed(obj) -> tuple:
-    """
-    Detect if object transform changed since last tick (Undo/Redo etc.).
-    Returns: (changed: bool, details: dict)
-    """
+def _obj_xform_changed(obj) -> bool:
+    """Detect if object transform changed since last tick (Undo/Redo etc.)."""
     if not obj:
-        return False, {"ptr": 0, "loc_d2": 0.0, "rot_d2": 0.0, "scl_d2": 0.0}
+        return False
     try:
         ptr = obj.as_pointer()
     except Exception:
@@ -197,23 +176,25 @@ def _obj_xform_changed(obj) -> tuple:
     prev = _last_obj_xform.get(ptr)
     if prev is None:
         _last_obj_xform[ptr] = (loc, rot, scl)
-        return False, {"ptr": ptr, "loc_d2": 0.0, "rot_d2": 0.0, "scl_d2": 0.0}
+        return False
 
     ploc, prot, pscl = prev
 
-    loc_d2 = float((loc - ploc).length_squared)
+    if (loc - ploc).length_squared > OBJ_LOC_EPS:
+        return True
 
     # quat difference (sign invariant)
     qa = _safe_quat(rot)
     qb = _safe_quat(prot)
     d1 = (qa.w - qb.w) ** 2 + (qa.x - qb.x) ** 2 + (qa.y - qb.y) ** 2 + (qa.z - qb.z) ** 2
     d2 = (qa.w + qb.w) ** 2 + (qa.x + qb.x) ** 2 + (qa.y + qb.y) ** 2 + (qa.z + qb.z) ** 2
-    rot_d2 = float(min(d1, d2))
+    if min(d1, d2) > OBJ_ROT_EPS:
+        return True
 
-    scl_d2 = float((scl - pscl).length_squared)
+    if (scl - pscl).length_squared > OBJ_SCL_EPS:
+        return True
 
-    changed = (loc_d2 > OBJ_LOC_EPS) or (rot_d2 > OBJ_ROT_EPS) or (scl_d2 > OBJ_SCL_EPS)
-    return changed, {"ptr": ptr, "loc_d2": loc_d2, "rot_d2": rot_d2, "scl_d2": scl_d2}
+    return False
 
 
 def _update_obj_xform_cache(obj):
@@ -251,27 +232,6 @@ def _consume_edit_skip(scene) -> bool:
         _scene_edit_skip_ticks.pop(key, None)
     else:
         _scene_edit_skip_ticks[key] = ticks - 1
-    return True
-
-
-def _schedule_force_follow(scene, ticks: int = 1):
-    if not scene:
-        return
-    key = _scene_key(scene)
-    _scene_force_follow_ticks[key] = max(int(ticks), int(_scene_force_follow_ticks.get(key, 0)))
-
-
-def _consume_force_follow(scene) -> bool:
-    if not scene:
-        return False
-    key = _scene_key(scene)
-    ticks = int(_scene_force_follow_ticks.get(key, 0))
-    if ticks <= 0:
-        return False
-    if ticks == 1:
-        _scene_force_follow_ticks.pop(key, None)
-    else:
-        _scene_force_follow_ticks[key] = ticks - 1
     return True
 
 
@@ -425,11 +385,6 @@ def _undo_redo_handler(_dummy=None):
         if not obj or obj.type != "MESH":
             continue
 
-        # Force a couple of follow ticks after undo/redo to guarantee a stable resync,
-        # even if mesh access is temporarily unavailable in this callback.
-        _schedule_force_follow(scene, ticks=2)
-        _debug_log(scene, "undo_redo_schedule", object=obj.name, force_ticks=2)
-
         mode, payload = _get_mesh_access_for_follow(obj, None)
         if mode == "NONE" or not payload:
             continue
@@ -449,7 +404,6 @@ def _undo_redo_handler(_dummy=None):
 
             _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=obj)
             _obj_save_state(scene, obj)
-            _debug_log(scene, "undo_redo_apply", object=obj.name, component=s.component_type)
         finally:
             _free_mesh_access(mode, payload)
 
@@ -503,35 +457,6 @@ def _set_status(scene, msg: str):
     s = _get_settings(scene)
     if s:
         s.status = msg or ""
-
-
-def _debug_enabled(scene) -> bool:
-    s = _get_settings(scene)
-    return bool(s and getattr(s, "debug_logging", False))
-
-
-def _debug_log(scene, event: str, **data):
-    if not _debug_enabled(scene):
-        return
-
-    s = _get_settings(scene)
-    ts = time.monotonic()
-    bits = [f"t={ts:.6f}", f"event={event}"]
-    for k, v in data.items():
-        bits.append(f"{k}={v}")
-    line = "[CursorFollow] " + " | ".join(bits)
-
-    print(line)
-
-    if not s or not getattr(s, "debug_log_to_file", False):
-        return
-
-    path = getattr(s, "debug_log_path", "") or _DEBUG_LOG_DEFAULT_PATH
-    try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
 
 
 def _find_object(scene, name: str):
@@ -1508,10 +1433,7 @@ def _update_offsets_to_match_current_cursor(scene, comp_point_world: Vector, com
 
 
 def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quaternion, attach_obj=None):
-    """
-    Follow: write cursor only when needed to avoid gizmo interaction jitter.
-    Returns (loc_written: bool, rot_written: bool).
-    """
+    """Follow: write cursor only when needed to avoid gizmo interaction jitter."""
     s = _get_settings(scene)
 
     basis = comp_q.to_matrix()
@@ -1534,23 +1456,16 @@ def _apply_attachment_to_cursor(scene, comp_point_world: Vector, comp_q: Quatern
     cur_loc = _cursor_world(scene)
     cur_rot = _cursor_world_quat(scene)
 
-    loc_written = False
-    rot_written = False
-
     if _loc_changed(cur_loc, out_loc):
         _set_cursor_world(scene, out_loc)
-        loc_written = True
     if s.follow_rotation and _rot_changed(cur_rot, out_rot):
         _set_cursor_world_quat(scene, out_rot)
-        rot_written = True
 
     _set_last_applied_cursor(scene, out_loc, out_rot)
 
     # update xform cache so Undo/Redo is detected properly next time
     if attach_obj is not None:
         _update_obj_xform_cache(attach_obj)
-
-    return loc_written, rot_written
 
 
 # ------------------------------------------------------------
@@ -1562,21 +1477,8 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     if not s or not s.auto_attach:
         return
 
-    now = time.monotonic()
-    if source == "TIMER":
-        last_deps = float(_scene_last_depsgraph_tick.get(_scene_key(scene), 0.0))
-        delta = (now - last_deps)
-        if delta < _TIMER_AFTER_DEPSGRAPH_SKIP_SEC:
-            _debug_log(scene, "timer_skip_after_depsgraph", dt=f"{delta:.6f}")
-            return
-
-    force_follow = _consume_force_follow(scene)
-
-    _debug_log(scene, "tick_start", source=source or "UNKNOWN", force_follow=force_follow)
-
     if _consume_edit_skip(scene):
         _set_status(scene, "Auto Attach: edit update in progress (deferred).")
-        _debug_log(scene, "tick_skip_edit_deferred", source=source or "UNKNOWN")
         return
 
     # Per-object cursor state swap on active object change (context scene only)
@@ -1585,7 +1487,6 @@ def _auto_attach_tick(scene, depsgraph, source=""):
     obj = bpy.context.active_object
     if not obj or obj.type != "MESH":
         _clear_attachment(scene, "Auto Attach: no active Mesh object.")
-        _debug_log(scene, "tick_no_active_mesh", source=source or "UNKNOWN")
         return
 
     in_edit_mesh = bool(obj.mode == "EDIT" and obj.data and obj.data.is_editmode)
@@ -1605,10 +1506,9 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
     user_moved = _loc_changed(cur_loc, last_loc)
     user_rotated = _rot_changed(cur_rot, last_rot)
-    _debug_log(scene, "tick_state", user_moved=user_moved, user_rotated=user_rotated, attached=_has_attachment(scene), active=obj.name)
 
     # If cursor changed (manual or by another addon/operator), adapt offsets / reattach
-    if (not _has_attachment(scene)) or (user_moved and not force_follow):
+    if (not _has_attachment(scene)) or user_moved:
         tol = max(0.0, float(s.snap_tolerance))
 
         if in_edit_mesh:
@@ -1648,7 +1548,6 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
             _set_status(scene, f"Auto Attached: {s.component_type}")
-            _debug_log(scene, "reattach", component=s.component_type, active=obj.name)
 
             _obj_save_state(scene, obj)
             _update_obj_xform_cache(obj)
@@ -1691,51 +1590,16 @@ def _auto_attach_tick(scene, depsgraph, source=""):
         # If user rotated manually: update offsets (do not write cursor)
         if user_rotated:
             _update_offsets_to_match_current_cursor(scene, comp_point_world, comp_q)
-            _obj_save_state(scene, attach_obj)
+            _obj_save_state(scene, obj)
             _update_obj_xform_cache(attach_obj)
             return
 
         # NEW: if object transform changed (Undo/Redo etc.), force follow (unless user is moving cursor)
-        obj_changed, obj_delta = _obj_xform_changed(attach_obj)
-        if force_follow:
-            loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-            if loc_written or rot_written:
-                _obj_save_state(scene, attach_obj)
-            _set_status(scene, "Auto Attach: follow resynced.")
-            _debug_log(scene, "force_follow_applied", object=attach_obj.name, component=s.component_type, loc_written=loc_written, rot_written=rot_written)
-            return
-
+        obj_changed = _obj_xform_changed(attach_obj)
         if obj_changed and (not user_moved) and (not user_rotated):
-            try:
-                obj_ptr = attach_obj.as_pointer()
-            except Exception:
-                obj_ptr = id(attach_obj)
-            streak = int(_obj_change_streak.get(obj_ptr, 0)) + 1
-            _obj_change_streak[obj_ptr] = streak
-
-            _debug_log(
-                scene,
-                "obj_changed_detected",
-                object=attach_obj.name,
-                streak=streak,
-                loc_d2=f"{obj_delta.get('loc_d2', 0.0):.12g}",
-                rot_d2=f"{obj_delta.get('rot_d2', 0.0):.12g}",
-                scl_d2=f"{obj_delta.get('scl_d2', 0.0):.12g}",
-            )
-
-            if streak >= OBJ_CHANGE_CONFIRM_TICKS:
-                loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-                if loc_written or rot_written:
-                    _obj_save_state(scene, attach_obj)
-                _obj_change_streak[obj_ptr] = 0
-                _debug_log(scene, "follow_obj_changed", object=attach_obj.name, component=s.component_type, confirm=streak, loc_written=loc_written, rot_written=rot_written)
-                return
-        else:
-            try:
-                obj_ptr = attach_obj.as_pointer()
-            except Exception:
-                obj_ptr = id(attach_obj)
-            _obj_change_streak[obj_ptr] = 0
+            _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
+            _obj_save_state(scene, obj)
+            return
 
         # Distance-only freeze with anti-spike protection:
         # freeze only if both the current cursor and the predicted follow cursor
@@ -1752,14 +1616,11 @@ def _auto_attach_tick(scene, depsgraph, source=""):
 
         if (dist_now is not None) and (dist_pred is not None) and (dist_now > freeze_dist) and (dist_pred > freeze_dist):
             _set_status(scene, "Auto Attach: distance too high (follow frozen).")
-            _debug_log(scene, "follow_frozen", dist_now=f"{dist_now:.6f}", dist_pred=f"{dist_pred:.6f}", freeze=f"{freeze_dist:.6f}")
             return
 
         # Follow: write cursor
-        loc_written, rot_written = _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
-        if loc_written or rot_written:
-            _obj_save_state(scene, attach_obj)
-            _debug_log(scene, "follow_applied", object=attach_obj.name, component=s.component_type, loc_written=loc_written, rot_written=rot_written)
+        _apply_attachment_to_cursor(scene, comp_point_world, comp_q, attach_obj=attach_obj)
+        _obj_save_state(scene, obj)
 
     finally:
         _free_mesh_access(mode, payload)
@@ -1782,12 +1643,10 @@ def _depsgraph_handler(depsgraph):
         if not s or not s.auto_attach:
             continue
         try:
-            _scene_last_depsgraph_tick[_scene_key(scene)] = time.monotonic()
             _auto_attach_tick(scene, depsgraph, source="DEPSGRAPH")
-        except Exception as ex:
+        except Exception:
             # Never let the depsgraph callback propagate unexpected errors.
             _schedule_edit_skip(scene, ticks=2)
-            _debug_log(scene, "depsgraph_exception", error=str(ex))
 
 
 # ------------------------------------------------------------
@@ -1822,23 +1681,6 @@ class CursorAutoAttachSettings(PropertyGroup):
         soft_max=10.0,
         subtype="DISTANCE",
         unit="LENGTH",
-    )
-
-    debug_logging: BoolProperty(
-        name="Debug Logging",
-        description="Enable verbose diagnostic logs for follow instability analysis",
-        default=False,
-    )
-    debug_log_to_file: BoolProperty(
-        name="Log To File",
-        description="Also append debug logs to a file",
-        default=False,
-    )
-    debug_log_path: StringProperty(
-        name="Log File",
-        description="Path used when Log To File is enabled",
-        default=_DEBUG_LOG_DEFAULT_PATH,
-        subtype="FILE_PATH",
     )
 
     status: StringProperty(default="")
@@ -1914,13 +1756,6 @@ class VIEW3D_PT_cursor_auto_attach(Panel):
         layout.prop(s, "snap_tolerance")
         layout.prop(s, "freeze_distance")
 
-        dbg = layout.box()
-        dbg.label(text="Debug")
-        dbg.prop(s, "debug_logging", toggle=True)
-        dbg.prop(s, "debug_log_to_file", toggle=True)
-        if s.debug_log_to_file:
-            dbg.prop(s, "debug_log_path")
-
         layout.separator()
 
         box = layout.box()
@@ -1979,9 +1814,6 @@ def unregister():
     _last_active_by_scene.clear()
     _last_obj_xform.clear()
     _scene_edit_skip_ticks.clear()
-    _scene_force_follow_ticks.clear()
-    _scene_last_depsgraph_tick.clear()
-    _obj_change_streak.clear()
 
 
 if __name__ == "__main__":
