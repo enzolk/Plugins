@@ -179,13 +179,73 @@ def _set_origin_to_cursor_allow_edit_mode(context):
     return True, ""
 
 
+def _selected_or_active_objects(context):
+    selected = list(context.selected_objects)
+    if selected:
+        return selected
+    if context.active_object:
+        return [context.active_object]
+    return []
+
+
+def _apply_to_each_selected_object(context, operation):
+    selected_objects = _selected_or_active_objects(context)
+    if not selected_objects:
+        return False, "No active object"
+
+    view_layer = context.view_layer
+    previous_active = view_layer.objects.active
+    previous_selection = [obj for obj in context.selectable_objects if obj.select_get()]
+
+    previous_mode = previous_active.mode if previous_active else 'OBJECT'
+    switched_mode = False
+    if previous_active and previous_mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            switched_mode = True
+        except RuntimeError as ex:
+            return False, str(ex)
+
+    try:
+        for obj in selected_objects:
+            if obj.name not in bpy.data.objects:
+                continue
+
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            view_layer.objects.active = obj
+
+            ok, msg = operation(obj)
+            if not ok:
+                return False, msg
+    finally:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in previous_selection:
+            if obj.name in bpy.data.objects:
+                obj.select_set(True)
+
+        if previous_active and previous_active.name in bpy.data.objects:
+            view_layer.objects.active = previous_active
+
+        if switched_mode:
+            try:
+                bpy.ops.object.mode_set(mode=previous_mode)
+            except RuntimeError:
+                pass
+
+    return True, ""
+
+
 class OCT_OT_OriginPositionToCursor(bpy.types.Operator):
     bl_idname = "oct.origin_position_to_cursor"
     bl_label = "Origin Position to Cursor Position"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
+        ok, msg = _apply_to_each_selected_object(
+            context,
+            lambda _obj: _set_origin_to_cursor_allow_edit_mode(context),
+        )
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
@@ -198,13 +258,11 @@ class OCT_OT_OriginOrientationToCursor(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
         rot = context.scene.cursor.matrix.to_3x3()
-        ok, msg = _set_object_origin_orientation_keep_appearance(obj, rot)
+        ok, msg = _apply_to_each_selected_object(
+            context,
+            lambda obj: _set_object_origin_orientation_keep_appearance(obj, rot),
+        )
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
@@ -225,9 +283,15 @@ class OCT_OT_OriginPositionToComponent(bpy.types.Operator):
         cursor = context.scene.cursor
         previous_cursor_location = cursor.location.copy()
 
-        cursor.location = pos
-        ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
-        cursor.location = previous_cursor_location
+        def _move_origin_to_component(_obj):
+            cursor.location = pos
+            return _set_origin_to_cursor_allow_edit_mode(context)
+
+        try:
+            ok, msg = _apply_to_each_selected_object(context, _move_origin_to_component)
+        finally:
+            cursor.location = previous_cursor_location
+
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
@@ -240,17 +304,15 @@ class OCT_OT_OriginOrientationToComponent(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
         rot = _selected_component_world_orientation(context)
         if rot is None:
             self.report({'WARNING'}, "No component orientation available")
             return {'CANCELLED'}
 
-        ok, msg = _set_object_origin_orientation_keep_appearance(obj, rot)
+        ok, msg = _apply_to_each_selected_object(
+            context,
+            lambda obj: _set_object_origin_orientation_keep_appearance(obj, rot),
+        )
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
@@ -311,11 +373,11 @@ class OCT_OT_ResetCursorOrientationObject(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
+        selected = _selected_or_active_objects(context)
+        if not selected:
             self.report({'WARNING'}, "No active object")
             return {'CANCELLED'}
-        context.scene.cursor.rotation_euler = obj.matrix_world.to_3x3().to_euler()
+        context.scene.cursor.rotation_euler = selected[-1].matrix_world.to_3x3().to_euler()
         return {'FINISHED'}
 
 
@@ -325,11 +387,11 @@ class OCT_OT_ResetCursorPositionObject(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
+        selected = _selected_or_active_objects(context)
+        if not selected:
             self.report({'WARNING'}, "No active object")
             return {'CANCELLED'}
-        context.scene.cursor.location = obj.matrix_world.to_translation()
+        context.scene.cursor.location = selected[-1].matrix_world.to_translation()
         return {'FINISHED'}
 
 
@@ -339,15 +401,12 @@ class OCT_OT_ResetCursorPositionSelectedBBox(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
+        selected = _selected_or_active_objects(context)
+        if not selected:
             self.report({'WARNING'}, "No active object")
             return {'CANCELLED'}
 
-        # Prefer another selected object as reference, but gracefully fall back
-        # to the active object so the operator also works with a single object.
-        ref_obj = next((o for o in context.selected_objects if o != obj), obj)
-
+        ref_obj = selected[-1]
         bbox_world = [ref_obj.matrix_world @ Vector(corner) for corner in ref_obj.bound_box]
         context.scene.cursor.location = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
         return {'FINISHED'}
@@ -359,12 +418,10 @@ class OCT_OT_ResetOriginOrientationWorld(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
-        ok, msg = _set_object_origin_orientation_keep_appearance(obj, Matrix.Identity(3))
+        ok, msg = _apply_to_each_selected_object(
+            context,
+            lambda obj: _set_object_origin_orientation_keep_appearance(obj, Matrix.Identity(3)),
+        )
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
@@ -377,22 +434,16 @@ class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
-        # Prefer another selected object as reference, but gracefully fall back
-        # to the active object so the operator also works with a single object.
-        ref_obj = next((o for o in context.selected_objects if o != obj), obj)
-
-        bbox_world = [ref_obj.matrix_world @ Vector(corner) for corner in ref_obj.bound_box]
-        target_pos = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
-
         cursor = context.scene.cursor
         previous_cursor_location = cursor.location.copy()
-        cursor.location = target_pos
-        ok, msg = _set_origin_to_cursor_allow_edit_mode(context)
+
+        def _move_origin_to_bbox(obj):
+            bbox_world = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+            target_pos = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
+            cursor.location = target_pos
+            return _set_origin_to_cursor_allow_edit_mode(context)
+
+        ok, msg = _apply_to_each_selected_object(context, _move_origin_to_bbox)
         cursor.location = previous_cursor_location
 
         if not ok:
@@ -493,25 +544,22 @@ class OCT_OT_AimOriginZ(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj:
-            self.report({'WARNING'}, "No active object")
-            return {'CANCELLED'}
-
         target = _selected_component_world_position(context)
         if target is None:
             self.report({'WARNING'}, "No component selection found")
             return {'CANCELLED'}
 
-        origin = obj.matrix_world.to_translation()
-        z_axis = target - origin
-        if z_axis.length <= 1e-12:
-            self.report({'WARNING'}, "Object origin is already at target")
-            return {'CANCELLED'}
+        def _aim_origin_z(obj):
+            origin = obj.matrix_world.to_translation()
+            z_axis = target - origin
+            if z_axis.length <= 1e-12:
+                return False, "Object origin is already at target"
 
-        x_hint = obj.matrix_world.to_3x3().col[0].xyz
-        rot = _basis_from_z_and_hint(z_axis, x_hint)
-        ok, msg = _set_object_origin_orientation_keep_appearance(obj, rot)
+            x_hint = obj.matrix_world.to_3x3().col[0].xyz
+            rot = _basis_from_z_and_hint(z_axis, x_hint)
+            return _set_object_origin_orientation_keep_appearance(obj, rot)
+
+        ok, msg = _apply_to_each_selected_object(context, _aim_origin_z)
         if not ok:
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
