@@ -34,36 +34,9 @@ def _basis_from_z_and_hint(z_axis: Vector, x_hint: Vector) -> Matrix:
 
 
 def _selected_component_world_position(context):
-    obj = context.active_object
-    if obj and obj.type == 'MESH' and obj.mode == 'EDIT':
-        bm = bmesh.from_edit_mesh(obj.data)
-
-        active = bm.select_history.active
-        if active and getattr(active, "select", False):
-            if isinstance(active, bmesh.types.BMVert):
-                return obj.matrix_world @ active.co.copy()
-            if isinstance(active, bmesh.types.BMEdge):
-                center = (active.verts[0].co + active.verts[1].co) * 0.5
-                return obj.matrix_world @ center
-            if isinstance(active, bmesh.types.BMFace):
-                return obj.matrix_world @ active.calc_center_median()
-
-        selected_verts = [v for v in bm.verts if v.select]
-        if selected_verts:
-            local_pos = sum((v.co for v in selected_verts), Vector((0.0, 0.0, 0.0))) / len(selected_verts)
-            return obj.matrix_world @ local_pos
-
-        selected_edges = [e for e in bm.edges if e.select]
-        if selected_edges:
-            edge_centers = [(e.verts[0].co + e.verts[1].co) * 0.5 for e in selected_edges]
-            local_pos = sum(edge_centers, Vector((0.0, 0.0, 0.0))) / len(edge_centers)
-            return obj.matrix_world @ local_pos
-
-        selected_faces = [f for f in bm.faces if f.select]
-        if selected_faces:
-            face_centers = [f.calc_center_median() for f in selected_faces]
-            local_pos = sum(face_centers, Vector((0.0, 0.0, 0.0))) / len(face_centers)
-            return obj.matrix_world @ local_pos
+    data = _selected_component_data(context)
+    if data:
+        return data["position"]
 
     cursor = context.scene.cursor
     old_loc = cursor.location.copy()
@@ -76,7 +49,100 @@ def _selected_component_world_position(context):
     return pos
 
 
+def _normal_to_world(normal_matrix: Matrix, normal_local: Vector) -> Vector:
+    world_normal = normal_matrix @ normal_local
+    return _safe_normalize(world_normal, Vector((0, 0, 1)))
+
+
+def _edge_world_normal(edge, normal_matrix: Matrix) -> Vector:
+    if edge.link_faces:
+        local = sum((f.normal for f in edge.link_faces), Vector((0.0, 0.0, 0.0))) / len(edge.link_faces)
+        if local.length > 1e-12:
+            return _normal_to_world(normal_matrix, local)
+
+    local = (edge.verts[0].normal + edge.verts[1].normal) * 0.5
+    return _normal_to_world(normal_matrix, local)
+
+
+def _bbox_center(points):
+    min_v = Vector((min(p.x for p in points), min(p.y for p in points), min(p.z for p in points)))
+    max_v = Vector((max(p.x for p in points), max(p.y for p in points), max(p.z for p in points)))
+    return (min_v + max_v) * 0.5
+
+
+def _selected_component_data(context):
+    obj = context.active_object
+    if not obj or obj.type != 'MESH' or obj.mode != 'EDIT':
+        return None
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    world_matrix = obj.matrix_world
+    normal_matrix = world_matrix.to_3x3().inverted().transposed()
+    x_hint_world = world_matrix.to_3x3().col[0].xyz
+
+    active = bm.select_history.active
+    if active and getattr(active, "select", False):
+        if isinstance(active, bmesh.types.BMVert):
+            position = world_matrix @ active.co.copy()
+            normal = _normal_to_world(normal_matrix, active.normal)
+            orientation = _basis_from_z_and_hint(normal, x_hint_world)
+            return {"position": position, "orientation": orientation}
+
+        if isinstance(active, bmesh.types.BMEdge):
+            local_center = (active.verts[0].co + active.verts[1].co) * 0.5
+            position = world_matrix @ local_center
+            normal = _edge_world_normal(active, normal_matrix)
+            edge_dir_world = world_matrix.to_3x3() @ (active.verts[1].co - active.verts[0].co)
+            orientation = _basis_from_z_and_hint(normal, edge_dir_world)
+            return {"position": position, "orientation": orientation}
+
+        if isinstance(active, bmesh.types.BMFace):
+            position = world_matrix @ active.calc_center_median()
+            normal = _normal_to_world(normal_matrix, active.normal)
+            tangent = world_matrix.to_3x3() @ active.calc_tangent_edge_pair()
+            orientation = _basis_from_z_and_hint(normal, tangent)
+            return {"position": position, "orientation": orientation}
+
+    components = []
+    selected_verts = [v for v in bm.verts if v.select]
+    if selected_verts:
+        for vert in selected_verts:
+            components.append((world_matrix @ vert.co.copy(), _normal_to_world(normal_matrix, vert.normal)))
+    else:
+        selected_edges = [e for e in bm.edges if e.select]
+        if selected_edges:
+            for edge in selected_edges:
+                local_center = (edge.verts[0].co + edge.verts[1].co) * 0.5
+                components.append((world_matrix @ local_center, _edge_world_normal(edge, normal_matrix)))
+        else:
+            selected_faces = [f for f in bm.faces if f.select]
+            for face in selected_faces:
+                components.append((world_matrix @ face.calc_center_median(), _normal_to_world(normal_matrix, face.normal)))
+
+    if not components:
+        return None
+
+    if len(components) == 1:
+        position, normal = components[0]
+        return {
+            "position": position,
+            "orientation": _basis_from_z_and_hint(normal, x_hint_world),
+        }
+
+    positions = [position for position, _normal in components]
+    normals = [normal for _position, normal in components]
+    average_normal = _safe_normalize(sum(normals, Vector((0.0, 0.0, 0.0))), Vector((0, 0, 1)))
+    return {
+        "position": _bbox_center(positions),
+        "orientation": _basis_from_z_and_hint(average_normal, x_hint_world),
+    }
+
+
 def _selected_component_world_orientation(context):
+    data = _selected_component_data(context)
+    if data:
+        return data["orientation"]
+
     slot = context.scene.transform_orientation_slots[0]
     old_type = slot.type
 
@@ -430,21 +496,33 @@ class OCT_OT_ResetOriginOrientationWorld(bpy.types.Operator):
 
 class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
     bl_idname = "oct.reset_origin_position_selected_bbox"
-    bl_label = "Reset Origin Position to Object Bounding Box"
+    bl_label = "Reset Origin Position to Object(s) Bounding Box"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        selected_objects = _selected_or_active_objects(context)
+        if not selected_objects:
+            self.report({'WARNING'}, "No active object")
+            return {'CANCELLED'}
+
+        all_bbox_points = [
+            obj.matrix_world @ Vector(corner)
+            for obj in selected_objects
+            for corner in obj.bound_box
+        ]
+        target_pos = _bbox_center(all_bbox_points)
+
         cursor = context.scene.cursor
         previous_cursor_location = cursor.location.copy()
 
-        def _move_origin_to_bbox(obj):
-            bbox_world = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-            target_pos = sum(bbox_world, Vector((0.0, 0.0, 0.0))) / len(bbox_world)
+        def _move_origin_to_bbox(_obj):
             cursor.location = target_pos
             return _set_origin_to_cursor_allow_edit_mode(context)
 
-        ok, msg = _apply_to_each_selected_object(context, _move_origin_to_bbox)
-        cursor.location = previous_cursor_location
+        try:
+            ok, msg = _apply_to_each_selected_object(context, _move_origin_to_bbox)
+        finally:
+            cursor.location = previous_cursor_location
 
         if not ok:
             self.report({'WARNING'}, msg)
@@ -454,7 +532,7 @@ class OCT_OT_ResetOriginPositionSelectedBBox(bpy.types.Operator):
 
 class OCT_OT_ResetOriginEachToOwnBBox(bpy.types.Operator):
     bl_idname = "oct.reset_origin_each_to_own_bbox"
-    bl_label = "Reset Origin to Each Object Bounding Box"
+    bl_label = "Reset Origin Position to Each Object Bounding Box"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
