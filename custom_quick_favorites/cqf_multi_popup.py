@@ -154,6 +154,7 @@ class CQF_OT_OpenQuadMenu(Operator):
 
     GAP = 18
     SAFE_PAD = 10
+    _active_instance = None
 
     def _reset_state(self):
         self._handle = None
@@ -177,6 +178,7 @@ class CQF_OT_OpenQuadMenu(Operator):
 
         self._shader = None
         self._style = None
+        self._toggle_key = None
 
     # ---------------- Font style helpers ----------------
 
@@ -388,6 +390,11 @@ class CQF_OT_OpenQuadMenu(Operator):
         }
 
     def invoke(self, context, event):
+        current = CQF_OT_OpenQuadMenu._active_instance
+        if current and not getattr(current, "_finished", True):
+            current._finish(context)
+            return {'CANCELLED'}
+
         self._reset_state()
 
         if not context.area or context.area.type != "VIEW_3D":
@@ -406,6 +413,13 @@ class CQF_OT_OpenQuadMenu(Operator):
         self._mx = int(event.mouse_region_x)
         self._my = int(event.mouse_region_y)
         self._origin = (self._mx, self._my)
+        self._toggle_key = {
+            "type": event.type,
+            "shift": bool(event.shift),
+            "ctrl": bool(event.ctrl),
+            "alt": bool(event.alt),
+            "oskey": bool(event.oskey),
+        }
 
         by_slot = _sections_indices_by_slot(self._mode_cfg)
         for s in ALL_SLOTS:
@@ -422,6 +436,7 @@ class CQF_OT_OpenQuadMenu(Operator):
         self._handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw_callback, (context,), 'WINDOW', 'POST_PIXEL'
         )
+        CQF_OT_OpenQuadMenu._active_instance = self
 
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
@@ -436,6 +451,18 @@ class CQF_OT_OpenQuadMenu(Operator):
             return {'CANCELLED'}
 
         if event.type in {'ESC'}:
+            self._finish(context)
+            return {'CANCELLED'}
+
+        tk = self._toggle_key or {}
+        if (
+            event.value == 'PRESS'
+            and event.type == tk.get("type")
+            and bool(event.shift) == tk.get("shift")
+            and bool(event.ctrl) == tk.get("ctrl")
+            and bool(event.alt) == tk.get("alt")
+            and bool(event.oskey) == tk.get("oskey")
+        ):
             self._finish(context)
             return {'CANCELLED'}
 
@@ -960,6 +987,9 @@ class CQF_OT_OpenQuadMenu(Operator):
         if self._finished or not self._region:
             return
 
+        if context.area != self._area or context.region != self._region:
+            return
+
         try:
             gpu.state.blend_set('ALPHA')
         except Exception:
@@ -997,6 +1027,8 @@ class CQF_OT_OpenQuadMenu(Operator):
 
     def _finish(self, context):
         self._finished = True
+        if CQF_OT_OpenQuadMenu._active_instance is self:
+            CQF_OT_OpenQuadMenu._active_instance = None
         try:
             if self._handle is not None:
                 bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
