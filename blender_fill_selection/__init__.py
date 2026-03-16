@@ -142,6 +142,52 @@ def smallest_axis_index(vec: Vector):
     return values.index(min(values))
 
 
+def largest_axis_index(vec: Vector):
+    values = [abs(vec.x), abs(vec.y), abs(vec.z)]
+    return values.index(max(values))
+
+
+def rotate_object_axis_to_axis(obj, source_axis_index, target_axis_index):
+    if source_axis_index == target_axis_index:
+        return
+
+    basis = [Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0))]
+    source_axis = basis[source_axis_index]
+    target_axis = basis[target_axis_index]
+
+    delta_quaternion = source_axis.rotation_difference(target_axis)
+    obj.rotation_mode = 'XYZ'
+    obj.rotation_euler = delta_quaternion.to_euler('XYZ')
+
+
+def axis_profile(dimensions: Vector):
+    dims = [max(abs(dimensions.x), 0.0001), max(abs(dimensions.y), 0.0001), max(abs(dimensions.z), 0.0001)]
+    sorted_indices = sorted(range(3), key=lambda i: dims[i])
+
+    min_idx = sorted_indices[0]
+    mid_idx = sorted_indices[1]
+    max_idx = sorted_indices[2]
+
+    min_dim = dims[min_idx]
+    mid_dim = dims[mid_idx]
+    max_dim = dims[max_idx]
+
+    almost_equal = lambda a, b: abs(a - b) <= max(a, b) * 0.08
+
+    is_sphere_like = almost_equal(min_dim, max_dim)
+    is_cylinder_like = (max_dim / mid_dim) > 1.4 and almost_equal(mid_dim, min_dim)
+    is_disk_like = (mid_dim / min_dim) > 1.4 and almost_equal(max_dim, mid_dim)
+
+    return {
+        "min_axis": min_idx,
+        "mid_axis": mid_idx,
+        "max_axis": max_idx,
+        "is_sphere_like": is_sphere_like,
+        "is_cylinder_like": is_cylinder_like,
+        "is_disk_like": is_disk_like,
+    }
+
+
 
 def align_flat_object_to_axis(obj, target_axis_index):
     original_dims = obj.dimensions.copy()
@@ -151,13 +197,7 @@ def align_flat_object_to_axis(obj, target_axis_index):
         log(f"{obj.name}: flat axis already aligned to target axis index={target_axis_index}")
         return
 
-    axes = [Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0))]
-    source_axis = axes[source_axis_index]
-    target_axis = axes[target_axis_index]
-
-    delta_quaternion = source_axis.rotation_difference(target_axis)
-    obj.rotation_mode = 'XYZ'
-    obj.rotation_euler = delta_quaternion.to_euler('XYZ')
+    rotate_object_axis_to_axis(obj, source_axis_index, target_axis_index)
     log(
         f"{obj.name}: rotated flat object source_axis={source_axis_index} -> target_axis={target_axis_index}, "
         f"rotation={tuple(round(v, 5) for v in obj.rotation_euler)}"
@@ -165,7 +205,17 @@ def align_flat_object_to_axis(obj, target_axis_index):
 
 
 
-def apply_fill_to_object(obj, bounds):
+def apply_proportional_constraints(target_size, constrained_axes):
+    if not constrained_axes:
+        return target_size
+
+    locked_value = max(target_size[index] for index in constrained_axes)
+    for index in constrained_axes:
+        target_size[index] = locked_value
+    return target_size
+
+
+def apply_fill_to_object(obj, bounds, preserve_proportions):
     if not bounds:
         log(f"{obj.name}: no bounds, skip fill.")
         return
@@ -181,14 +231,35 @@ def apply_fill_to_object(obj, bounds):
     ))
 
     current_dims = obj.dimensions.copy()
-    current_min = min(abs(current_dims.x), abs(current_dims.y), abs(current_dims.z))
-    current_max = max(abs(current_dims.x), abs(current_dims.y), abs(current_dims.z), 0.0001)
-    is_flat = (current_min / current_max) < 0.05
+    profile = axis_profile(current_dims)
+    target_longest_axis = largest_axis_index(raw_size)
 
-    if is_flat:
+    constrained_axes = []
+
+    if profile["is_disk_like"]:
+        source_normal_axis = profile["min_axis"]
+        rotate_object_axis_to_axis(obj, source_normal_axis, target_longest_axis)
+        constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
+        log(
+            f"{obj.name}: disk-like primitive aligned normal axis {source_normal_axis} -> {target_longest_axis}."
+        )
+    elif profile["is_cylinder_like"]:
+        source_long_axis = profile["max_axis"]
+        rotate_object_axis_to_axis(obj, source_long_axis, target_longest_axis)
+        constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
+        log(
+            f"{obj.name}: cylinder-like primitive aligned long axis {source_long_axis} -> {target_longest_axis}."
+        )
+    elif profile["is_sphere_like"]:
+        constrained_axes = [0, 1, 2]
+        log(f"{obj.name}: sphere-like primitive detected.")
+    else:
         target_smallest_axis = smallest_axis_index(raw_size)
-        log(f"{obj.name}: detected flat primitive. Target smallest axis={target_smallest_axis}")
         align_flat_object_to_axis(obj, target_smallest_axis)
+
+    if preserve_proportions:
+        target_size = apply_proportional_constraints(target_size, constrained_axes)
+        log(f"{obj.name}: proportional constraints applied on axes={constrained_axes}")
 
     obj.dimensions = target_size
     log(
@@ -265,7 +336,7 @@ def depsgraph_fill_handler(scene, depsgraph):
                 if obj is None:
                     log(f"Object '{name}' not found in scene at apply time.")
                     continue
-                apply_fill_to_object(obj, bounds)
+                apply_fill_to_object(obj, bounds, context.scene.fill_selection_preserve_proportions)
 
     _TRACKER["known_object_names"] = current_names
     update_selection_snapshot(context)
@@ -290,6 +361,7 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.prop(context.scene, "fill_selection_enabled", text="Enable Fill Selection")
+        layout.prop(context.scene, "fill_selection_preserve_proportions", text="Conserver les proportions")
         layout.label(text="Works with native Shift+A operators")
 
 
@@ -333,6 +405,11 @@ def register():
         default=False,
         update=on_toggle_fill_selection,
     )
+    bpy.types.Scene.fill_selection_preserve_proportions = bpy.props.BoolProperty(
+        name="Conserver les proportions",
+        description="Conserve les proportions pour éviter la déformation des sphères, cylindres et disques",
+        default=False,
+    )
 
     for cls in CLASSES:
         bpy.utils.register_class(cls)
@@ -352,6 +429,8 @@ def unregister():
 
     if hasattr(bpy.types.Scene, "fill_selection_enabled"):
         del bpy.types.Scene.fill_selection_enabled
+    if hasattr(bpy.types.Scene, "fill_selection_preserve_proportions"):
+        del bpy.types.Scene.fill_selection_preserve_proportions
 
     _TRACKER["known_object_names"] = set()
     _TRACKER["last_selection_bounds"] = None
