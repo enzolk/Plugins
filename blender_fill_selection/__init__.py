@@ -464,6 +464,24 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         min=1,
         soft_max=32,
     )
+    use_stored_bounds: bpy.props.BoolProperty(
+        name="Use Stored Bounds",
+        description="Réutilise la bounding box initiale lors d'un Adjust Last Operation",
+        default=False,
+        options={'HIDDEN'},
+    )
+    stored_bounds_min: bpy.props.FloatVectorProperty(
+        name="Stored Bounds Min",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        options={'HIDDEN'},
+    )
+    stored_bounds_max: bpy.props.FloatVectorProperty(
+        name="Stored Bounds Max",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        options={'HIDDEN'},
+    )
 
     @classmethod
     def poll(cls, context):
@@ -471,6 +489,15 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.preserve_proportions = context.scene.fill_selection_preserve_proportions
+
+        initial_bounds = compute_selection_bounds(context)
+        if initial_bounds is None:
+            self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
+            return {'CANCELLED'}
+
+        self.use_stored_bounds = True
+        self.stored_bounds_min = tuple(initial_bounds.minimum)
+        self.stored_bounds_max = tuple(initial_bounds.maximum)
         return self.execute(context)
 
     def draw(self, context):
@@ -496,7 +523,19 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
 
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere("Fill Selection Quad Sphere operator started.")
-        bounds = compute_selection_bounds(context)
+
+        if self.use_stored_bounds:
+            bounds = SelectionBounds(Vector(self.stored_bounds_min), Vector(self.stored_bounds_max))
+            log(
+                "Using stored bounds "
+                f"min={tuple(round(v, 5) for v in bounds.minimum)}, "
+                f"max={tuple(round(v, 5) for v in bounds.maximum)}, "
+                f"center={tuple(round(v, 5) for v in bounds.center)}, "
+                f"size={tuple(round(v, 5) for v in bounds.size)}"
+            )
+        else:
+            bounds = compute_selection_bounds(context)
+
         if bounds is None:
             self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
             return {'CANCELLED'}
