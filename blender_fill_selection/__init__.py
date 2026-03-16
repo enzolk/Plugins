@@ -20,8 +20,6 @@ _TRACKER = {
     "known_object_names": set(),
     "last_selection_bounds": None,
     "edit_mesh_signatures": {},
-    "snapshot_freeze_ticks": 0,
-    "frozen_selection_bounds": None,
 }
 
 
@@ -141,45 +139,6 @@ def compute_selection_bounds(context):
     else:
         log("No bounds computed (empty selection).")
     return bounds
-
-
-
-def copy_bounds(bounds):
-    if bounds is None:
-        return None
-    return SelectionBounds(bounds.minimum.copy(), bounds.maximum.copy())
-
-
-def begin_selection_snapshot_freeze(bounds, ticks=4):
-    if bounds is None:
-        return
-
-    _TRACKER["frozen_selection_bounds"] = copy_bounds(bounds)
-    _TRACKER["snapshot_freeze_ticks"] = max(_TRACKER["snapshot_freeze_ticks"], ticks)
-    log(
-        "Selection snapshot freeze enabled "
-        f"for {_TRACKER['snapshot_freeze_ticks']} tick(s)."
-    )
-
-
-def get_bounds_for_fill():
-    frozen = _TRACKER["frozen_selection_bounds"]
-    if frozen is not None and _TRACKER["snapshot_freeze_ticks"] > 0:
-        return frozen
-    return _TRACKER["last_selection_bounds"]
-
-
-def consume_selection_snapshot_freeze_tick():
-    ticks = _TRACKER["snapshot_freeze_ticks"]
-    if ticks <= 0:
-        return False
-
-    _TRACKER["snapshot_freeze_ticks"] = ticks - 1
-    if _TRACKER["snapshot_freeze_ticks"] == 0:
-        _TRACKER["frozen_selection_bounds"] = None
-        log("Selection snapshot freeze released.")
-
-    return True
 
 
 
@@ -405,13 +364,7 @@ def refresh_known_objects(scene):
         return
 
     _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
-    _TRACKER["snapshot_freeze_ticks"] = 0
-    _TRACKER["frozen_selection_bounds"] = None
-    _TRACKER["edit_mesh_signatures"] = {
-        obj.name: edit_mesh_signature(obj)
-        for obj in scene.objects
-        if obj.type == 'MESH'
-    }
+    _TRACKER["edit_mesh_signatures"] = {}
     log(f"Known object cache refreshed. count={len(_TRACKER['known_object_names'])}")
 
 
@@ -477,30 +430,28 @@ def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
 
 def process_edit_mode_addition(context):
     if context.mode != 'EDIT_MESH':
-        return False
+        return
 
     obj = context.active_object
     if obj is None or obj.type != 'MESH':
-        return False
+        return
 
     current_signature = edit_mesh_signature(obj)
     if current_signature is None:
-        return False
+        return
 
     previous_signature = _TRACKER["edit_mesh_signatures"].get(obj.name)
     _TRACKER["edit_mesh_signatures"][obj.name] = current_signature
 
     if previous_signature is None or previous_signature == current_signature:
-        return False
+        return
 
-    bounds = get_bounds_for_fill()
+    bounds = _TRACKER["last_selection_bounds"]
     if bounds is None:
         log(f"{obj.name}: edit topology changed but no stored bounds to apply.")
-        return True
+        return
 
-    begin_selection_snapshot_freeze(bounds)
     apply_fill_to_selected_edit_mesh(obj, bounds, context.scene.fill_selection_preserve_proportions)
-    return True
 
 
 
@@ -522,18 +473,11 @@ def depsgraph_fill_handler(scene, depsgraph):
         _TRACKER["known_object_names"] = current_names
         process_edit_mode_addition(context)
         _TRACKER["last_selection_bounds"] = None
-        _TRACKER["snapshot_freeze_ticks"] = 0
-        _TRACKER["frozen_selection_bounds"] = None
         return
-
-    topology_changed = False
 
     if new_names:
         log(f"Detected new objects={list(new_names)}")
-        bounds = get_bounds_for_fill()
-        if context.mode == 'EDIT_MESH' and bounds is not None:
-            begin_selection_snapshot_freeze(bounds)
-
+        bounds = _TRACKER["last_selection_bounds"]
         if bounds is None:
             log("No previous selection bounds stored. New object(s) keep native behavior.")
         else:
@@ -544,16 +488,9 @@ def depsgraph_fill_handler(scene, depsgraph):
                     continue
                 apply_fill_to_object(obj, bounds, context.scene.fill_selection_preserve_proportions)
     else:
-        topology_changed = process_edit_mode_addition(context)
+        process_edit_mode_addition(context)
 
     _TRACKER["known_object_names"] = current_names
-
-    freeze_active = consume_selection_snapshot_freeze_tick()
-
-    if topology_changed or freeze_active:
-        log("Selection snapshot update skipped (edit operation freeze active).")
-        return
-
     update_selection_snapshot(context)
 
 
@@ -649,8 +586,6 @@ def unregister():
 
     _TRACKER["known_object_names"] = set()
     _TRACKER["last_selection_bounds"] = None
-    _TRACKER["snapshot_freeze_ticks"] = 0
-    _TRACKER["frozen_selection_bounds"] = None
     log("Unregister add-on complete.")
 
 
