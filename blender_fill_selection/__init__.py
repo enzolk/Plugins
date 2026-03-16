@@ -34,6 +34,10 @@ def log(message):
     print(f"{LOG_PREFIX} {message}")
 
 
+def log_quad_sphere(message):
+    log(f"[QuadSphere] {message}")
+
+
 def vector_min(a: Vector, b: Vector):
     return Vector((min(a.x, b.x), min(a.y, b.y), min(a.z, b.z)))
 
@@ -200,12 +204,16 @@ def create_primitive_object(context, primitive_kind):
     }
 
     if primitive_kind == "quad_sphere":
+        log_quad_sphere("Creating base mesh datablock.")
         mesh = bpy.data.meshes.new("FillSelectionQuadSphere")
+        log_quad_sphere("Creating object instance.")
         obj = bpy.data.objects.new("Fill Selection Quad Sphere", mesh)
+        log_quad_sphere("Linking object to active collection.")
         context.collection.objects.link(obj)
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True)
         context.view_layer.objects.active = obj
+        log_quad_sphere(f"Object '{obj.name}' created and set active.")
         return obj
 
     op = add_ops[primitive_kind]
@@ -246,24 +254,31 @@ def mark_object_as_fill_selection_primitive(obj, primitive_kind):
 
 
 def create_quad_sphere_bmesh(resolution):
+    log_quad_sphere(f"Generating bmesh (resolution={resolution}).")
     bm = bmesh.new()
 
+    log_quad_sphere("Creating base cube.")
     bmesh.ops.create_cube(bm, size=2.0)
 
     cuts = max(0, resolution - 1)
     if cuts > 0:
+        log_quad_sphere(f"Subdividing cube edges with cuts={cuts}.")
         bmesh.ops.subdivide_edges(
             bm,
             edges=list(bm.edges),
             cuts=cuts,
             use_grid_fill=True,
         )
+    else:
+        log_quad_sphere("Subdivision skipped (cuts=0).")
 
+    log_quad_sphere("Projecting vertices onto sphere surface (normalization).")
     for vert in bm.verts:
         if vert.co.length > 0.0:
             vert.co = vert.co.normalized()
 
     bm.normal_update()
+    log_quad_sphere(f"Bmesh ready: verts={len(bm.verts)} edges={len(bm.edges)} faces={len(bm.faces)}.")
     return bm
 
 
@@ -279,6 +294,8 @@ def regenerate_fill_selection_mesh(obj):
         obj.data = obj.data.copy()
 
     original_dimensions = obj.dimensions.copy()
+    if primitive_kind == "quad_sphere":
+        log_quad_sphere(f"Regenerating mesh for '{obj.name}'.")
 
     bm = None
     try:
@@ -311,16 +328,38 @@ def regenerate_fill_selection_mesh(obj):
                 radius=1.0,
             )
         elif primitive_kind == "quad_sphere":
+            log_quad_sphere("Calling quad sphere bmesh generator.")
             bm = create_quad_sphere_bmesh(max(1, obj.fill_selection_resolution))
 
+        if primitive_kind == "quad_sphere":
+            log_quad_sphere("Writing generated bmesh to mesh datablock.")
         bm.to_mesh(obj.data)
         obj.data.update()
+        if primitive_kind == "quad_sphere":
+            log_quad_sphere(
+                f"Mesh datablock updated: verts={len(obj.data.vertices)} edges={len(obj.data.edges)} polys={len(obj.data.polygons)}."
+            )
     finally:
         if bm is not None:
             bm.free()
+            if primitive_kind == "quad_sphere":
+                log_quad_sphere("Temporary bmesh freed.")
 
     obj.dimensions = original_dimensions
+    if primitive_kind == "quad_sphere":
+        log_quad_sphere(
+            f"Dimensions restored to {tuple(round(v, 5) for v in obj.dimensions)} after regeneration."
+        )
     return True
+
+
+def on_fill_selection_param_changed(self, context):
+    obj = self
+    if not obj or obj.type != 'MESH' or not getattr(obj, "fill_selection_is_managed", False):
+        return
+
+    log(f"Realtime parameter update for '{obj.name}' ({obj.fill_selection_primitive_kind}).")
+    regenerate_fill_selection_mesh(obj)
 
 
 class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
@@ -393,10 +432,19 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             layout.prop(self, "resolution")
 
     def execute(self, context):
+        if self.primitive_kind == "quad_sphere":
+            log_quad_sphere("Fill Selection Quad Sphere operator started.")
         bounds = compute_selection_bounds(context)
         if bounds is None:
             self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
             return {'CANCELLED'}
+
+        if self.primitive_kind == "quad_sphere":
+            log_quad_sphere(
+                "Selection bounds acquired "
+                f"center={tuple(round(v, 5) for v in bounds.center)} "
+                f"size={tuple(round(v, 5) for v in bounds.size)}"
+            )
 
         if context.mode == 'EDIT_MESH':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -418,8 +466,17 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             regenerate_fill_selection_mesh(new_obj)
 
         apply_fill_to_object(new_obj, self.primitive_kind, bounds, self.preserve_proportions)
+        if self.primitive_kind == "quad_sphere":
+            log_quad_sphere(
+                "Transform applied "
+                f"location={tuple(round(v, 5) for v in new_obj.location)} "
+                f"rotation={tuple(round(v, 5) for v in new_obj.rotation_euler)} "
+                f"dimensions={tuple(round(v, 5) for v in new_obj.dimensions)}"
+            )
         mark_object_as_fill_selection_primitive(new_obj, self.primitive_kind)
         log(f"Created {self.primitive_kind} as '{new_obj.name}'.")
+        if self.primitive_kind == "quad_sphere":
+            log_quad_sphere("Fill Selection Quad Sphere operator finished.")
         return {'FINISHED'}
 
 
@@ -480,8 +537,6 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
             elif primitive_kind == "quad_sphere":
                 box.prop(obj, "fill_selection_resolution", text="Resolution")
 
-            box.operator("mesh.fill_selection_rebuild_primitive", text="Apply Parameter Changes")
-
 
 CLASSES = (
     FILL_SELECTION_OT_add_primitive,
@@ -519,6 +574,7 @@ def register():
         default=32,
         min=3,
         soft_max=256,
+        update=on_fill_selection_param_changed,
     )
     bpy.types.Object.fill_selection_segments = bpy.props.IntProperty(
         name="Segments",
@@ -526,6 +582,7 @@ def register():
         default=32,
         min=3,
         soft_max=256,
+        update=on_fill_selection_param_changed,
     )
     bpy.types.Object.fill_selection_rings = bpy.props.IntProperty(
         name="Rings",
@@ -533,6 +590,7 @@ def register():
         default=16,
         min=2,
         soft_max=256,
+        update=on_fill_selection_param_changed,
     )
     bpy.types.Object.fill_selection_resolution = bpy.props.IntProperty(
         name="Resolution",
@@ -540,6 +598,7 @@ def register():
         default=3,
         min=1,
         soft_max=32,
+        update=on_fill_selection_param_changed,
     )
 
     for cls in CLASSES:
