@@ -20,7 +20,6 @@ _TRACKER = {
     "known_object_names": set(),
     "last_selection_bounds": None,
     "edit_mesh_signatures": {},
-    "edit_selection_cache": {},
 }
 
 
@@ -140,13 +139,6 @@ def compute_selection_bounds(context):
     else:
         log("No bounds computed (empty selection).")
     return bounds
-
-
-
-def copy_bounds(bounds):
-    if bounds is None:
-        return None
-    return SelectionBounds(bounds.minimum.copy(), bounds.maximum.copy())
 
 
 
@@ -368,18 +360,11 @@ def get_available_scene(context=None):
 def refresh_known_objects(scene):
     if scene is None:
         _TRACKER["known_object_names"] = set()
-        _TRACKER["edit_mesh_signatures"] = {}
-        _TRACKER["edit_selection_cache"] = {}
         log("Known object cache cleared: no scene available yet.")
         return
 
     _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
-    _TRACKER["edit_mesh_signatures"] = {
-        obj.name: edit_mesh_signature(obj)
-        for obj in scene.objects
-        if obj.type == 'MESH'
-    }
-    _TRACKER["edit_selection_cache"] = {}
+    _TRACKER["edit_mesh_signatures"] = {}
     log(f"Known object cache refreshed. count={len(_TRACKER['known_object_names'])}")
 
 
@@ -398,25 +383,6 @@ def selection_bounds_from_selected_edit_vertices(obj, bm):
 
     points = [obj.matrix_world @ vert.co for vert in selected_verts]
     return build_bounds(points), selected_verts
-
-
-def update_active_edit_selection_cache(context):
-    if context.mode != 'EDIT_MESH':
-        return
-
-    obj = context.active_object
-    if obj is None or obj.type != 'MESH':
-        return
-
-    bm = bmesh.from_edit_mesh(obj.data)
-    bounds, _ = selection_bounds_from_selected_edit_vertices(obj, bm)
-    signature = edit_mesh_signature(obj)
-
-    _TRACKER["edit_mesh_signatures"][obj.name] = signature
-    _TRACKER["edit_selection_cache"][obj.name] = {
-        "signature": signature,
-        "bounds": copy_bounds(bounds),
-    }
 
 
 def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
@@ -464,35 +430,28 @@ def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
 
 def process_edit_mode_addition(context):
     if context.mode != 'EDIT_MESH':
-        return False
+        return
 
     obj = context.active_object
     if obj is None or obj.type != 'MESH':
-        return False
+        return
 
     current_signature = edit_mesh_signature(obj)
     if current_signature is None:
-        return False
+        return
 
-    cached = _TRACKER["edit_selection_cache"].get(obj.name)
-    previous_signature = None
-    if cached is not None:
-        previous_signature = cached.get("signature")
-    if previous_signature is None:
-        previous_signature = _TRACKER["edit_mesh_signatures"].get(obj.name)
-
+    previous_signature = _TRACKER["edit_mesh_signatures"].get(obj.name)
     _TRACKER["edit_mesh_signatures"][obj.name] = current_signature
 
     if previous_signature is None or previous_signature == current_signature:
-        return False
+        return
 
-    bounds = cached.get("bounds") if cached else None
+    bounds = _TRACKER["last_selection_bounds"]
     if bounds is None:
-        log(f"{obj.name}: topology changed but no cached pre-change selection bounds.")
-        return True
+        log(f"{obj.name}: edit topology changed but no stored bounds to apply.")
+        return
 
     apply_fill_to_selected_edit_mesh(obj, bounds, context.scene.fill_selection_preserve_proportions)
-    return True
 
 
 
@@ -509,12 +468,12 @@ def depsgraph_fill_handler(scene, depsgraph):
     new_names = current_names - known_names
 
     if not enabled:
+        if new_names:
+            log(f"Feature disabled: observed {len(new_names)} new objects, no transform applied.")
         _TRACKER["known_object_names"] = current_names
+        process_edit_mode_addition(context)
         _TRACKER["last_selection_bounds"] = None
-        _TRACKER["edit_selection_cache"] = {}
         return
-
-    topology_changed = False
 
     if new_names:
         log(f"Detected new objects={list(new_names)}")
@@ -529,17 +488,9 @@ def depsgraph_fill_handler(scene, depsgraph):
                     continue
                 apply_fill_to_object(obj, bounds, context.scene.fill_selection_preserve_proportions)
     else:
-        topology_changed = process_edit_mode_addition(context)
+        process_edit_mode_addition(context)
 
     _TRACKER["known_object_names"] = current_names
-
-    if context.mode == 'EDIT_MESH':
-        update_active_edit_selection_cache(context)
-        if topology_changed:
-            log("Selection snapshot update skipped (using cached pre-change edit selection bounds).")
-            return
-        return
-
     update_selection_snapshot(context)
 
 
@@ -635,8 +586,6 @@ def unregister():
 
     _TRACKER["known_object_names"] = set()
     _TRACKER["last_selection_bounds"] = None
-    _TRACKER["edit_mesh_signatures"] = {}
-    _TRACKER["edit_selection_cache"] = {}
     log("Unregister add-on complete.")
 
 
