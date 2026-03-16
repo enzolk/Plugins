@@ -181,7 +181,7 @@ def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions):
     if primitive_kind in {"disc", "cylinder"}:
         rotate_object_axis_to_axis(obj, 2, target_longest_axis)
         constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
-    elif primitive_kind == "sphere":
+    elif primitive_kind in {"sphere", "quad_sphere"}:
         constrained_axes = [0, 1, 2]
 
     if preserve_proportions:
@@ -198,6 +198,15 @@ def create_primitive_object(context, primitive_kind):
         "sphere": bpy.ops.mesh.primitive_uv_sphere_add,
         "disc": bpy.ops.mesh.primitive_circle_add,
     }
+
+    if primitive_kind == "quad_sphere":
+        mesh = bpy.data.meshes.new("FillSelectionQuadSphere")
+        obj = bpy.data.objects.new("Fill Selection Quad Sphere", mesh)
+        context.collection.objects.link(obj)
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        return obj
 
     op = add_ops[primitive_kind]
 
@@ -232,13 +241,38 @@ def mark_object_as_fill_selection_primitive(obj, primitive_kind):
         if obj.fill_selection_rings < 2:
             obj.fill_selection_rings = 16
 
+    if primitive_kind == "quad_sphere" and obj.fill_selection_resolution < 1:
+        obj.fill_selection_resolution = 3
+
+
+def create_quad_sphere_bmesh(resolution):
+    bm = bmesh.new()
+
+    bmesh.ops.create_cube(bm, size=2.0)
+
+    cuts = max(0, resolution - 1)
+    if cuts > 0:
+        bmesh.ops.subdivide_edges(
+            bm,
+            edges=list(bm.edges),
+            cuts=cuts,
+            use_grid_fill=True,
+        )
+
+    for vert in bm.verts:
+        if vert.co.length > 0.0:
+            vert.co = vert.co.normalized()
+
+    bm.normal_update()
+    return bm
+
 
 def regenerate_fill_selection_mesh(obj):
     if not obj or obj.type != 'MESH':
         return False
 
     primitive_kind = obj.fill_selection_primitive_kind
-    if primitive_kind not in {"cylinder", "sphere", "disc"}:
+    if primitive_kind not in {"cylinder", "sphere", "disc", "quad_sphere"}:
         return False
 
     if obj.data.users > 1:
@@ -246,9 +280,10 @@ def regenerate_fill_selection_mesh(obj):
 
     original_dimensions = obj.dimensions.copy()
 
-    bm = bmesh.new()
+    bm = None
     try:
         if primitive_kind == "cylinder":
+            bm = bmesh.new()
             bmesh.ops.create_cone(
                 bm,
                 cap_ends=True,
@@ -259,6 +294,7 @@ def regenerate_fill_selection_mesh(obj):
                 depth=2.0,
             )
         elif primitive_kind == "sphere":
+            bm = bmesh.new()
             bmesh.ops.create_uvsphere(
                 bm,
                 u_segments=max(3, obj.fill_selection_segments),
@@ -266,6 +302,7 @@ def regenerate_fill_selection_mesh(obj):
                 radius=1.0,
             )
         elif primitive_kind == "disc":
+            bm = bmesh.new()
             bmesh.ops.create_circle(
                 bm,
                 cap_ends=True,
@@ -273,11 +310,14 @@ def regenerate_fill_selection_mesh(obj):
                 segments=max(3, obj.fill_selection_vertices),
                 radius=1.0,
             )
+        elif primitive_kind == "quad_sphere":
+            bm = create_quad_sphere_bmesh(max(1, obj.fill_selection_resolution))
 
         bm.to_mesh(obj.data)
         obj.data.update()
     finally:
-        bm.free()
+        if bm is not None:
+            bm.free()
 
     obj.dimensions = original_dimensions
     return True
@@ -293,22 +333,70 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         items=(
             ("cube", "Cube", "Fill Selection Cube"),
             ("cylinder", "Cylinder", "Fill Selection Cylinder"),
-            ("sphere", "Sphere", "Fill Selection Sphere"),
+            ("sphere", "UV Sphere", "Fill Selection UV Sphere"),
             ("disc", "Disc", "Fill Selection Disc"),
+            ("quad_sphere", "Quad Sphere", "Fill Selection Quad Sphere"),
         ),
+    )
+    preserve_proportions: bpy.props.BoolProperty(
+        name="Proportional Transform",
+        description="Conserve les proportions pour les primitives concernées",
+        default=False,
+    )
+    vertices: bpy.props.IntProperty(
+        name="Vertices",
+        description="Nombre de vertices pour Cylinder et Disc",
+        default=32,
+        min=3,
+        soft_max=256,
+    )
+    segments: bpy.props.IntProperty(
+        name="Segments",
+        description="Nombre de segments pour la UV Sphere",
+        default=32,
+        min=3,
+        soft_max=256,
+    )
+    rings: bpy.props.IntProperty(
+        name="Rings",
+        description="Nombre de rings pour la UV Sphere",
+        default=16,
+        min=2,
+        soft_max=256,
+    )
+    resolution: bpy.props.IntProperty(
+        name="Resolution",
+        description="Niveau de subdivision pour la Quad Sphere",
+        default=3,
+        min=1,
+        soft_max=32,
     )
 
     @classmethod
     def poll(cls, context):
         return context.mode in {'OBJECT', 'EDIT_MESH'}
 
+    def invoke(self, context, event):
+        self.preserve_proportions = context.scene.fill_selection_preserve_proportions
+        return self.execute(context)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "preserve_proportions")
+
+        if self.primitive_kind in {"cylinder", "disc"}:
+            layout.prop(self, "vertices")
+        elif self.primitive_kind == "sphere":
+            layout.prop(self, "segments")
+            layout.prop(self, "rings")
+        elif self.primitive_kind == "quad_sphere":
+            layout.prop(self, "resolution")
+
     def execute(self, context):
         bounds = compute_selection_bounds(context)
         if bounds is None:
             self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
             return {'CANCELLED'}
-
-        preserve_proportions = context.scene.fill_selection_preserve_proportions
 
         if context.mode == 'EDIT_MESH':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -318,7 +406,18 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             self.report({'ERROR'}, "Impossible de créer la primitive.")
             return {'CANCELLED'}
 
-        apply_fill_to_object(new_obj, self.primitive_kind, bounds, preserve_proportions)
+        if self.primitive_kind in {"cylinder", "disc"}:
+            new_obj.fill_selection_vertices = self.vertices
+        elif self.primitive_kind == "sphere":
+            new_obj.fill_selection_segments = self.segments
+            new_obj.fill_selection_rings = self.rings
+        elif self.primitive_kind == "quad_sphere":
+            new_obj.fill_selection_resolution = self.resolution
+
+        if self.primitive_kind != "cube":
+            regenerate_fill_selection_mesh(new_obj)
+
+        apply_fill_to_object(new_obj, self.primitive_kind, bounds, self.preserve_proportions)
         mark_object_as_fill_selection_primitive(new_obj, self.primitive_kind)
         log(f"Created {self.primitive_kind} as '{new_obj.name}'.")
         return {'FINISHED'}
@@ -364,8 +463,9 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
         col = layout.column(align=True)
         col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Cube").primitive_kind = "cube"
         col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Cylinder").primitive_kind = "cylinder"
-        col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Sphere").primitive_kind = "sphere"
+        col.operator("mesh.fill_selection_add_primitive", text="Fill Selection UV Sphere").primitive_kind = "sphere"
         col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Disc").primitive_kind = "disc"
+        col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Quad Sphere").primitive_kind = "quad_sphere"
 
         if obj and obj.type == 'MESH' and getattr(obj, "fill_selection_is_managed", False):
             box = layout.box()
@@ -377,6 +477,8 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
             elif primitive_kind == "sphere":
                 box.prop(obj, "fill_selection_segments", text="Segments")
                 box.prop(obj, "fill_selection_rings", text="Rings")
+            elif primitive_kind == "quad_sphere":
+                box.prop(obj, "fill_selection_resolution", text="Resolution")
 
             box.operator("mesh.fill_selection_rebuild_primitive", text="Apply Parameter Changes")
 
@@ -405,8 +507,9 @@ def register():
         items=(
             ("cube", "Cube", "Fill Selection Cube"),
             ("cylinder", "Cylinder", "Fill Selection Cylinder"),
-            ("sphere", "Sphere", "Fill Selection Sphere"),
+            ("sphere", "UV Sphere", "Fill Selection UV Sphere"),
             ("disc", "Disc", "Fill Selection Disc"),
+            ("quad_sphere", "Quad Sphere", "Fill Selection Quad Sphere"),
         ),
         default="cube",
     )
@@ -431,6 +534,13 @@ def register():
         min=2,
         soft_max=256,
     )
+    bpy.types.Object.fill_selection_resolution = bpy.props.IntProperty(
+        name="Resolution",
+        description="Niveau de subdivision pour la Quad Sphere",
+        default=3,
+        min=1,
+        soft_max=32,
+    )
 
     for cls in CLASSES:
         bpy.utils.register_class(cls)
@@ -445,6 +555,8 @@ def unregister():
 
     if hasattr(bpy.types.Object, "fill_selection_rings"):
         del bpy.types.Object.fill_selection_rings
+    if hasattr(bpy.types.Object, "fill_selection_resolution"):
+        del bpy.types.Object.fill_selection_resolution
     if hasattr(bpy.types.Object, "fill_selection_segments"):
         del bpy.types.Object.fill_selection_segments
     if hasattr(bpy.types.Object, "fill_selection_vertices"):
