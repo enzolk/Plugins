@@ -195,7 +195,7 @@ def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions):
     obj.dimensions = target_size_local
 
 
-def create_primitive_object(context, primitive_kind):
+def create_primitive_object(context, primitive_kind, quad_sphere_resolution=3):
     add_ops = {
         "cube": bpy.ops.mesh.primitive_cube_add,
         "cylinder": bpy.ops.mesh.primitive_cylinder_add,
@@ -204,10 +204,30 @@ def create_primitive_object(context, primitive_kind):
     }
 
     if primitive_kind == "quad_sphere":
+        resolution = max(1, quad_sphere_resolution)
         log_quad_sphere("Creating base mesh datablock.")
         mesh = bpy.data.meshes.new("FillSelectionQuadSphere")
+
         log_quad_sphere("Creating object instance.")
         obj = bpy.data.objects.new("Fill Selection Quad Sphere", mesh)
+
+        log_quad_sphere("Generating Quad Sphere geometry before object linking.")
+        bm = create_quad_sphere_bmesh(resolution)
+        try:
+            log_quad_sphere(
+                f"Final BMesh stats before mesh transfer: verts={len(bm.verts)} edges={len(bm.edges)} faces={len(bm.faces)}."
+            )
+            bm.to_mesh(mesh)
+            mesh.validate(verbose=False)
+            mesh.update()
+        finally:
+            bm.free()
+            log_quad_sphere("Temporary bmesh freed.")
+
+        log_quad_sphere(
+            f"Final mesh stats: verts={len(mesh.vertices)}, edges={len(mesh.edges)}, polys={len(mesh.polygons)}"
+        )
+
         log_quad_sphere("Linking object to active collection.")
         context.collection.objects.link(obj)
         bpy.ops.object.select_all(action='DESELECT')
@@ -477,7 +497,11 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         if context.mode == 'EDIT_MESH':
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        new_obj = create_primitive_object(context, self.primitive_kind)
+        new_obj = create_primitive_object(
+            context,
+            self.primitive_kind,
+            quad_sphere_resolution=self.resolution,
+        )
         if new_obj is None:
             self.report({'ERROR'}, "Impossible de créer la primitive.")
             return {'CANCELLED'}
@@ -490,7 +514,7 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         elif self.primitive_kind == "quad_sphere":
             new_obj.fill_selection_resolution = self.resolution
 
-        if self.primitive_kind != "cube":
+        if self.primitive_kind in {"cylinder", "sphere", "disc"}:
             regenerate_fill_selection_mesh(new_obj)
 
         if self.primitive_kind == "quad_sphere":
