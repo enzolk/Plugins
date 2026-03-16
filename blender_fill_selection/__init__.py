@@ -195,7 +195,7 @@ def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions):
     obj.dimensions = target_size_local
 
 
-def create_primitive_object(context, primitive_kind):
+def create_primitive_object(context, primitive_kind, quad_sphere_resolution=3):
     add_ops = {
         "cube": bpy.ops.mesh.primitive_cube_add,
         "cylinder": bpy.ops.mesh.primitive_cylinder_add,
@@ -204,10 +204,30 @@ def create_primitive_object(context, primitive_kind):
     }
 
     if primitive_kind == "quad_sphere":
+        resolution = max(1, quad_sphere_resolution)
         log_quad_sphere("Creating base mesh datablock.")
         mesh = bpy.data.meshes.new("FillSelectionQuadSphere")
+
         log_quad_sphere("Creating object instance.")
         obj = bpy.data.objects.new("Fill Selection Quad Sphere", mesh)
+
+        log_quad_sphere("Generating Quad Sphere geometry before object linking.")
+        bm = create_quad_sphere_bmesh(resolution)
+        try:
+            log_quad_sphere(
+                f"Final BMesh stats before mesh transfer: verts={len(bm.verts)} edges={len(bm.edges)} faces={len(bm.faces)}."
+            )
+            bm.to_mesh(mesh)
+            mesh.validate(verbose=False)
+            mesh.update()
+        finally:
+            bm.free()
+            log_quad_sphere("Temporary bmesh freed.")
+
+        log_quad_sphere(
+            f"Final mesh stats: verts={len(mesh.vertices)}, edges={len(mesh.edges)}, polys={len(mesh.polygons)}"
+        )
+
         log_quad_sphere("Linking object to active collection.")
         context.collection.objects.link(obj)
         bpy.ops.object.select_all(action='DESELECT')
@@ -259,6 +279,9 @@ def create_quad_sphere_bmesh(resolution):
 
     log_quad_sphere("Creating base cube.")
     bmesh.ops.create_cube(bm, size=2.0)
+    log_quad_sphere(
+        f"Base cube stats: verts={len(bm.verts)} edges={len(bm.edges)} faces={len(bm.faces)}."
+    )
 
     cuts = max(0, resolution - 1)
     if cuts > 0:
@@ -269,13 +292,27 @@ def create_quad_sphere_bmesh(resolution):
             cuts=cuts,
             use_grid_fill=True,
         )
+        log_quad_sphere(
+            f"After subdivision: verts={len(bm.verts)} faces={len(bm.faces)}."
+        )
     else:
         log_quad_sphere("Subdivision skipped (cuts=0).")
+        log_quad_sphere(
+            f"After subdivision: verts={len(bm.verts)} faces={len(bm.faces)}."
+        )
 
     log_quad_sphere("Projecting vertices onto sphere surface (normalization).")
+    moved_vertices = 0
     for vert in bm.verts:
         if vert.co.length > 0.0:
+            previous = vert.co.copy()
             vert.co = vert.co.normalized()
+            if (vert.co - previous).length > 1e-9:
+                moved_vertices += 1
+
+    log_quad_sphere(
+        f"Spherical projection complete: moved_vertices={moved_vertices}/{len(bm.verts)}."
+    )
 
     bm.normal_update()
     log_quad_sphere(f"Bmesh ready: verts={len(bm.verts)} edges={len(bm.edges)} faces={len(bm.faces)}.")
@@ -332,6 +369,9 @@ def regenerate_fill_selection_mesh(obj):
             bm = create_quad_sphere_bmesh(max(1, obj.fill_selection_resolution))
 
         if primitive_kind == "quad_sphere":
+            log_quad_sphere(
+                f"Final BMesh stats before mesh transfer: verts={len(bm.verts)} edges={len(bm.edges)} faces={len(bm.faces)}."
+            )
             log_quad_sphere("Writing generated bmesh to mesh datablock.")
         bm.to_mesh(obj.data)
         obj.data.update()
@@ -345,11 +385,19 @@ def regenerate_fill_selection_mesh(obj):
             if primitive_kind == "quad_sphere":
                 log_quad_sphere("Temporary bmesh freed.")
 
-    obj.dimensions = original_dimensions
     if primitive_kind == "quad_sphere":
-        log_quad_sphere(
-            f"Dimensions restored to {tuple(round(v, 5) for v in obj.dimensions)} after regeneration."
-        )
+        has_meaningful_original_dimensions = any(value > 1e-6 for value in original_dimensions)
+        if has_meaningful_original_dimensions:
+            obj.dimensions = original_dimensions
+            log_quad_sphere(
+                f"Dimensions restored to {tuple(round(v, 5) for v in obj.dimensions)} after regeneration."
+            )
+        else:
+            log_quad_sphere(
+                "Skipping dimension restore because original dimensions were zero (new object case)."
+            )
+    else:
+        obj.dimensions = original_dimensions
     return True
 
 
@@ -449,7 +497,11 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         if context.mode == 'EDIT_MESH':
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        new_obj = create_primitive_object(context, self.primitive_kind)
+        new_obj = create_primitive_object(
+            context,
+            self.primitive_kind,
+            quad_sphere_resolution=self.resolution,
+        )
         if new_obj is None:
             self.report({'ERROR'}, "Impossible de créer la primitive.")
             return {'CANCELLED'}
@@ -462,8 +514,14 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         elif self.primitive_kind == "quad_sphere":
             new_obj.fill_selection_resolution = self.resolution
 
-        if self.primitive_kind != "cube":
+        if self.primitive_kind in {"cylinder", "sphere", "disc"}:
             regenerate_fill_selection_mesh(new_obj)
+
+        if self.primitive_kind == "quad_sphere":
+            log_quad_sphere(
+                "Object dimensions before fill transform "
+                f"(after geometry creation)={tuple(round(v, 5) for v in new_obj.dimensions)}"
+            )
 
         apply_fill_to_object(new_obj, self.primitive_kind, bounds, self.preserve_proportions)
         if self.primitive_kind == "quad_sphere":
