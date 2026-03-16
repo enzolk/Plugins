@@ -20,6 +20,12 @@ _TRACKER = {
     "known_object_names": set(),
     "last_selection_bounds": None,
     "edit_mesh_signatures": {},
+    "edit_op_lock_active": False,
+    "edit_op_lock_bounds": None,
+    "edit_op_lock_object_name": None,
+    "edit_op_lock_signature": None,
+    "edit_op_lock_seen_topology_change": False,
+    "edit_op_lock_stable_ticks": 0,
 }
 
 
@@ -140,6 +146,83 @@ def compute_selection_bounds(context):
         log("No bounds computed (empty selection).")
     return bounds
 
+
+
+def copy_bounds(bounds):
+    if bounds is None:
+        return None
+    return SelectionBounds(bounds.minimum.copy(), bounds.maximum.copy())
+
+
+def clear_edit_operation_lock(log_release=False):
+    if log_release and _TRACKER["edit_op_lock_active"]:
+        log("Edit operation lock released.")
+
+    _TRACKER["edit_op_lock_active"] = False
+    _TRACKER["edit_op_lock_bounds"] = None
+    _TRACKER["edit_op_lock_object_name"] = None
+    _TRACKER["edit_op_lock_signature"] = None
+    _TRACKER["edit_op_lock_seen_topology_change"] = False
+    _TRACKER["edit_op_lock_stable_ticks"] = 0
+
+
+def begin_edit_operation_lock(context, bounds, topology_already_changed=False):
+    if bounds is None or context.mode != 'EDIT_MESH':
+        return
+
+    obj = context.active_object
+    if obj is None or obj.type != 'MESH':
+        return
+
+    _TRACKER["edit_op_lock_active"] = True
+    _TRACKER["edit_op_lock_bounds"] = copy_bounds(bounds)
+    _TRACKER["edit_op_lock_object_name"] = obj.name
+    _TRACKER["edit_op_lock_signature"] = edit_mesh_signature(obj)
+    _TRACKER["edit_op_lock_seen_topology_change"] = topology_already_changed
+    _TRACKER["edit_op_lock_stable_ticks"] = 0
+    log(f"Edit operation lock enabled for object='{obj.name}'.")
+
+
+def track_edit_operation_lock(context):
+    if not _TRACKER["edit_op_lock_active"]:
+        return False
+
+    if context.mode != 'EDIT_MESH':
+        clear_edit_operation_lock(log_release=True)
+        return False
+
+    obj = context.active_object
+    if obj is None or obj.type != 'MESH':
+        clear_edit_operation_lock(log_release=True)
+        return False
+
+    if obj.name != _TRACKER["edit_op_lock_object_name"]:
+        clear_edit_operation_lock(log_release=True)
+        return False
+
+    current_signature = edit_mesh_signature(obj)
+    previous_signature = _TRACKER["edit_op_lock_signature"]
+
+    if previous_signature != current_signature:
+        _TRACKER["edit_op_lock_signature"] = current_signature
+        _TRACKER["edit_op_lock_seen_topology_change"] = True
+        _TRACKER["edit_op_lock_stable_ticks"] = 0
+        log(f"Edit operation lock: topology change observed on '{obj.name}'.")
+        return True
+
+    if _TRACKER["edit_op_lock_seen_topology_change"]:
+        _TRACKER["edit_op_lock_stable_ticks"] += 1
+        if _TRACKER["edit_op_lock_stable_ticks"] >= 2:
+            clear_edit_operation_lock(log_release=True)
+            return False
+
+    return True
+
+
+def get_bounds_for_fill():
+    if _TRACKER["edit_op_lock_active"] and _TRACKER["edit_op_lock_bounds"] is not None:
+        return _TRACKER["edit_op_lock_bounds"]
+    return _TRACKER["last_selection_bounds"]
 
 
 def smallest_axis_index(vec: Vector):
@@ -360,11 +443,17 @@ def get_available_scene(context=None):
 def refresh_known_objects(scene):
     if scene is None:
         _TRACKER["known_object_names"] = set()
+        clear_edit_operation_lock()
         log("Known object cache cleared: no scene available yet.")
         return
 
     _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
-    _TRACKER["edit_mesh_signatures"] = {}
+    clear_edit_operation_lock()
+    _TRACKER["edit_mesh_signatures"] = {
+        obj.name: edit_mesh_signature(obj)
+        for obj in scene.objects
+        if obj.type == 'MESH'
+    }
     log(f"Known object cache refreshed. count={len(_TRACKER['known_object_names'])}")
 
 
@@ -430,28 +519,30 @@ def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
 
 def process_edit_mode_addition(context):
     if context.mode != 'EDIT_MESH':
-        return
+        return False
 
     obj = context.active_object
     if obj is None or obj.type != 'MESH':
-        return
+        return False
 
     current_signature = edit_mesh_signature(obj)
     if current_signature is None:
-        return
+        return False
 
     previous_signature = _TRACKER["edit_mesh_signatures"].get(obj.name)
     _TRACKER["edit_mesh_signatures"][obj.name] = current_signature
 
     if previous_signature is None or previous_signature == current_signature:
-        return
+        return False
 
-    bounds = _TRACKER["last_selection_bounds"]
+    bounds = get_bounds_for_fill()
     if bounds is None:
         log(f"{obj.name}: edit topology changed but no stored bounds to apply.")
-        return
+        return True
 
+    begin_edit_operation_lock(context, bounds, topology_already_changed=True)
     apply_fill_to_selected_edit_mesh(obj, bounds, context.scene.fill_selection_preserve_proportions)
+    return True
 
 
 
@@ -473,11 +564,17 @@ def depsgraph_fill_handler(scene, depsgraph):
         _TRACKER["known_object_names"] = current_names
         process_edit_mode_addition(context)
         _TRACKER["last_selection_bounds"] = None
+        clear_edit_operation_lock()
         return
+
+    topology_changed = False
 
     if new_names:
         log(f"Detected new objects={list(new_names)}")
-        bounds = _TRACKER["last_selection_bounds"]
+        bounds = get_bounds_for_fill()
+        if context.mode == 'EDIT_MESH' and bounds is not None:
+            begin_edit_operation_lock(context, bounds, topology_already_changed=False)
+
         if bounds is None:
             log("No previous selection bounds stored. New object(s) keep native behavior.")
         else:
@@ -488,9 +585,16 @@ def depsgraph_fill_handler(scene, depsgraph):
                     continue
                 apply_fill_to_object(obj, bounds, context.scene.fill_selection_preserve_proportions)
     else:
-        process_edit_mode_addition(context)
+        topology_changed = process_edit_mode_addition(context)
 
     _TRACKER["known_object_names"] = current_names
+
+    lock_active = track_edit_operation_lock(context)
+
+    if topology_changed or lock_active:
+        log("Selection snapshot update skipped (edit operation lock active).")
+        return
+
     update_selection_snapshot(context)
 
 
@@ -586,6 +690,7 @@ def unregister():
 
     _TRACKER["known_object_names"] = set()
     _TRACKER["last_selection_bounds"] = None
+    clear_edit_operation_lock()
     log("Unregister add-on complete.")
 
 
