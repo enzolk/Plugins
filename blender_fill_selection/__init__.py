@@ -19,7 +19,6 @@ _HANDLER_REGISTERED = False
 _TRACKER = {
     "known_object_names": set(),
     "last_selection_bounds": None,
-    "edit_mesh_signatures": {},
 }
 
 
@@ -360,94 +359,7 @@ def refresh_known_objects(scene):
         return
 
     _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
-    _TRACKER["edit_mesh_signatures"] = {}
     log(f"Known object cache refreshed. count={len(_TRACKER['known_object_names'])}")
-
-
-def edit_mesh_signature(obj):
-    if obj is None or obj.type != 'MESH':
-        return None
-
-    mesh = obj.data
-    return (len(mesh.vertices), len(mesh.edges), len(mesh.polygons))
-
-
-def selection_bounds_from_selected_edit_vertices(obj, bm):
-    selected_verts = [vert for vert in bm.verts if vert.select]
-    if not selected_verts:
-        return None, []
-
-    points = [obj.matrix_world @ vert.co for vert in selected_verts]
-    return build_bounds(points), selected_verts
-
-
-def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
-    if not bounds:
-        return
-
-    bm = bmesh.from_edit_mesh(obj.data)
-    current_bounds, selected_verts = selection_bounds_from_selected_edit_vertices(obj, bm)
-
-    if not current_bounds or not selected_verts:
-        log(f"{obj.name}: no selected edit vertices to transform.")
-        return
-
-    source_size = current_bounds.size
-    target_size = bounds.size
-
-    factors = [
-        (target_size[index] / source_size[index]) if abs(source_size[index]) > 1e-8 else 1.0
-        for index in range(3)
-    ]
-
-    if preserve_proportions:
-        uniform = max(factors)
-        factors = [uniform, uniform, uniform]
-
-    inverse_world = obj.matrix_world.inverted()
-
-    for vert in selected_verts:
-        world = obj.matrix_world @ vert.co
-        offset = world - current_bounds.center
-        transformed = Vector((
-            offset.x * factors[0],
-            offset.y * factors[1],
-            offset.z * factors[2],
-        ))
-        new_world = bounds.center + transformed
-        vert.co = inverse_world @ new_world
-
-    bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-    log(
-        f"{obj.name}: edit-mode fill applied with scale={tuple(round(f, 5) for f in factors)}, "
-        f"target_center={tuple(round(v, 5) for v in bounds.center)}"
-    )
-
-
-def process_edit_mode_addition(context):
-    if context.mode != 'EDIT_MESH':
-        return
-
-    obj = context.active_object
-    if obj is None or obj.type != 'MESH':
-        return
-
-    current_signature = edit_mesh_signature(obj)
-    if current_signature is None:
-        return
-
-    previous_signature = _TRACKER["edit_mesh_signatures"].get(obj.name)
-    _TRACKER["edit_mesh_signatures"][obj.name] = current_signature
-
-    if previous_signature is None or previous_signature == current_signature:
-        return
-
-    bounds = _TRACKER["last_selection_bounds"]
-    if bounds is None:
-        log(f"{obj.name}: edit topology changed but no stored bounds to apply.")
-        return
-
-    apply_fill_to_selected_edit_mesh(obj, bounds, context.scene.fill_selection_preserve_proportions)
 
 
 
@@ -467,7 +379,6 @@ def depsgraph_fill_handler(scene, depsgraph):
         if new_names:
             log(f"Feature disabled: observed {len(new_names)} new objects, no transform applied.")
         _TRACKER["known_object_names"] = current_names
-        process_edit_mode_addition(context)
         _TRACKER["last_selection_bounds"] = None
         return
 
@@ -483,8 +394,6 @@ def depsgraph_fill_handler(scene, depsgraph):
                     log(f"Object '{name}' not found in scene at apply time.")
                     continue
                 apply_fill_to_object(obj, bounds, context.scene.fill_selection_preserve_proportions)
-    else:
-        process_edit_mode_addition(context)
 
     _TRACKER["known_object_names"] = current_names
     update_selection_snapshot(context)
