@@ -19,6 +19,7 @@ _HANDLER_REGISTERED = False
 _TRACKER = {
     "known_object_names": set(),
     "last_selection_bounds": None,
+    "last_valid_selection_bounds": None,
     "edit_mesh_signatures": {},
 }
 
@@ -335,9 +336,10 @@ def update_selection_snapshot(context):
     bounds = compute_selection_bounds(context)
     _TRACKER["last_selection_bounds"] = bounds
     if bounds:
+        _TRACKER["last_valid_selection_bounds"] = bounds
         log("Selection snapshot updated with valid bounds.")
     else:
-        log("Selection snapshot cleared (no active selection).")
+        log("Selection snapshot cleared (no active selection). Last valid bounds kept.")
 
 
 
@@ -428,6 +430,102 @@ def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
     )
 
 
+def find_recent_primitive_add_operator(context):
+    wm = getattr(context, "window_manager", None)
+    operators = getattr(wm, "operators", None)
+    if not operators:
+        return None
+
+    for op in reversed(list(operators)):
+        op_id = getattr(op, "bl_idname", "") or ""
+        if op_id.startswith("MESH_OT_primitive_") and op_id.endswith("_add"):
+            return op
+
+    return None
+
+
+def infer_primitive_from_operator(op):
+    if op is None:
+        return None
+
+    mapping = {
+        "MESH_OT_primitive_plane_add": "plane",
+        "MESH_OT_primitive_cube_add": "cube",
+        "MESH_OT_primitive_circle_add": "circle",
+        "MESH_OT_primitive_uv_sphere_add": "uv_sphere",
+        "MESH_OT_primitive_ico_sphere_add": "ico_sphere",
+        "MESH_OT_primitive_cylinder_add": "cylinder",
+        "MESH_OT_primitive_cone_add": "cone",
+        "MESH_OT_primitive_torus_add": "torus",
+    }
+    return mapping.get(getattr(op, "bl_idname", ""))
+
+
+def primitive_operator_kwargs(op):
+    if op is None:
+        return {}
+
+    allowed = {
+        "size", "radius", "radius1", "radius2", "depth", "vertices", "segments",
+        "ring_count", "subdivisions", "end_fill_type", "fill_type", "calc_uvs",
+        "major_segments", "minor_segments", "abso_major_rad", "abso_minor_rad",
+        "major_radius", "minor_radius",
+    }
+
+    props = getattr(op, "properties", None)
+    if props is None:
+        return {}
+
+    kwargs = {}
+    for key in props.keys():
+        if key in allowed:
+            kwargs[key] = props.get(key)
+
+    kwargs["enter_editmode"] = False
+    kwargs["align"] = 'WORLD'
+    kwargs["location"] = (0.0, 0.0, 0.0)
+    kwargs["rotation"] = (0.0, 0.0, 0.0)
+    return kwargs
+
+
+def recreate_primitive_object(context, primitive_kind, source_op=None):
+    add_ops = {
+        "plane": bpy.ops.mesh.primitive_plane_add,
+        "cube": bpy.ops.mesh.primitive_cube_add,
+        "circle": bpy.ops.mesh.primitive_circle_add,
+        "uv_sphere": bpy.ops.mesh.primitive_uv_sphere_add,
+        "ico_sphere": bpy.ops.mesh.primitive_ico_sphere_add,
+        "cylinder": bpy.ops.mesh.primitive_cylinder_add,
+        "cone": bpy.ops.mesh.primitive_cone_add,
+        "torus": bpy.ops.mesh.primitive_torus_add,
+    }
+
+    op = add_ops.get(primitive_kind)
+    if op is None:
+        return None
+
+    kwargs = primitive_operator_kwargs(source_op)
+
+    try:
+        op(**kwargs)
+    except TypeError:
+        op()
+
+    return context.active_object
+
+
+def remove_recent_edit_mode_geometry(obj):
+    bm = bmesh.from_edit_mesh(obj.data)
+    selected_verts = [vert for vert in bm.verts if vert.select]
+
+    if not selected_verts:
+        return False
+
+    bmesh.ops.delete(bm, geom=selected_verts, context='VERTS')
+    bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=True)
+    return True
+
+
 def process_edit_mode_addition(context):
     if context.mode != 'EDIT_MESH':
         return
@@ -446,12 +544,36 @@ def process_edit_mode_addition(context):
     if previous_signature is None or previous_signature == current_signature:
         return
 
-    bounds = _TRACKER["last_selection_bounds"]
+    if not context.scene.fill_selection_enabled:
+        return
+
+    bounds = _TRACKER["last_valid_selection_bounds"]
     if bounds is None:
         log(f"{obj.name}: edit topology changed but no stored bounds to apply.")
         return
 
-    apply_fill_to_selected_edit_mesh(obj, bounds, context.scene.fill_selection_preserve_proportions)
+    recent_op = find_recent_primitive_add_operator(context)
+    primitive_kind = infer_primitive_from_operator(recent_op)
+    if primitive_kind is None:
+        log(f"{obj.name}: edit topology changed but no supported primitive operator detected.")
+        return
+
+    log(f"{obj.name}: detected edit-mode primitive add '{primitive_kind}', converting to object workflow.")
+
+    if not remove_recent_edit_mode_geometry(obj):
+        log(f"{obj.name}: unable to isolate freshly added geometry; abort conversion.")
+        return
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    new_obj = recreate_primitive_object(context, primitive_kind, source_op=recent_op)
+    if new_obj is None:
+        log(f"{obj.name}: failed to recreate primitive '{primitive_kind}' in object mode.")
+        return
+
+    apply_fill_to_object(new_obj, bounds, context.scene.fill_selection_preserve_proportions)
+    refresh_known_objects(context.scene)
+    log(f"{obj.name}: edit-mode primitive converted to '{new_obj.name}' object and filled.")
 
 
 
@@ -473,11 +595,13 @@ def depsgraph_fill_handler(scene, depsgraph):
         _TRACKER["known_object_names"] = current_names
         process_edit_mode_addition(context)
         _TRACKER["last_selection_bounds"] = None
+        _TRACKER["last_valid_selection_bounds"] = None
         return
 
     if new_names:
         log(f"Detected new objects={list(new_names)}")
         bounds = _TRACKER["last_selection_bounds"]
+
         if bounds is None:
             log("No previous selection bounds stored. New object(s) keep native behavior.")
         else:
@@ -490,7 +614,7 @@ def depsgraph_fill_handler(scene, depsgraph):
     else:
         process_edit_mode_addition(context)
 
-    _TRACKER["known_object_names"] = current_names
+    _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
     update_selection_snapshot(context)
 
 
@@ -586,6 +710,7 @@ def unregister():
 
     _TRACKER["known_object_names"] = set()
     _TRACKER["last_selection_bounds"] = None
+    _TRACKER["last_valid_selection_bounds"] = None
     log("Unregister add-on complete.")
 
 
