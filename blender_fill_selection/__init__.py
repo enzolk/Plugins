@@ -219,6 +219,70 @@ def create_primitive_object(context, primitive_kind):
     return context.active_object
 
 
+def mark_object_as_fill_selection_primitive(obj, primitive_kind):
+    obj.fill_selection_is_managed = True
+    obj.fill_selection_primitive_kind = primitive_kind
+
+    if primitive_kind in {"cylinder", "disc"} and obj.fill_selection_vertices < 3:
+        obj.fill_selection_vertices = 32
+
+    if primitive_kind == "sphere":
+        if obj.fill_selection_segments < 3:
+            obj.fill_selection_segments = 32
+        if obj.fill_selection_rings < 2:
+            obj.fill_selection_rings = 16
+
+
+def regenerate_fill_selection_mesh(obj):
+    if not obj or obj.type != 'MESH':
+        return False
+
+    primitive_kind = obj.fill_selection_primitive_kind
+    if primitive_kind not in {"cylinder", "sphere", "disc"}:
+        return False
+
+    if obj.data.users > 1:
+        obj.data = obj.data.copy()
+
+    original_dimensions = obj.dimensions.copy()
+
+    bm = bmesh.new()
+    try:
+        if primitive_kind == "cylinder":
+            bmesh.ops.create_cone(
+                bm,
+                cap_ends=True,
+                cap_tris=False,
+                segments=max(3, obj.fill_selection_vertices),
+                radius1=1.0,
+                radius2=1.0,
+                depth=2.0,
+            )
+        elif primitive_kind == "sphere":
+            bmesh.ops.create_uvsphere(
+                bm,
+                u_segments=max(3, obj.fill_selection_segments),
+                v_segments=max(2, obj.fill_selection_rings),
+                radius=1.0,
+            )
+        elif primitive_kind == "disc":
+            bmesh.ops.create_circle(
+                bm,
+                cap_ends=True,
+                cap_tris=False,
+                segments=max(3, obj.fill_selection_vertices),
+                radius=1.0,
+            )
+
+        bm.to_mesh(obj.data)
+        obj.data.update()
+    finally:
+        bm.free()
+
+    obj.dimensions = original_dimensions
+    return True
+
+
 class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
     bl_idname = "mesh.fill_selection_add_primitive"
     bl_label = "Fill Selection Primitive"
@@ -255,7 +319,34 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             return {'CANCELLED'}
 
         apply_fill_to_object(new_obj, self.primitive_kind, bounds, preserve_proportions)
+        mark_object_as_fill_selection_primitive(new_obj, self.primitive_kind)
         log(f"Created {self.primitive_kind} as '{new_obj.name}'.")
+        return {'FINISHED'}
+
+
+class FILL_SELECTION_OT_rebuild_primitive(bpy.types.Operator):
+    bl_idname = "mesh.fill_selection_rebuild_primitive"
+    bl_label = "Rebuild Primitive"
+    bl_description = "Reconstruit la primitive Fill Selection avec les paramètres courants"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            getattr(obj, "fill_selection_is_managed", False)
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+
+        if not regenerate_fill_selection_mesh(obj):
+            self.report({'WARNING'}, "Objet non pris en charge pour la reconstruction Fill Selection.")
+            return {'CANCELLED'}
+
+        log(f"Rebuilt {obj.fill_selection_primitive_kind} for '{obj.name}'.")
         return {'FINISHED'}
 
 
@@ -267,6 +358,7 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        obj = context.active_object
         layout.prop(context.scene, "fill_selection_preserve_proportions", text="Proportional Transform")
 
         col = layout.column(align=True)
@@ -275,9 +367,23 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
         col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Sphere").primitive_kind = "sphere"
         col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Disc").primitive_kind = "disc"
 
+        if obj and obj.type == 'MESH' and getattr(obj, "fill_selection_is_managed", False):
+            box = layout.box()
+            box.label(text="Selected Fill Selection Primitive")
+            primitive_kind = obj.fill_selection_primitive_kind
+
+            if primitive_kind in {"cylinder", "disc"}:
+                box.prop(obj, "fill_selection_vertices", text="Vertices")
+            elif primitive_kind == "sphere":
+                box.prop(obj, "fill_selection_segments", text="Segments")
+                box.prop(obj, "fill_selection_rings", text="Rings")
+
+            box.operator("mesh.fill_selection_rebuild_primitive", text="Apply Parameter Changes")
+
 
 CLASSES = (
     FILL_SELECTION_OT_add_primitive,
+    FILL_SELECTION_OT_rebuild_primitive,
     VIEW3D_PT_fill_selection_settings,
 )
 
@@ -287,6 +393,43 @@ def register():
         name="Proportional Transform",
         description="Conserve les proportions pour les primitives concernées",
         default=False,
+    )
+
+    bpy.types.Object.fill_selection_is_managed = bpy.props.BoolProperty(
+        name="Fill Selection Managed",
+        description="Objet créé par Fill Selection et reconstructible",
+        default=False,
+    )
+    bpy.types.Object.fill_selection_primitive_kind = bpy.props.EnumProperty(
+        name="Fill Selection Primitive Type",
+        items=(
+            ("cube", "Cube", "Fill Selection Cube"),
+            ("cylinder", "Cylinder", "Fill Selection Cylinder"),
+            ("sphere", "Sphere", "Fill Selection Sphere"),
+            ("disc", "Disc", "Fill Selection Disc"),
+        ),
+        default="cube",
+    )
+    bpy.types.Object.fill_selection_vertices = bpy.props.IntProperty(
+        name="Vertices",
+        description="Nombre de vertices pour les primitives supportées",
+        default=32,
+        min=3,
+        soft_max=256,
+    )
+    bpy.types.Object.fill_selection_segments = bpy.props.IntProperty(
+        name="Segments",
+        description="Nombre de segments pour la UV sphere",
+        default=32,
+        min=3,
+        soft_max=256,
+    )
+    bpy.types.Object.fill_selection_rings = bpy.props.IntProperty(
+        name="Rings",
+        description="Nombre de rings pour la UV sphere",
+        default=16,
+        min=2,
+        soft_max=256,
     )
 
     for cls in CLASSES:
@@ -299,6 +442,17 @@ def unregister():
 
     if hasattr(bpy.types.Scene, "fill_selection_preserve_proportions"):
         del bpy.types.Scene.fill_selection_preserve_proportions
+
+    if hasattr(bpy.types.Object, "fill_selection_rings"):
+        del bpy.types.Object.fill_selection_rings
+    if hasattr(bpy.types.Object, "fill_selection_segments"):
+        del bpy.types.Object.fill_selection_segments
+    if hasattr(bpy.types.Object, "fill_selection_vertices"):
+        del bpy.types.Object.fill_selection_vertices
+    if hasattr(bpy.types.Object, "fill_selection_primitive_kind"):
+        del bpy.types.Object.fill_selection_primitive_kind
+    if hasattr(bpy.types.Object, "fill_selection_is_managed"):
+        del bpy.types.Object.fill_selection_is_managed
 
 
 if __name__ == "__main__":
