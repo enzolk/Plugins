@@ -232,6 +232,26 @@ def apply_proportional_constraints(target_size, constrained_axes):
     return target_size
 
 
+def remap_world_dimensions_to_local_axes(obj, world_dimensions: Vector):
+    rotation_matrix = obj.rotation_euler.to_matrix()
+    basis = [Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0))]
+
+    local_dimensions = Vector((0.0, 0.0, 0.0))
+    used_world_axes = set()
+
+    for local_axis_index, axis_vector in enumerate(basis):
+        world_axis_vector = rotation_matrix @ axis_vector
+        components = [abs(world_axis_vector.x), abs(world_axis_vector.y), abs(world_axis_vector.z)]
+
+        for world_axis_index in sorted(range(3), key=lambda idx: components[idx], reverse=True):
+            if world_axis_index not in used_world_axes:
+                used_world_axes.add(world_axis_index)
+                local_dimensions[local_axis_index] = world_dimensions[world_axis_index]
+                break
+
+    return local_dimensions
+
+
 def apply_fill_to_object(obj, bounds, preserve_proportions):
     if not bounds:
         log(f"{obj.name}: no bounds, skip fill.")
@@ -296,10 +316,12 @@ def apply_fill_to_object(obj, bounds, preserve_proportions):
         target_size = apply_proportional_constraints(target_size, constrained_axes)
         log(f"{obj.name}: proportional constraints applied on axes={constrained_axes}")
 
-    obj.dimensions = target_size
+    target_size_local = remap_world_dimensions_to_local_axes(obj, target_size)
+    obj.dimensions = target_size_local
     log(
         f"{obj.name}: final location={tuple(round(v, 5) for v in obj.location)}, "
-        f"dimensions={tuple(round(v, 5) for v in obj.dimensions)}"
+        f"world_target_size={tuple(round(v, 5) for v in target_size)}, "
+        f"local_dimensions={tuple(round(v, 5) for v in obj.dimensions)}"
     )
 
 
