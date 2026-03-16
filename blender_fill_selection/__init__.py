@@ -188,6 +188,23 @@ def axis_profile(dimensions: Vector):
     }
 
 
+def infer_native_primitive_kind(obj):
+    name = (obj.name or "").lower()
+
+    if name.startswith("cylinder"):
+        return "cylinder"
+    if name.startswith("cone"):
+        return "cone"
+    if name.startswith("circle"):
+        return "disk"
+    if name.startswith("plane"):
+        return "plane"
+    if name.startswith("uvsphere") or name.startswith("icosphere"):
+        return "sphere"
+
+    return None
+
+
 
 def align_flat_object_to_axis(obj, target_axis_index):
     original_dims = obj.dimensions.copy()
@@ -233,10 +250,28 @@ def apply_fill_to_object(obj, bounds, preserve_proportions):
     current_dims = obj.dimensions.copy()
     profile = axis_profile(current_dims)
     target_longest_axis = largest_axis_index(raw_size)
+    primitive_kind = infer_native_primitive_kind(obj)
 
     constrained_axes = []
 
-    if profile["is_disk_like"]:
+    if primitive_kind in {"disk", "plane"}:
+        source_normal_axis = 2
+        rotate_object_axis_to_axis(obj, source_normal_axis, target_longest_axis)
+        constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
+        log(
+            f"{obj.name}: native {primitive_kind}-like primitive detected (normal axis Z -> {target_longest_axis})."
+        )
+    elif primitive_kind in {"cylinder", "cone"}:
+        source_long_axis = 2
+        rotate_object_axis_to_axis(obj, source_long_axis, target_longest_axis)
+        constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
+        log(
+            f"{obj.name}: native {primitive_kind}-like primitive detected (long axis Z -> {target_longest_axis})."
+        )
+    elif primitive_kind == "sphere":
+        constrained_axes = [0, 1, 2]
+        log(f"{obj.name}: native sphere-like primitive detected.")
+    elif profile["is_disk_like"]:
         source_normal_axis = profile["min_axis"]
         rotate_object_axis_to_axis(obj, source_normal_axis, target_longest_axis)
         constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
