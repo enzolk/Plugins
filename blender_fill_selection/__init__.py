@@ -19,7 +19,6 @@ _HANDLER_REGISTERED = False
 _TRACKER = {
     "known_object_names": set(),
     "last_selection_bounds": None,
-    "last_valid_selection_bounds": None,
     "edit_mesh_signatures": {},
 }
 
@@ -336,10 +335,9 @@ def update_selection_snapshot(context):
     bounds = compute_selection_bounds(context)
     _TRACKER["last_selection_bounds"] = bounds
     if bounds:
-        _TRACKER["last_valid_selection_bounds"] = bounds
         log("Selection snapshot updated with valid bounds.")
     else:
-        log("Selection snapshot cleared (no active selection). Last valid bounds kept.")
+        log("Selection snapshot cleared (no active selection).")
 
 
 
@@ -475,20 +473,11 @@ def depsgraph_fill_handler(scene, depsgraph):
         _TRACKER["known_object_names"] = current_names
         process_edit_mode_addition(context)
         _TRACKER["last_selection_bounds"] = None
-        _TRACKER["last_valid_selection_bounds"] = None
         return
-
-    skip_snapshot_refresh = False
 
     if new_names:
         log(f"Detected new objects={list(new_names)}")
-        if context.mode == 'EDIT_MESH':
-            bounds = _TRACKER["last_valid_selection_bounds"]
-            skip_snapshot_refresh = True
-            log("EDIT_MESH addition: using stored last valid selection bounds (no live selection recompute).")
-        else:
-            bounds = _TRACKER["last_selection_bounds"]
-
+        bounds = _TRACKER["last_selection_bounds"]
         if bounds is None:
             log("No previous selection bounds stored. New object(s) keep native behavior.")
         else:
@@ -502,10 +491,7 @@ def depsgraph_fill_handler(scene, depsgraph):
         process_edit_mode_addition(context)
 
     _TRACKER["known_object_names"] = current_names
-    if skip_snapshot_refresh:
-        log("Snapshot refresh skipped this tick to preserve pre-add edit-mode bounds.")
-    else:
-        update_selection_snapshot(context)
+    update_selection_snapshot(context)
 
 
 
@@ -600,7 +586,6 @@ def unregister():
 
     _TRACKER["known_object_names"] = set()
     _TRACKER["last_selection_bounds"] = None
-    _TRACKER["last_valid_selection_bounds"] = None
     log("Unregister add-on complete.")
 
 
