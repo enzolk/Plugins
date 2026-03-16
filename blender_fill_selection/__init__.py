@@ -208,7 +208,28 @@ def update_selection_snapshot(context):
 
 
 
+def get_available_scene(context=None):
+    if context is not None and hasattr(context, "scene") and context.scene is not None:
+        return context.scene
+
+    data = getattr(bpy, "data", None)
+    if data is None or not hasattr(data, "scenes"):
+        return None
+
+    scenes = data.scenes
+    if scenes:
+        return scenes[0]
+
+    return None
+
+
+
 def refresh_known_objects(scene):
+    if scene is None:
+        _TRACKER["known_object_names"] = set()
+        log("Known object cache cleared: no scene available yet.")
+        return
+
     _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
     log(f"Known object cache refreshed. count={len(_TRACKER['known_object_names'])}")
 
@@ -218,7 +239,7 @@ def refresh_known_objects(scene):
 def depsgraph_fill_handler(scene, depsgraph):
     context = bpy.context
 
-    if not context or not context.scene:
+    if not context or not hasattr(context, "scene") or context.scene is None:
         return
 
     enabled = context.scene.fill_selection_enabled
@@ -317,7 +338,7 @@ def register():
         bpy.utils.register_class(cls)
 
     register_handlers()
-    refresh_known_objects(bpy.context.scene)
+    refresh_known_objects(get_available_scene(bpy.context))
     log("Register add-on complete.")
 
 
