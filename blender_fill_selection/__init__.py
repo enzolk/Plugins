@@ -89,19 +89,13 @@ def selected_edit_mesh_vertices(bm):
 
 
 def selected_points_for_edit_mesh(context):
-    if context.mode != 'EDIT_MESH':
+    obj = context.active_object
+    if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
         return []
 
-    points = []
-    for obj in context.objects_in_mode:
-        if obj.type != 'MESH':
-            continue
-
-        bm = bmesh.from_edit_mesh(obj.data)
-        selected_verts = selected_edit_mesh_vertices(bm)
-        points.extend(obj.matrix_world @ vert.co for vert in selected_verts)
-
-    return points
+    bm = bmesh.from_edit_mesh(obj.data)
+    selected_verts = selected_edit_mesh_vertices(bm)
+    return [obj.matrix_world @ vert.co for vert in selected_verts]
 
 
 def compute_selection_bounds(context):
@@ -486,14 +480,6 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             layout.prop(self, "resolution")
 
     def execute(self, context):
-        started_in_edit_mesh = context.mode == 'EDIT_MESH'
-        edit_mode_objects = []
-        active_edit_object = None
-
-        if started_in_edit_mesh:
-            edit_mode_objects = [obj for obj in context.objects_in_mode if obj.type == 'MESH']
-            active_edit_object = context.active_object
-
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere("Fill Selection Quad Sphere operator started.")
         bounds = compute_selection_bounds(context)
@@ -546,21 +532,6 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
                 f"dimensions={tuple(round(v, 5) for v in new_obj.dimensions)}"
             )
         mark_object_as_fill_selection_primitive(new_obj, self.primitive_kind)
-
-        if started_in_edit_mesh:
-            bpy.ops.object.select_all(action='DESELECT')
-            for edit_obj in edit_mode_objects:
-                if edit_obj and edit_obj.name in bpy.data.objects:
-                    edit_obj.select_set(True)
-
-            restored_active = active_edit_object if active_edit_object and active_edit_object.name in bpy.data.objects else None
-            if restored_active is None and edit_mode_objects:
-                restored_active = edit_mode_objects[0]
-
-            if restored_active is not None:
-                context.view_layer.objects.active = restored_active
-                bpy.ops.object.mode_set(mode='EDIT')
-
         log(f"Created {self.primitive_kind} as '{new_obj.name}'.")
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere("Fill Selection Quad Sphere operator finished.")
