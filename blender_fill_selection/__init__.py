@@ -364,7 +364,11 @@ def refresh_known_objects(scene):
         return
 
     _TRACKER["known_object_names"] = {obj.name for obj in scene.objects}
-    _TRACKER["edit_mesh_signatures"] = {}
+    _TRACKER["edit_mesh_signatures"] = {
+        obj.name: edit_mesh_signature(obj)
+        for obj in scene.objects
+        if obj.type == 'MESH'
+    }
     log(f"Known object cache refreshed. count={len(_TRACKER['known_object_names'])}")
 
 
@@ -430,28 +434,29 @@ def apply_fill_to_selected_edit_mesh(obj, bounds, preserve_proportions):
 
 def process_edit_mode_addition(context):
     if context.mode != 'EDIT_MESH':
-        return
+        return False
 
     obj = context.active_object
     if obj is None or obj.type != 'MESH':
-        return
+        return False
 
     current_signature = edit_mesh_signature(obj)
     if current_signature is None:
-        return
+        return False
 
     previous_signature = _TRACKER["edit_mesh_signatures"].get(obj.name)
     _TRACKER["edit_mesh_signatures"][obj.name] = current_signature
 
     if previous_signature is None or previous_signature == current_signature:
-        return
+        return False
 
     bounds = _TRACKER["last_selection_bounds"]
     if bounds is None:
         log(f"{obj.name}: edit topology changed but no stored bounds to apply.")
-        return
+        return True
 
     apply_fill_to_selected_edit_mesh(obj, bounds, context.scene.fill_selection_preserve_proportions)
+    return True
 
 
 
@@ -475,6 +480,8 @@ def depsgraph_fill_handler(scene, depsgraph):
         _TRACKER["last_selection_bounds"] = None
         return
 
+    topology_changed = False
+
     if new_names:
         log(f"Detected new objects={list(new_names)}")
         bounds = _TRACKER["last_selection_bounds"]
@@ -488,9 +495,14 @@ def depsgraph_fill_handler(scene, depsgraph):
                     continue
                 apply_fill_to_object(obj, bounds, context.scene.fill_selection_preserve_proportions)
     else:
-        process_edit_mode_addition(context)
+        topology_changed = process_edit_mode_addition(context)
 
     _TRACKER["known_object_names"] = current_names
+
+    if topology_changed:
+        log("Edit topology changed: keep previous selection snapshot for this depsgraph tick.")
+        return
+
     update_selection_snapshot(context)
 
 
