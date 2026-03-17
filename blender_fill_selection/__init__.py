@@ -89,13 +89,19 @@ def selected_edit_mesh_vertices(bm):
 
 
 def selected_points_for_edit_mesh(context):
-    obj = context.active_object
-    if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+    if context.mode != 'EDIT_MESH':
         return []
 
-    bm = bmesh.from_edit_mesh(obj.data)
-    selected_verts = selected_edit_mesh_vertices(bm)
-    return [obj.matrix_world @ vert.co for vert in selected_verts]
+    points = []
+    for obj in context.objects_in_mode:
+        if obj.type != 'MESH':
+            continue
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        selected_verts = selected_edit_mesh_vertices(bm)
+        points.extend(obj.matrix_world @ vert.co for vert in selected_verts)
+
+    return points
 
 
 def compute_selection_bounds(context):
@@ -410,6 +416,39 @@ def on_fill_selection_param_changed(self, context):
     regenerate_fill_selection_mesh(obj)
 
 
+def apply_operator_parameters_to_object(obj, primitive_kind, vertices, segments, rings, resolution):
+    if not obj or obj.type != 'MESH':
+        return False
+
+    if primitive_kind not in {"cylinder", "sphere", "disc", "quad_sphere"}:
+        return False
+
+    was_managed = bool(getattr(obj, "fill_selection_is_managed", False))
+    previous_kind = getattr(obj, "fill_selection_primitive_kind", "cube")
+    obj.fill_selection_is_managed = False
+    obj.fill_selection_primitive_kind = primitive_kind
+
+    if primitive_kind in {"cylinder", "disc"}:
+        obj.fill_selection_vertices = vertices
+    elif primitive_kind == "sphere":
+        obj.fill_selection_segments = segments
+        obj.fill_selection_rings = rings
+    elif primitive_kind == "quad_sphere":
+        obj.fill_selection_resolution = resolution
+
+    obj.fill_selection_is_managed = was_managed
+    rebuilt = regenerate_fill_selection_mesh(obj)
+    if not rebuilt:
+        obj.fill_selection_primitive_kind = previous_kind
+        log(
+            f"Parameter application failed for '{obj.name}': "
+            f"requested_kind={primitive_kind}, object_kind={getattr(obj, 'fill_selection_primitive_kind', '<missing>')}"
+        )
+        return False
+
+    return True
+
+
 class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
     bl_idname = "mesh.fill_selection_add_primitive"
     bl_label = "Fill Selection Primitive"
@@ -458,6 +497,24 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
         min=1,
         soft_max=32,
     )
+    use_stored_bounds: bpy.props.BoolProperty(
+        name="Use Stored Bounds",
+        description="Réutilise la bounding box initiale lors d'un Adjust Last Operation",
+        default=False,
+        options={'HIDDEN'},
+    )
+    stored_bounds_min: bpy.props.FloatVectorProperty(
+        name="Stored Bounds Min",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        options={'HIDDEN'},
+    )
+    stored_bounds_max: bpy.props.FloatVectorProperty(
+        name="Stored Bounds Max",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        options={'HIDDEN'},
+    )
 
     @classmethod
     def poll(cls, context):
@@ -465,6 +522,15 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.preserve_proportions = context.scene.fill_selection_preserve_proportions
+
+        initial_bounds = compute_selection_bounds(context)
+        if initial_bounds is None:
+            self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
+            return {'CANCELLED'}
+
+        self.use_stored_bounds = True
+        self.stored_bounds_min = tuple(initial_bounds.minimum)
+        self.stored_bounds_max = tuple(initial_bounds.maximum)
         return self.execute(context)
 
     def draw(self, context):
@@ -480,12 +546,54 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             layout.prop(self, "resolution")
 
     def execute(self, context):
+        started_in_edit_mesh = context.mode == 'EDIT_MESH'
+        edit_mode_objects = []
+        active_edit_object = None
+
+        if started_in_edit_mesh:
+            edit_mode_objects = [obj for obj in context.objects_in_mode if obj.type == 'MESH']
+            active_edit_object = context.active_object
+
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere("Fill Selection Quad Sphere operator started.")
-        bounds = compute_selection_bounds(context)
+
+        if self.use_stored_bounds:
+            bounds = SelectionBounds(Vector(self.stored_bounds_min), Vector(self.stored_bounds_max))
+            log(
+                "Using stored bounds "
+                f"min={tuple(round(v, 5) for v in bounds.minimum)}, "
+                f"max={tuple(round(v, 5) for v in bounds.maximum)}, "
+                f"center={tuple(round(v, 5) for v in bounds.center)}, "
+                f"size={tuple(round(v, 5) for v in bounds.size)}"
+            )
+        else:
+            bounds = compute_selection_bounds(context)
+
         if bounds is None:
             self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
             return {'CANCELLED'}
+
+        active_obj = context.active_object
+        if (
+            active_obj is not None and
+            active_obj.type == 'MESH' and
+            getattr(active_obj, "fill_selection_is_managed", False) and
+            getattr(active_obj, "fill_selection_primitive_kind", "") == self.primitive_kind
+        ):
+            if not apply_operator_parameters_to_object(
+                active_obj,
+                self.primitive_kind,
+                self.vertices,
+                self.segments,
+                self.rings,
+                self.resolution,
+            ):
+                self.report({'ERROR'}, "Impossible de mettre à jour la primitive active.")
+                return {'CANCELLED'}
+
+            apply_fill_to_object(active_obj, self.primitive_kind, bounds, self.preserve_proportions)
+            log(f"Updated {self.primitive_kind} as '{active_obj.name}' from Last Action.")
+            return {'FINISHED'}
 
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere(
@@ -506,16 +614,17 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             self.report({'ERROR'}, "Impossible de créer la primitive.")
             return {'CANCELLED'}
 
-        if self.primitive_kind in {"cylinder", "disc"}:
-            new_obj.fill_selection_vertices = self.vertices
-        elif self.primitive_kind == "sphere":
-            new_obj.fill_selection_segments = self.segments
-            new_obj.fill_selection_rings = self.rings
-        elif self.primitive_kind == "quad_sphere":
-            new_obj.fill_selection_resolution = self.resolution
-
-        if self.primitive_kind in {"cylinder", "sphere", "disc"}:
-            regenerate_fill_selection_mesh(new_obj)
+        if self.primitive_kind in {"cylinder", "sphere", "disc", "quad_sphere"}:
+            if not apply_operator_parameters_to_object(
+                new_obj,
+                self.primitive_kind,
+                self.vertices,
+                self.segments,
+                self.rings,
+                self.resolution,
+            ):
+                self.report({'ERROR'}, "Impossible de configurer la primitive.")
+                return {'CANCELLED'}
 
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere(
@@ -532,6 +641,21 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
                 f"dimensions={tuple(round(v, 5) for v in new_obj.dimensions)}"
             )
         mark_object_as_fill_selection_primitive(new_obj, self.primitive_kind)
+
+        if started_in_edit_mesh:
+            bpy.ops.object.select_all(action='DESELECT')
+            for edit_obj in edit_mode_objects:
+                if edit_obj and edit_obj.name in bpy.data.objects:
+                    edit_obj.select_set(True)
+
+            restored_active = active_edit_object if active_edit_object and active_edit_object.name in bpy.data.objects else None
+            if restored_active is None and edit_mode_objects:
+                restored_active = edit_mode_objects[0]
+
+            if restored_active is not None:
+                context.view_layer.objects.active = restored_active
+                bpy.ops.object.mode_set(mode='EDIT')
+
         log(f"Created {self.primitive_kind} as '{new_obj.name}'.")
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere("Fill Selection Quad Sphere operator finished.")
