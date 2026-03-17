@@ -416,28 +416,6 @@ def on_fill_selection_param_changed(self, context):
     regenerate_fill_selection_mesh(obj)
 
 
-def apply_operator_parameters_to_object(obj, primitive_kind, vertices, segments, rings, resolution):
-    if not obj or obj.type != 'MESH':
-        return False
-
-    if primitive_kind not in {"cylinder", "sphere", "disc", "quad_sphere"}:
-        return False
-
-    was_managed = bool(getattr(obj, "fill_selection_is_managed", False))
-    obj.fill_selection_is_managed = False
-
-    if primitive_kind in {"cylinder", "disc"}:
-        obj.fill_selection_vertices = vertices
-    elif primitive_kind == "sphere":
-        obj.fill_selection_segments = segments
-        obj.fill_selection_rings = rings
-    elif primitive_kind == "quad_sphere":
-        obj.fill_selection_resolution = resolution
-
-    obj.fill_selection_is_managed = was_managed
-    return regenerate_fill_selection_mesh(obj)
-
-
 class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
     bl_idname = "mesh.fill_selection_add_primitive"
     bl_label = "Fill Selection Primitive"
@@ -562,28 +540,6 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
             return {'CANCELLED'}
 
-        active_obj = context.active_object
-        if (
-            active_obj is not None and
-            active_obj.type == 'MESH' and
-            getattr(active_obj, "fill_selection_is_managed", False) and
-            getattr(active_obj, "fill_selection_primitive_kind", "") == self.primitive_kind
-        ):
-            if not apply_operator_parameters_to_object(
-                active_obj,
-                self.primitive_kind,
-                self.vertices,
-                self.segments,
-                self.rings,
-                self.resolution,
-            ):
-                self.report({'ERROR'}, "Impossible de mettre à jour la primitive active.")
-                return {'CANCELLED'}
-
-            apply_fill_to_object(active_obj, self.primitive_kind, bounds, self.preserve_proportions)
-            log(f"Updated {self.primitive_kind} as '{active_obj.name}' from Last Action.")
-            return {'FINISHED'}
-
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere(
                 "Selection bounds acquired "
@@ -603,17 +559,16 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             self.report({'ERROR'}, "Impossible de créer la primitive.")
             return {'CANCELLED'}
 
-        if self.primitive_kind in {"cylinder", "sphere", "disc", "quad_sphere"}:
-            if not apply_operator_parameters_to_object(
-                new_obj,
-                self.primitive_kind,
-                self.vertices,
-                self.segments,
-                self.rings,
-                self.resolution,
-            ):
-                self.report({'ERROR'}, "Impossible de configurer la primitive.")
-                return {'CANCELLED'}
+        if self.primitive_kind in {"cylinder", "disc"}:
+            new_obj.fill_selection_vertices = self.vertices
+        elif self.primitive_kind == "sphere":
+            new_obj.fill_selection_segments = self.segments
+            new_obj.fill_selection_rings = self.rings
+        elif self.primitive_kind == "quad_sphere":
+            new_obj.fill_selection_resolution = self.resolution
+
+        if self.primitive_kind in {"cylinder", "sphere", "disc"}:
+            regenerate_fill_selection_mesh(new_obj)
 
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere(
