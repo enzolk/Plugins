@@ -132,6 +132,15 @@ def largest_axis_index(vec: Vector):
     return values.index(max(values))
 
 
+def resolve_target_axis(axis_mode, fallback_axis_index):
+    axis_map = {
+        "X": 0,
+        "Y": 1,
+        "Z": 2,
+    }
+    return axis_map.get(axis_mode, fallback_axis_index)
+
+
 def rotate_object_axis_to_axis(obj, source_axis_index, target_axis_index):
     if source_axis_index == target_axis_index:
         return
@@ -175,7 +184,7 @@ def remap_world_dimensions_to_local_axes(obj, world_dimensions: Vector):
     return local_dimensions
 
 
-def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions):
+def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions, orientation_axis_mode):
     obj.location = bounds.center
 
     raw_size = bounds.size
@@ -186,11 +195,12 @@ def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions):
     ))
 
     target_longest_axis = largest_axis_index(raw_size)
+    target_axis_index = resolve_target_axis(orientation_axis_mode, target_longest_axis)
     constrained_axes = []
 
     if primitive_kind in {"disc", "cylinder"}:
-        rotate_object_axis_to_axis(obj, 2, target_longest_axis)
-        constrained_axes = [axis for axis in range(3) if axis != target_longest_axis]
+        rotate_object_axis_to_axis(obj, 2, target_axis_index)
+        constrained_axes = [axis for axis in range(3) if axis != target_axis_index]
     elif primitive_kind in {"sphere", "quad_sphere"}:
         constrained_axes = [0, 1, 2]
 
@@ -467,7 +477,18 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
     preserve_proportions: bpy.props.BoolProperty(
         name="Proportional Transform",
         description="Conserve les proportions pour les primitives concernées",
-        default=False,
+        default=True,
+    )
+    orientation_axis: bpy.props.EnumProperty(
+        name="Orientation Axis",
+        description="Axe utilisé pour orienter la primitive (AUTO utilise l'axe le plus long de la sélection)",
+        items=(
+            ("AUTO", "Auto (Longest Axis)", "Oriente selon l'axe le plus long de la sélection"),
+            ("X", "X", "Oriente sur l'axe X"),
+            ("Y", "Y", "Oriente sur l'axe Y"),
+            ("Z", "Z", "Oriente sur l'axe Z"),
+        ),
+        default="AUTO",
     )
     vertices: bpy.props.IntProperty(
         name="Vertices",
@@ -522,6 +543,7 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.preserve_proportions = context.scene.fill_selection_preserve_proportions
+        self.orientation_axis = context.scene.fill_selection_orientation_axis
 
         initial_bounds = compute_selection_bounds(context)
         if initial_bounds is None:
@@ -536,6 +558,8 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "preserve_proportions")
+        if self.primitive_kind in {"cylinder", "disc"}:
+            layout.prop(self, "orientation_axis")
 
         if self.primitive_kind in {"cylinder", "disc"}:
             layout.prop(self, "vertices")
@@ -591,7 +615,13 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
                 self.report({'ERROR'}, "Impossible de mettre à jour la primitive active.")
                 return {'CANCELLED'}
 
-            apply_fill_to_object(active_obj, self.primitive_kind, bounds, self.preserve_proportions)
+            apply_fill_to_object(
+                active_obj,
+                self.primitive_kind,
+                bounds,
+                self.preserve_proportions,
+                self.orientation_axis,
+            )
             log(f"Updated {self.primitive_kind} as '{active_obj.name}' from Last Action.")
             return {'FINISHED'}
 
@@ -632,7 +662,13 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
                 f"(after geometry creation)={tuple(round(v, 5) for v in new_obj.dimensions)}"
             )
 
-        apply_fill_to_object(new_obj, self.primitive_kind, bounds, self.preserve_proportions)
+        apply_fill_to_object(
+            new_obj,
+            self.primitive_kind,
+            bounds,
+            self.preserve_proportions,
+            self.orientation_axis,
+        )
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere(
                 "Transform applied "
@@ -698,6 +734,7 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
         layout = self.layout
         obj = context.active_object
         layout.prop(context.scene, "fill_selection_preserve_proportions", text="Proportional Transform")
+        layout.prop(context.scene, "fill_selection_orientation_axis", text="Orientation Axis")
 
         col = layout.column(align=True)
         col.operator("mesh.fill_selection_add_primitive", text="Fill Selection Cube").primitive_kind = "cube"
@@ -720,10 +757,30 @@ class VIEW3D_PT_fill_selection_settings(bpy.types.Panel):
                 box.prop(obj, "fill_selection_resolution", text="Resolution")
 
 
+class FILL_SELECTION_MT_mesh_add(bpy.types.Menu):
+    bl_label = "Primitive Fill Selection"
+    bl_idname = "VIEW3D_MT_fill_selection_mesh_add"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("mesh.fill_selection_add_primitive", text="Fill Selection Cube").primitive_kind = "cube"
+        layout.operator("mesh.fill_selection_add_primitive", text="Fill Selection Cylinder").primitive_kind = "cylinder"
+        layout.operator("mesh.fill_selection_add_primitive", text="Fill Selection UV Sphere").primitive_kind = "sphere"
+        layout.operator("mesh.fill_selection_add_primitive", text="Fill Selection Disc").primitive_kind = "disc"
+        layout.operator("mesh.fill_selection_add_primitive", text="Fill Selection Quad Sphere").primitive_kind = "quad_sphere"
+
+
+def draw_fill_selection_mesh_add_menu(self, context):
+    layout = self.layout
+    layout.separator()
+    layout.menu(FILL_SELECTION_MT_mesh_add.bl_idname, text="Primitive Fill Selection")
+
+
 CLASSES = (
     FILL_SELECTION_OT_add_primitive,
     FILL_SELECTION_OT_rebuild_primitive,
     VIEW3D_PT_fill_selection_settings,
+    FILL_SELECTION_MT_mesh_add,
 )
 
 
@@ -731,7 +788,18 @@ def register():
     bpy.types.Scene.fill_selection_preserve_proportions = bpy.props.BoolProperty(
         name="Proportional Transform",
         description="Conserve les proportions pour les primitives concernées",
-        default=False,
+        default=True,
+    )
+    bpy.types.Scene.fill_selection_orientation_axis = bpy.props.EnumProperty(
+        name="Orientation Axis",
+        description="Axe d'orientation pour les primitives cylindriques/disques",
+        items=(
+            ("AUTO", "Auto (Longest Axis)", "Oriente selon l'axe le plus long de la sélection"),
+            ("X", "X", "Oriente sur l'axe X"),
+            ("Y", "Y", "Oriente sur l'axe Y"),
+            ("Z", "Z", "Oriente sur l'axe Z"),
+        ),
+        default="AUTO",
     )
 
     bpy.types.Object.fill_selection_is_managed = bpy.props.BoolProperty(
@@ -786,13 +854,20 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
 
+    bpy.types.VIEW3D_MT_mesh_add.append(draw_fill_selection_mesh_add_menu)
+
 
 def unregister():
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
 
+    if hasattr(bpy.types, "VIEW3D_MT_mesh_add"):
+        bpy.types.VIEW3D_MT_mesh_add.remove(draw_fill_selection_mesh_add_menu)
+
     if hasattr(bpy.types.Scene, "fill_selection_preserve_proportions"):
         del bpy.types.Scene.fill_selection_preserve_proportions
+    if hasattr(bpy.types.Scene, "fill_selection_orientation_axis"):
+        del bpy.types.Scene.fill_selection_orientation_axis
 
     if hasattr(bpy.types.Object, "fill_selection_rings"):
         del bpy.types.Object.fill_selection_rings
