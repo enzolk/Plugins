@@ -639,34 +639,6 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
             self.report({'WARNING'}, "Aucune sélection valide pour calculer la bounding box.")
             return {'CANCELLED'}
 
-        active_obj = context.active_object
-        if (
-            active_obj is not None and
-            active_obj.type == 'MESH' and
-            getattr(active_obj, "fill_selection_is_managed", False) and
-            getattr(active_obj, "fill_selection_primitive_kind", "") == self.primitive_kind
-        ):
-            if not apply_operator_parameters_to_object(
-                active_obj,
-                self.primitive_kind,
-                self.vertices,
-                self.segments,
-                self.rings,
-                self.resolution,
-            ):
-                self.report({'ERROR'}, "Impossible de mettre à jour la primitive active.")
-                return {'CANCELLED'}
-
-            apply_fill_to_object(
-                active_obj,
-                self.primitive_kind,
-                bounds,
-                self.preserve_proportions,
-                self.orientation_axis,
-            )
-            log(f"Updated {self.primitive_kind} as '{active_obj.name}' from Last Action.")
-            return {'FINISHED'}
-
         if self.primitive_kind == "quad_sphere":
             log_quad_sphere(
                 "Selection bounds acquired "
