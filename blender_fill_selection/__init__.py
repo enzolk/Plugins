@@ -641,6 +641,7 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
 
         active_obj = context.active_object
         if (
+            self.options.is_repeat and
             active_obj is not None and
             active_obj.type == 'MESH' and
             getattr(active_obj, "fill_selection_is_managed", False) and
