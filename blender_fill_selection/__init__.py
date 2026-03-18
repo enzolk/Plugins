@@ -38,6 +38,34 @@ def log_quad_sphere(message):
     log(f"[QuadSphere] {message}")
 
 
+def build_unique_name(name, existing_names):
+    if name not in existing_names:
+        return name
+
+    index = 1
+    while True:
+        candidate = f"{name}.{index:03d}"
+        if candidate not in existing_names:
+            return candidate
+        index += 1
+
+
+def resolve_unique_object_name(base_name):
+    existing_names = {obj.name for obj in bpy.data.objects}
+    unique_name = build_unique_name(base_name, existing_names)
+    if unique_name != base_name:
+        log(f"Object name '{base_name}' already exists, using '{unique_name}'.")
+    return unique_name
+
+
+def resolve_unique_mesh_name(base_name):
+    existing_names = {mesh.name for mesh in bpy.data.meshes}
+    unique_name = build_unique_name(base_name, existing_names)
+    if unique_name != base_name:
+        log(f"Mesh name '{base_name}' already exists, using '{unique_name}'.")
+    return unique_name
+
+
 def vector_min(a: Vector, b: Vector):
     return Vector((min(a.x, b.x), min(a.y, b.y), min(a.z, b.z)))
 
@@ -212,6 +240,14 @@ def apply_fill_to_object(obj, primitive_kind, bounds, preserve_proportions, orie
 
 
 def create_primitive_object(context, primitive_kind, quad_sphere_resolution=3):
+    default_object_names = {
+        "cube": "Fill Selection Cube",
+        "cylinder": "Fill Selection Cylinder",
+        "sphere": "Fill Selection UV Sphere",
+        "disc": "Fill Selection Disc",
+        "quad_sphere": "Fill Selection Quad Sphere",
+    }
+
     add_ops = {
         "cube": bpy.ops.mesh.primitive_cube_add,
         "cylinder": bpy.ops.mesh.primitive_cylinder_add,
@@ -222,10 +258,12 @@ def create_primitive_object(context, primitive_kind, quad_sphere_resolution=3):
     if primitive_kind == "quad_sphere":
         resolution = max(1, quad_sphere_resolution)
         log_quad_sphere("Creating base mesh datablock.")
-        mesh = bpy.data.meshes.new("FillSelectionQuadSphere")
+        mesh_name = resolve_unique_mesh_name("FillSelectionQuadSphere")
+        mesh = bpy.data.meshes.new(mesh_name)
 
         log_quad_sphere("Creating object instance.")
-        obj = bpy.data.objects.new("Fill Selection Quad Sphere", mesh)
+        object_name = resolve_unique_object_name(default_object_names[primitive_kind])
+        obj = bpy.data.objects.new(object_name, mesh)
 
         log_quad_sphere("Generating Quad Sphere geometry before object linking.")
         bm = create_quad_sphere_bmesh(resolution)
@@ -269,7 +307,11 @@ def create_primitive_object(context, primitive_kind, quad_sphere_resolution=3):
     except TypeError:
         op()
 
-    return context.active_object
+    obj = context.active_object
+    if obj is not None:
+        requested_name = default_object_names.get(primitive_kind, obj.name)
+        obj.name = resolve_unique_object_name(requested_name)
+    return obj
 
 
 def mark_object_as_fill_selection_primitive(obj, primitive_kind):
@@ -599,6 +641,7 @@ class FILL_SELECTION_OT_add_primitive(bpy.types.Operator):
 
         active_obj = context.active_object
         if (
+            self.options.is_repeat and
             active_obj is not None and
             active_obj.type == 'MESH' and
             getattr(active_obj, "fill_selection_is_managed", False) and
