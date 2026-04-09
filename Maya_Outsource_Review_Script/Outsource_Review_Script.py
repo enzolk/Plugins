@@ -21,7 +21,7 @@ import maya.cmds as cmds
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
-WINDOW_TITLE = "Outsource Review Script - High Poly v2"
+WINDOW_TITLE = "Outsource Review Script"
 ROOT_SUFFIXES = {
     "high": "_high",
     "placeholder": "_placeholder",
@@ -73,6 +73,7 @@ class HighPolyReviewTool:
             "design_kit_checked": {"status": "PENDING", "mode": "MANUAL"},
             "topology_checked": {"status": "PENDING", "mode": "AUTO"},
             "texture_sets_analyzed": {"status": "PENDING", "mode": "AUTO"},
+            "texture_sets_groups_analyzed": {"status": "PENDING", "mode": "AUTO"},
             "vertex_colors_checked": {"status": "PENDING", "mode": "AUTO"},
         }
 
@@ -83,6 +84,7 @@ class HighPolyReviewTool:
             "design_kit_checked": "check_design",
             "topology_checked": "check_topology",
             "texture_sets_analyzed": "check_texturesets",
+            "texture_sets_groups_analyzed": "check_texturesets_groups",
             "vertex_colors_checked": "check_vtx",
         }
 
@@ -195,10 +197,30 @@ class HighPolyReviewTool:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
 
         self._build_check_row("check_ma_fbx", "MA vs FBX", self.compare_ma_vs_fbx)
-        self._build_check_row("check_ns", "Pas de namespaces", self.scan_namespaces)
+
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Pas de namespaces", align="left")
+        cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
+        cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
+        cmds.setParent("..")
+
         self._build_check_row("check_placeholder", "Placeholder match", self.check_placeholder_match)
         self._build_check_row("check_topology", "Topologie", self.run_topology_checks)
-        self._build_check_row("check_texturesets", "Texture sets", self.analyze_texture_sets)
+
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui["check_texturesets"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Texture sets", align="left")
+        cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets())
+        cmds.button(label="Run Texture Sets (Based on Groups)", height=26, command=lambda *_: self.analyze_texture_sets_by_groups())
+        cmds.setParent("..")
+
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["check_texturesets_groups"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Texture sets (based on groups)", align="left")
+        cmds.button(label="Run Group Mode", height=26, command=lambda *_: self.analyze_texture_sets_by_groups())
+        cmds.setParent("..")
+
         self._build_check_row("check_vtx", "Vertex Colors", self.check_vertex_colors)
 
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -570,6 +592,34 @@ class HighPolyReviewTool:
             cmds.polyEvaluate(shape, face=True),
         )
 
+    def _namespace_from_node(self, node: str) -> str:
+        short = node.split("|")[-1]
+        if ":" not in short:
+            return ""
+        return short.rsplit(":", 1)[0]
+
+    def _node_is_in_namespace(self, node: str, namespace: str) -> bool:
+        ns = self._namespace_from_node(node)
+        return ns == namespace or ns.startswith(namespace + ":")
+
+    def _collect_mesh_transforms_in_namespace(self, namespace: str) -> List[str]:
+        if not namespace:
+            return []
+        shapes = cmds.ls(namespace + ":*", type="mesh", long=True) or []
+        transforms = []
+        for shape in shapes:
+            if cmds.getAttr(shape + ".intermediateObject"):
+                continue
+            parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+            if parent:
+                transforms.append(parent[0])
+        return sorted(set(transforms))
+
+    def _get_scan_namespaces(self) -> List[str]:
+        namespaces = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
+        blocked = {":", "UI", "shared", self.context["fbx_namespace"]}
+        return sorted([n for n in namespaces if n not in blocked])
+
     # ----------------------------- Actions -----------------------------
     def load_ma_scene(self) -> None:
         path = self.paths.get("ma", "")
@@ -634,18 +684,25 @@ class HighPolyReviewTool:
 
     def compare_ma_vs_fbx(self) -> None:
         high_root = self.get_high_root()
+        review_ns = self.context["fbx_namespace"]
 
-        all_meshes = self._collect_mesh_transforms(root=high_root)
-        if not all_meshes:
+        ma_source_meshes = self._collect_mesh_transforms(root=high_root)
+        if not ma_source_meshes:
             self.log("FAIL", "Compare", "Aucun mesh High détecté pour la comparaison.")
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        ma_meshes = [m for m in all_meshes if (":" not in m or self.context["fbx_namespace"] not in m)]
-        fbx_meshes = [m for m in all_meshes if self.context["fbx_namespace"] + ":" in m]
+        ma_meshes = [m for m in ma_source_meshes if not self._node_is_in_namespace(m, review_ns)]
+        fbx_meshes = self._collect_mesh_transforms_in_namespace(review_ns)
 
         if not fbx_meshes:
-            self.log("WARNING", "Compare", "Aucun mesh FBX en namespace de review détecté. Import/reference FBX conseillé.")
+            self.log(
+                "WARNING",
+                "Compare",
+                f"Aucun mesh FBX détecté dans le namespace '{review_ns}'. Vérifiez l'action Reference FBX/Import FBX.",
+            )
+            self.set_check_status("ma_fbx_compared", "PENDING")
+            return
 
         ma_sigs = sorted([self._mesh_signature(m) for m in ma_meshes])
         fbx_sigs = sorted([self._mesh_signature(m) for m in fbx_meshes])
@@ -660,12 +717,10 @@ class HighPolyReviewTool:
             self.set_check_status("ma_fbx_compared", "PENDING")
 
     def scan_namespaces(self) -> None:
-        namespaces = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
-        blocked = {"UI", "shared"}
-        user_ns = [n for n in namespaces if n not in blocked]
+        user_ns = self._get_scan_namespaces()
 
         if not user_ns:
-            self.log("INFO", "Namespace", "Aucun namespace utilisateur détecté.")
+            self.log("INFO", "Namespace", "Aucun namespace indésirable détecté (fbxReview ignoré volontairement).")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -677,6 +732,34 @@ class HighPolyReviewTool:
 
         self.log("FAIL", "Namespace", f"{len(user_ns)} namespace(s) utilisateur détecté(s).", total_objs[:200])
         self.set_check_status("no_namespaces", "FAIL")
+
+    def remove_namespaces(self) -> None:
+        removable = self._get_scan_namespaces()
+        if not removable:
+            self.log("INFO", "Namespace", "Aucun namespace à supprimer (fbxReview préservé).")
+            self.set_check_status("no_namespaces", "OK")
+            return
+
+        removed = []
+        failed = []
+        # remove deepest first to avoid parent/child namespace conflicts
+        for ns in sorted(removable, key=lambda n: n.count(":"), reverse=True):
+            try:
+                cmds.namespace(removeNamespace=ns, mergeNamespaceWithRoot=True)
+                removed.append(ns)
+            except RuntimeError as exc:
+                failed.append((ns, str(exc)))
+
+        if removed:
+            self.log("INFO", "Namespace", f"Namespaces supprimés (merge vers root): {len(removed)}", removed)
+
+        if failed:
+            for ns, err in failed:
+                self.log("WARNING", "Namespace", f"Suppression impossible pour {ns}: {err}")
+            self.set_check_status("no_namespaces", "FAIL")
+        else:
+            self.log("INFO", "Namespace", "Suppression des namespaces indésirables terminée (fbxReview conservé).")
+            self.set_check_status("no_namespaces", "OK")
 
     def check_placeholder_match(self) -> None:
         placeholder = self.get_placeholder_root()
@@ -729,6 +812,9 @@ class HighPolyReviewTool:
 
         non_manifold_items = []
         lamina_items = []
+        ngon_faces = []
+        zero_length_edges = []
+        zero_area_faces = []
         hidden_meshes = []
         meshes_with_history = []
         non_identity = []
@@ -743,6 +829,43 @@ class HighPolyReviewTool:
                 non_manifold_items.append(m)
             if lam:
                 lamina_items.append(m)
+
+            face_count = cmds.polyEvaluate(m, face=True) or 0
+            for face_idx in range(face_count):
+                vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
+                if not vtx:
+                    continue
+                # "FACE    0:    10 11 12 13" -> keep numeric tokens only.
+                tokens = [tok for tok in vtx[0].replace(":", " ").split() if tok.isdigit()]
+                if len(tokens) > 5:  # first numeric token is face id
+                    ngon_faces.append(f"{m}.f[{face_idx}]")
+
+            edge_count = cmds.polyEvaluate(m, edge=True) or 0
+            for edge_idx in range(edge_count):
+                edge_comp = f"{m}.e[{edge_idx}]"
+                edge_info = cmds.polyInfo(edge_comp, edgeToVertex=True) or []
+                if not edge_info:
+                    continue
+                # "EDGE   1:   3 7"
+                verts = [tok for tok in edge_info[0].replace(":", " ").split() if tok.isdigit()]
+                if len(verts) < 3:
+                    continue
+                v1 = f"{m}.vtx[{verts[-2]}]"
+                v2 = f"{m}.vtx[{verts[-1]}]"
+                p1 = cmds.pointPosition(v1, world=True)
+                p2 = cmds.pointPosition(v2, world=True)
+                length_sq = sum((p1[i] - p2[i]) ** 2 for i in range(3))
+                if length_sq <= 1e-12:
+                    zero_length_edges.append(edge_comp)
+
+            face_area = cmds.polyEvaluate(f"{m}.f[*]", area=True) or 0.0
+            if isinstance(face_area, list):
+                for idx, area in enumerate(face_area):
+                    if area <= 1e-12:
+                        zero_area_faces.append(f"{m}.f[{idx}]")
+            elif face_area <= 1e-12 and face_count > 0:
+                # fallback when Maya returns one total area value
+                zero_area_faces.extend([f"{m}.f[{i}]" for i in range(face_count)])
 
             if not cmds.getAttr(m + ".visibility"):
                 hidden_meshes.append(m)
@@ -766,11 +889,20 @@ class HighPolyReviewTool:
 
         duplicate_short_names = [n for n in (cmds.ls(type="transform", long=True) or []) if "|" in n.split(":")[-1]]
 
-        if non_manifold_items:
-            self.log("FAIL", "Topology", f"Non-manifold détecté sur {len(non_manifold_items)} mesh(es).", non_manifold_items)
+        if ngon_faces:
+            self.log("FAIL", "Topology", f"Faces avec plus de 4 côtés: {len(ngon_faces)}", ngon_faces[:200])
             fail_count += 1
         if lamina_items:
             self.log("FAIL", "Topology", f"Lamina faces détectées sur {len(lamina_items)} mesh(es).", lamina_items)
+            fail_count += 1
+        if non_manifold_items:
+            self.log("FAIL", "Topology", f"Non-manifold détecté sur {len(non_manifold_items)} mesh(es).", non_manifold_items)
+            fail_count += 1
+        if zero_length_edges:
+            self.log("FAIL", "Topology", f"Edges de longueur nulle détectées: {len(zero_length_edges)}", zero_length_edges[:200])
+            fail_count += 1
+        if zero_area_faces:
+            self.log("FAIL", "Topology", f"Faces avec aire nulle détectées: {len(zero_area_faces)}", zero_area_faces[:200])
             fail_count += 1
         if meshes_with_history:
             self.log("WARNING", "Topology", f"Historique non supprimé sur {len(meshes_with_history)} mesh(es).", meshes_with_history)
@@ -785,7 +917,12 @@ class HighPolyReviewTool:
             self.log("WARNING", "Topology", f"Instances détectées: {len(set(instances))} mesh(es).", list(set(instances)))
             warn_count += 1
         if duplicate_short_names:
-            self.log("WARNING", "Topology", f"Noms dupliqués potentiels (paths DAG ambigus): {len(duplicate_short_names)}", duplicate_short_names[:100])
+            self.log(
+                "WARNING",
+                "Topology",
+                f"Noms dupliqués potentiels (paths DAG ambigus): {len(duplicate_short_names)} — plusieurs objets partagent le même nom court.",
+                duplicate_short_names[:100],
+            )
             warn_count += 1
 
         if high_root:
@@ -853,6 +990,30 @@ class HighPolyReviewTool:
             self.set_check_status("texture_sets_analyzed", "PENDING")
         else:
             self.set_check_status("texture_sets_analyzed", "OK")
+        self.set_check_status("texture_sets_groups_analyzed", "PENDING")
+
+    def analyze_texture_sets_by_groups(self) -> None:
+        high_root = self.get_high_root()
+        if not high_root or not cmds.objExists(high_root):
+            self.log("FAIL", "TextureSetsGroups", "High root invalide/non détecté.")
+            self.set_check_status("texture_sets_groups_analyzed", "FAIL")
+            return
+
+        direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
+        candidate_groups = []
+        for child in direct_children:
+            child_meshes = cmds.listRelatives(child, allDescendents=True, fullPath=True, type="mesh") or []
+            if child_meshes:
+                candidate_groups.append(child)
+
+        self.log("INFO", "TextureSetsGroups", f"High root analysé : {high_root}")
+        if candidate_groups:
+            self.log("INFO", "TextureSetsGroups", "Sous-groupes directs détectés :", candidate_groups)
+            self.log("INFO", "TextureSetsGroups", f"Nombre de texture sets détectés (based on groups) : {len(candidate_groups)}")
+            self.set_check_status("texture_sets_groups_analyzed", "OK")
+        else:
+            self.log("WARNING", "TextureSetsGroups", "Aucun sous-groupe direct avec mesh détecté sous le High root.")
+            self.set_check_status("texture_sets_groups_analyzed", "PENDING")
 
     def check_vertex_colors(self) -> None:
         high_root = self.get_high_root()
@@ -914,6 +1075,7 @@ class HighPolyReviewTool:
         self.check_placeholder_match()
         self.run_topology_checks()
         self.analyze_texture_sets()
+        self.analyze_texture_sets_by_groups()
         self.check_vertex_colors()
         self.log("INFO", "RunAll", "Checks High Poly terminés.")
 
