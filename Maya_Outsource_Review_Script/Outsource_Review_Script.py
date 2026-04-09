@@ -22,6 +22,8 @@ import maya.cmds as cmds
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
+MAX_UI_TEXT_LENGTH = 90
+MAX_MENU_LABEL_LENGTH = 72
 ROOT_SUFFIXES = {
     "high": "_high",
     "placeholder": "_placeholder",
@@ -364,6 +366,22 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     # ------------------------- Utility methods -------------------------
+    def _ellipsize_middle(self, text: str, max_length: int = MAX_UI_TEXT_LENGTH) -> str:
+        if len(text) <= max_length:
+            return text
+        if max_length < 8:
+            return text[:max_length]
+        keep = (max_length - 3) // 2
+        return f"{text[:keep]}...{text[-(max_length - 3 - keep):]}"
+
+    def _format_node_menu_label(self, node: str) -> str:
+        short = self._short_name(node)
+        if len(node) <= MAX_MENU_LABEL_LENGTH:
+            return node
+        hint_max = max(12, MAX_MENU_LABEL_LENGTH - len(short) - 5)
+        tail_hint = self._ellipsize_middle(node, max_length=hint_max)
+        return f"{short} | {tail_hint}"
+
     def log(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
         self.result_items.append(issue)
@@ -374,7 +392,7 @@ class HighPolyReviewTool:
             "FAIL": "[FAIL]",
         }.get(level, "[INFO]")
 
-        display = f"{prefix} {category}: {message}"
+        display = self._ellipsize_middle(f"{prefix} {category}: {message}", max_length=MAX_UI_TEXT_LENGTH)
         idx = cmds.textScrollList(self.ui["results_list"], q=True, numberOfItems=True) or 0
         cmds.textScrollList(self.ui["results_list"], e=True, append=display)
         self.result_index_to_objects[idx + 1] = issue.objects
@@ -554,7 +572,7 @@ class HighPolyReviewTool:
             return
 
         for node in items:
-            cmds.menuItem(label=node, parent=menu)
+            cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
 
         cmds.optionMenu(menu, edit=True, select=1)
 
@@ -565,7 +583,12 @@ class HighPolyReviewTool:
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
         if root:
-            self.log("INFO", "RootDetect", f"{root_key.capitalize()} root sélectionné: {root}")
+            self.log(
+                "INFO",
+                "RootDetect",
+                f"{root_key.capitalize()} root sélectionné: {self._ellipsize_middle(root, max_length=MAX_UI_TEXT_LENGTH - 36)}",
+                [root],
+            )
 
     def get_detected_root(self, root_key: str) -> Optional[str]:
         candidates = self.detected_roots[root_key]
@@ -596,7 +619,12 @@ class HighPolyReviewTool:
             current.insert(0, sel[0])
         self.detected_roots[root_key] = current
         self.refresh_root_ui()
-        self.log("INFO", "RootDetect", f"{root_key.capitalize()} root défini depuis la sélection: {sel[0]}")
+        self.log(
+            "INFO",
+            "RootDetect",
+            f"{root_key.capitalize()} root défini depuis la sélection: {self._ellipsize_middle(sel[0], max_length=MAX_UI_TEXT_LENGTH - 45)}",
+            [sel[0]],
+        )
 
     def _candidate_root_score(self, node: str) -> Tuple[int, int, int]:
         descendants = cmds.listRelatives(node, allDescendents=True, fullPath=True) or []
@@ -635,14 +663,24 @@ class HighPolyReviewTool:
         self.refresh_root_ui()
 
         if high_candidates:
-            self.log("INFO", "RootDetect", f"High root détecté: {high_candidates[0]}")
+            self.log(
+                "INFO",
+                "RootDetect",
+                f"High root détecté: {self._ellipsize_middle(high_candidates[0], max_length=MAX_UI_TEXT_LENGTH - 22)}",
+                [high_candidates[0]],
+            )
             if len(high_candidates) > 1:
                 self.log("WARNING", "RootDetect", f"Plusieurs High roots détectés ({len(high_candidates)}). Sélection manuelle possible.")
         else:
             self.log("WARNING", "RootDetect", "High root non détecté.")
 
         if placeholder_candidates:
-            self.log("INFO", "RootDetect", f"Placeholder root détecté: {placeholder_candidates[0]}")
+            self.log(
+                "INFO",
+                "RootDetect",
+                f"Placeholder root détecté: {self._ellipsize_middle(placeholder_candidates[0], max_length=MAX_UI_TEXT_LENGTH - 29)}",
+                [placeholder_candidates[0]],
+            )
             if len(placeholder_candidates) > 1:
                 self.log("WARNING", "RootDetect", f"Plusieurs Placeholder roots détectés ({len(placeholder_candidates)}). Sélection manuelle possible.")
         else:
