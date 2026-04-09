@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 
@@ -821,29 +821,68 @@ class HighPolyReviewTool:
     def _get_selected_scope_keys(self) -> List[str]:
         scope_checks = self.ui.get("scope_checks", {})
         selected = [k for k in self.scope_keys if k in scope_checks and cmds.checkBox(scope_checks[k], q=True, value=True)]
-        if not selected:
-            selected = ["high_fbx", "high_ma"]
         return selected
 
     def _resolve_scope_meshes(self, scope_keys: Optional[List[str]] = None) -> Tuple[List[str], Dict[str, List[str]]]:
-        scope_keys = scope_keys or self._get_selected_scope_keys()
+        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
+        return resolution["meshes"], resolution["per_scope_meshes"]
+
+    def resolve_scope_targets(self, scope_keys: Optional[List[str]] = None) -> Dict[str, Any]:
+        scope_keys = scope_keys if scope_keys is not None else self._get_selected_scope_keys()
+        normalized_scope_keys = [k for k in self.scope_keys if k in scope_keys]
         per_scope: Dict[str, List[str]] = {}
-        for key in scope_keys:
+        roots_by_scope: Dict[str, List[str]] = {}
+        for key in normalized_scope_keys:
             meshes: List[str] = []
             if key == "placeholder":
-                meshes = self._collect_mesh_transforms(root=self.get_placeholder_root())
+                placeholder_root = self.get_placeholder_root()
+                meshes = self._collect_mesh_transforms(root=placeholder_root)
+                roots_by_scope[key] = [placeholder_root] if placeholder_root else []
             elif key == "high_fbx":
                 meshes = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"])
+                roots_by_scope[key] = [self.context["fbx_namespace"]]
             elif key == "high_ma":
                 meshes = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"])
+                high_root = self.get_high_root()
+                roots_by_scope[key] = [high_root] if high_root else [self.context["ma_namespace"]]
             elif key in {"all_mesh", "all_incl_mat"}:
                 meshes = self._collect_mesh_transforms(root=None)
+                roots_by_scope[key] = ["<SCENE_ALL_MESHES>"]
             per_scope[key] = sorted(set(meshes))
         merged = sorted(set([m for meshes in per_scope.values() for m in meshes]))
-        return merged, per_scope
+        return {
+            "scope_keys": normalized_scope_keys,
+            "per_scope_meshes": per_scope,
+            "meshes": merged,
+            "roots_by_scope": roots_by_scope,
+        }
 
     def _scope_label(self, scope_keys: List[str]) -> str:
         return ", ".join([self.scope_labels.get(k, k) for k in scope_keys])
+
+    def _log_scope_resolution(self, category: str, resolution: Dict[str, Any]) -> None:
+        scope_keys = resolution.get("scope_keys", [])
+        per_scope = resolution.get("per_scope_meshes", {})
+        roots_by_scope = resolution.get("roots_by_scope", {})
+        merged = resolution.get("meshes", [])
+        scope_label = self._scope_label(scope_keys) if scope_keys else "(aucun scope)"
+        self.log("INFO", category, f"Scope demandé: {scope_label}")
+        if not scope_keys:
+            self.log("WARNING", category, "Aucun scope sélectionné dans l'UI.")
+            return
+        for key in scope_keys:
+            roots = roots_by_scope.get(key, [])
+            meshes = per_scope.get(key, [])
+            pretty_roots = ", ".join([self._short_name(r) for r in roots if r]) if roots else "Aucun root résolu"
+            self.log(
+                "INFO",
+                category,
+                f"- {self.scope_labels.get(key, key)} | roots: {pretty_roots} | meshes: {len(meshes)}",
+            )
+        self.log("INFO", category, f"Meshes ciblés (union des scopes): {len(merged)}")
+        self.log("INFO", category, f"Placeholder inclus: {'Oui' if 'placeholder' in scope_keys else 'Non'}")
+        self.log("INFO", category, f"High FBX inclus: {'Oui' if 'high_fbx' in scope_keys else 'Non'}")
+        self.log("INFO", category, f"High MA inclus: {'Oui' if 'high_ma' in scope_keys else 'Non'}")
 
     def _fmt_vec(self, values: Tuple[float, float, float], precision: int = 4) -> str:
         rounded = tuple(round(v, precision) for v in values)
@@ -1300,14 +1339,20 @@ class HighPolyReviewTool:
         self.last_scanned_namespaces = self._get_scan_namespaces()
 
     def check_placeholder_match(self) -> None:
-        scope_keys = self._get_selected_scope_keys()
+        resolution = self.resolve_scope_targets()
+        scope_keys = resolution["scope_keys"]
+        self._log_scope_resolution("Placeholder", resolution)
+        if not scope_keys:
+            self.log("FAIL", "Placeholder", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
+            self.set_check_status("placeholder_checked", "FAIL")
+            return
         placeholder = self.get_placeholder_root()
         if not placeholder or not cmds.objExists(placeholder):
             self.log("FAIL", "Placeholder", "Placeholder root invalide/non détecté.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
-        _, per_scope = self._resolve_scope_meshes(scope_keys)
+        per_scope = resolution["per_scope_meshes"]
         target_scope_keys = [k for k in scope_keys if k != "placeholder"]
         target_meshes = sorted(set([m for k in target_scope_keys for m in per_scope.get(k, [])]))
         if not target_meshes:
@@ -1384,14 +1429,19 @@ class HighPolyReviewTool:
             self.set_check_status("placeholder_checked", "FAIL")
 
     def run_topology_checks(self) -> None:
-        scope_keys = self._get_selected_scope_keys()
-        meshes, _ = self._resolve_scope_meshes(scope_keys)
+        resolution = self.resolve_scope_targets()
+        scope_keys = resolution["scope_keys"]
+        meshes = resolution["meshes"]
+        self._log_scope_resolution("Topology", resolution)
+        if not scope_keys:
+            self.log("FAIL", "Topology", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
+            self.set_check_status("topology_checked", "FAIL")
+            return
         if not meshes:
-            self.log("FAIL", "Topology", "Aucun mesh trouvé pour les checks topologie.")
+            self.log("FAIL", "Topology", "Aucun objet trouvé pour le scope sélectionné.")
             self.set_check_status("topology_checked", "FAIL")
             return
 
-        self.log("INFO", "Topology", f"Scope utilisé: {self._scope_label(scope_keys)}")
         self.log("INFO", "Topology", f"Meshes analysés: {len(meshes)}")
 
         fail_count = 0
@@ -1528,11 +1578,17 @@ class HighPolyReviewTool:
             self.set_check_status("topology_checked", "FAIL")
 
     def analyze_texture_sets(self, mode: str = "combined") -> None:
-        scope_keys = self._get_selected_scope_keys()
-        meshes, _ = self._resolve_scope_meshes(scope_keys)
+        resolution = self.resolve_scope_targets()
+        scope_keys = resolution["scope_keys"]
+        meshes = resolution["meshes"]
+        self._log_scope_resolution("TextureSets", resolution)
+        if not scope_keys:
+            self.log("FAIL", "TextureSets", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
+            self.set_check_status("texture_sets_analyzed", "FAIL")
+            return
         high_root = self.get_high_root()
         if not meshes:
-            self.log("FAIL", "TextureSets", "Aucun mesh trouvé pour l'analyse texture sets.")
+            self.log("FAIL", "TextureSets", "Aucun objet trouvé pour le scope sélectionné.")
             self.set_check_status("texture_sets_analyzed", "FAIL")
             return
 
@@ -1622,7 +1678,6 @@ class HighPolyReviewTool:
         self._refresh_texture_sets_list_ui()
 
         mode_label = {"combined": "matériaux + groupes", "groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
-        self.log("INFO", "TextureSets", f"Scope utilisé: {self._scope_label(scope_keys)}")
         if group_method_log_lines:
             for line in group_method_log_lines:
                 self.log("INFO", "TextureSets", line)
@@ -1661,13 +1716,18 @@ class HighPolyReviewTool:
             self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
 
     def check_vertex_colors(self) -> None:
-        scope_keys = self._get_selected_scope_keys()
-        meshes, _ = self._resolve_scope_meshes(scope_keys)
-        if not meshes:
-            self.log("FAIL", "VertexColor", "Aucun mesh trouvé pour le check vertex colors.")
+        resolution = self.resolve_scope_targets()
+        scope_keys = resolution["scope_keys"]
+        meshes = resolution["meshes"]
+        self._log_scope_resolution("VertexColor", resolution)
+        if not scope_keys:
+            self.log("FAIL", "VertexColor", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
             self.set_check_status("vertex_colors_checked", "FAIL")
             return
-        self.log("INFO", "VertexColor", f"Scope utilisé: {self._scope_label(scope_keys)}")
+        if not meshes:
+            self.log("FAIL", "VertexColor", "Aucun objet trouvé pour le scope sélectionné.")
+            self.set_check_status("vertex_colors_checked", "FAIL")
+            return
 
         with_vc = []
         without_vc = []
@@ -1711,10 +1771,15 @@ class HighPolyReviewTool:
             self.set_check_status("vertex_colors_checked", "OK")
 
     def display_vertex_colors(self) -> None:
-        scope_keys = self._get_selected_scope_keys()
-        targets, _ = self._resolve_scope_meshes(scope_keys)
+        resolution = self.resolve_scope_targets()
+        scope_keys = resolution["scope_keys"]
+        targets = resolution["meshes"]
+        self._log_scope_resolution("VertexColor", resolution)
+        if not scope_keys:
+            self.log("WARNING", "VertexColor", "Aucun scope sélectionné. Action annulée.")
+            return
         if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet cible pour l'affichage des vertex colors.")
+            self.log("WARNING", "VertexColor", "Aucun objet trouvé pour le scope sélectionné.")
             return
 
         shown = []
@@ -1733,10 +1798,15 @@ class HighPolyReviewTool:
         self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({self._scope_label(scope_keys)}).", list(sorted(set(shown)))[:150])
 
     def hide_vertex_colors(self) -> None:
-        scope_keys = self._get_selected_scope_keys()
-        targets, _ = self._resolve_scope_meshes(scope_keys)
+        resolution = self.resolve_scope_targets()
+        scope_keys = resolution["scope_keys"]
+        targets = resolution["meshes"]
+        self._log_scope_resolution("VertexColor", resolution)
+        if not scope_keys:
+            self.log("WARNING", "VertexColor", "Aucun scope sélectionné. Action annulée.")
+            return
         if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet cible pour masquer les vertex colors.")
+            self.log("WARNING", "VertexColor", "Aucun objet trouvé pour le scope sélectionné.")
             return
 
         hidden = []
