@@ -26,6 +26,7 @@ ROOT_SUFFIXES = {
     "high": "_high",
     "placeholder": "_placeholder",
 }
+PLACEHOLDER_TOKEN = "placeholder"
 
 
 @dataclass
@@ -575,6 +576,14 @@ class HighPolyReviewTool:
         if not sel:
             self.log("WARNING", "Selection", "Aucun objet sélectionné.")
             return
+        if root_key == "high" and self._is_placeholder_node(sel[0]):
+            self.log(
+                "WARNING",
+                "RootDetect",
+                "Sélection ignorée pour High root : nom contenant 'placeholder' détecté (priorité Placeholder).",
+                [sel[0]],
+            )
+            return
 
         current = self.detected_roots[root_key][:]
         if sel[0] not in current:
@@ -598,7 +607,14 @@ class HighPolyReviewTool:
         valid = []
         for node in transforms:
             short_name = node.split("|")[-1]
-            if short_name.lower().endswith(suffix):
+            short_without_ns = self._strip_namespaces_from_name(short_name)
+            if suffix_key == "placeholder":
+                if short_without_ns.lower().endswith(suffix) or self._is_placeholder_node(node):
+                    valid.append(node)
+            elif suffix_key == "high":
+                if short_without_ns.lower().endswith(suffix) and not self._is_placeholder_node(node):
+                    valid.append(node)
+            elif short_without_ns.lower().endswith(suffix):
                 valid.append(node)
 
         valid = sorted(valid, key=lambda x: self._candidate_root_score(x), reverse=True)
@@ -667,6 +683,14 @@ class HighPolyReviewTool:
     def _strip_namespaces_from_name(self, name: str) -> str:
         parts = name.split(":")
         return parts[-1] if parts else name
+
+    def _contains_placeholder_token(self, text: str) -> bool:
+        return PLACEHOLDER_TOKEN in text.lower()
+
+    def _is_placeholder_node(self, node: str) -> bool:
+        short_name = self._short_name(node)
+        short_without_ns = self._strip_namespaces_from_name(short_name)
+        return self._contains_placeholder_token(short_without_ns) or self._contains_placeholder_token(short_name)
 
     def _normalized_segments(self, path: str) -> List[str]:
         return [self._strip_namespaces_from_name(seg) for seg in path.split("|") if seg]
@@ -805,18 +829,28 @@ class HighPolyReviewTool:
         ns = self._namespace_from_node(node)
         return ns == namespace or ns.startswith(namespace + ":")
 
-    def _collect_mesh_transforms_in_namespace(self, namespace: str) -> List[str]:
+    def _collect_mesh_transforms_in_namespace(
+        self,
+        namespace: str,
+        *,
+        exclude_placeholder_named: bool = False,
+    ) -> Tuple[List[str], List[str]]:
         if not namespace:
-            return []
+            return [], []
         shapes = cmds.ls(namespace + ":*", type="mesh", long=True) or []
         transforms = []
+        placeholder_excluded: List[str] = []
         for shape in shapes:
             if cmds.getAttr(shape + ".intermediateObject"):
                 continue
             parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
             if parent:
-                transforms.append(parent[0])
-        return sorted(set(transforms))
+                parent_transform = parent[0]
+                if exclude_placeholder_named and self._is_placeholder_node(parent_transform):
+                    placeholder_excluded.append(parent_transform)
+                    continue
+                transforms.append(parent_transform)
+        return sorted(set(transforms)), sorted(set(placeholder_excluded))
 
     def _get_selected_scope_keys(self) -> List[str]:
         scope_checks = self.ui.get("scope_checks", {})
@@ -832,6 +866,7 @@ class HighPolyReviewTool:
         normalized_scope_keys = [k for k in self.scope_keys if k in scope_keys]
         per_scope: Dict[str, List[str]] = {}
         roots_by_scope: Dict[str, List[str]] = {}
+        classification_notes: Dict[str, List[str]] = {}
         for key in normalized_scope_keys:
             meshes: List[str] = []
             if key == "placeholder":
@@ -839,12 +874,16 @@ class HighPolyReviewTool:
                 meshes = self._collect_mesh_transforms(root=placeholder_root)
                 roots_by_scope[key] = [placeholder_root] if placeholder_root else []
             elif key == "high_fbx":
-                meshes = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"])
+                meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"])
                 roots_by_scope[key] = [self.context["fbx_namespace"]]
             elif key == "high_ma":
-                meshes = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"])
+                meshes, placeholder_excluded = self._collect_mesh_transforms_in_namespace(
+                    self.context["ma_namespace"],
+                    exclude_placeholder_named=True,
+                )
                 high_root = self.get_high_root()
                 roots_by_scope[key] = [high_root] if high_root else [self.context["ma_namespace"]]
+                classification_notes[key] = placeholder_excluded
             elif key in {"all_mesh", "all_incl_mat"}:
                 meshes = self._collect_mesh_transforms(root=None)
                 roots_by_scope[key] = ["<SCENE_ALL_MESHES>"]
@@ -855,6 +894,7 @@ class HighPolyReviewTool:
             "per_scope_meshes": per_scope,
             "meshes": merged,
             "roots_by_scope": roots_by_scope,
+            "classification_notes": classification_notes,
         }
 
     def _scope_label(self, scope_keys: List[str]) -> str:
@@ -864,6 +904,7 @@ class HighPolyReviewTool:
         scope_keys = resolution.get("scope_keys", [])
         per_scope = resolution.get("per_scope_meshes", {})
         roots_by_scope = resolution.get("roots_by_scope", {})
+        classification_notes = resolution.get("classification_notes", {})
         merged = resolution.get("meshes", [])
         scope_label = self._scope_label(scope_keys) if scope_keys else "(aucun scope)"
         self.log("INFO", category, f"Scope demandé: {scope_label}")
@@ -879,6 +920,21 @@ class HighPolyReviewTool:
                 category,
                 f"- {self.scope_labels.get(key, key)} | roots: {pretty_roots} | meshes: {len(meshes)}",
             )
+            if key == "high_ma":
+                excluded = classification_notes.get(key, [])
+                if excluded:
+                    self.log(
+                        "INFO",
+                        category,
+                        f"- Priorité Placeholder active: {len(excluded)} objet(s) sous {self.context['ma_namespace']} exclus du scope High MA.",
+                    )
+                    for node in excluded[:20]:
+                        self.log(
+                            "INFO",
+                            category,
+                            "Objet détecté sous High_Ma_File | Nom contient PLACEHOLDER | Classé comme : Placeholder | Exclu de : High MA",
+                            [node],
+                        )
         self.log("INFO", category, f"Meshes ciblés (union des scopes): {len(merged)}")
         self.log("INFO", category, f"Placeholder inclus: {'Oui' if 'placeholder' in scope_keys else 'Non'}")
         self.log("INFO", category, f"High FBX inclus: {'Oui' if 'high_fbx' in scope_keys else 'Non'}")
@@ -1150,13 +1206,21 @@ class HighPolyReviewTool:
         review_ns = self.context["fbx_namespace"]
         ma_ns = self.context["ma_namespace"]
 
-        ma_meshes = self._collect_mesh_transforms_in_namespace(ma_ns)
+        ma_meshes, ma_placeholder_excluded = self._collect_mesh_transforms_in_namespace(ma_ns, exclude_placeholder_named=True)
         if not ma_meshes:
             self.log("FAIL", "Compare", f"Aucun mesh MA détecté dans le namespace '{ma_ns}'. Utilisez Load MA.")
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        fbx_meshes = self._collect_mesh_transforms_in_namespace(review_ns)
+        if ma_placeholder_excluded:
+            self.log(
+                "INFO",
+                "Compare",
+                f"Priorité Placeholder: {len(ma_placeholder_excluded)} mesh(es) sous {ma_ns} exclus du comparatif MA (nom contenant placeholder).",
+                ma_placeholder_excluded[:80],
+            )
+
+        fbx_meshes, _ = self._collect_mesh_transforms_in_namespace(review_ns)
 
         if not fbx_meshes:
             self.log(
