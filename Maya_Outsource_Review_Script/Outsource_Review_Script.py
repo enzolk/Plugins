@@ -61,9 +61,12 @@ class HighPolyReviewTool:
         }
 
         self.context = {
-            "fbx_namespace": "fbxReview",
+            "fbx_namespace": "High_FBX_File",
+            "ma_namespace": "High_Ma_File",
             "fbx_nodes": [],
             "fbx_meshes": [],
+            "ma_nodes": [],
+            "ma_meshes": [],
         }
 
         self.check_states = {
@@ -90,6 +93,15 @@ class HighPolyReviewTool:
         self.texture_set_visibility: Dict[str, bool] = {}
         self.texture_set_label_to_key: Dict[str, str] = {}
         self.last_scanned_namespaces: List[str] = []
+        self.scope_keys = ["placeholder", "high_fbx", "high_ma", "all_mesh", "all_incl_mat"]
+        self.scope_labels = {
+            "placeholder": "Placeholder",
+            "high_fbx": "High FBX",
+            "high_ma": "High MA",
+            "all_mesh": "ALL (Mesh only)",
+            "all_incl_mat": "ALL (Incl. Mat.)",
+        }
+        self.last_texture_scope: List[str] = []
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -162,16 +174,15 @@ class HighPolyReviewTool:
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
         self.ui["ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("ma"))
         cmds.menuItem(label="-- Aucun --", parent=self.ui["ma_menu"])
-        cmds.button(label="Load MA (Open Scene)", height=28, command=lambda *_: self.load_ma_scene())
+        cmds.button(label="Load MA (Reference)", height=28, command=lambda *_: self.load_ma_scene())
         cmds.setParent("..")
 
         cmds.text(label="FBX Found", align="left")
         self.ui["fbx_status"] = cmds.text(label="Aucun .fbx détecté", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
         self.ui["fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("fbx"))
         cmds.menuItem(label="-- Aucun --", parent=self.ui["fbx_menu"])
-        cmds.button(label="Import FBX", height=28, command=lambda *_: self.load_fbx_into_scene(as_reference=False))
-        cmds.button(label="Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene(as_reference=True))
+        cmds.button(label="Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene())
         cmds.setParent("..")
 
         cmds.separator(style="in")
@@ -200,6 +211,7 @@ class HighPolyReviewTool:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
 
         self._build_check_row("check_ma_fbx", "MA vs FBX", self.compare_ma_vs_fbx)
+        self._build_scope_section()
 
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
@@ -254,6 +266,10 @@ class HighPolyReviewTool:
         cmds.button(label="Show Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
         cmds.button(label="Toggle Selected Sets", height=24, command=lambda *_: self.toggle_selected_texture_sets())
         cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(label="Isolate Selected Sets", height=24, command=lambda *_: self.isolate_selected_texture_sets())
+        cmds.separator(style="none")
+        cmds.setParent("..")
 
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui["check_design"] = cmds.checkBox(
@@ -265,6 +281,23 @@ class HighPolyReviewTool:
         cmds.button(label="Mark as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
         cmds.setParent("..")
 
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _build_scope_section(self) -> None:
+        cmds.frameLayout(label="Target Scope (scoped operations)", collapsable=True, collapse=False, marginWidth=6)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
+        cmds.text(label="Choisissez une ou plusieurs cibles pour Placeholder/Topology/TextureSets/VertexColor.", align="left")
+        self.ui["scope_checks"] = {}
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["scope_checks"]["placeholder"] = cmds.checkBox(label=self.scope_labels["placeholder"], value=False)
+        self.ui["scope_checks"]["high_fbx"] = cmds.checkBox(label=self.scope_labels["high_fbx"], value=True)
+        self.ui["scope_checks"]["high_ma"] = cmds.checkBox(label=self.scope_labels["high_ma"], value=True)
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["scope_checks"]["all_mesh"] = cmds.checkBox(label=self.scope_labels["all_mesh"], value=False)
+        self.ui["scope_checks"]["all_incl_mat"] = cmds.checkBox(label=self.scope_labels["all_incl_mat"], value=False)
+        cmds.separator(style="none")
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -656,6 +689,8 @@ class HighPolyReviewTool:
                 "uv_total": 0,
                 "uv_sets": {},
                 "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
+                "pivot_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, rotatePivot=True)),
+                "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
             }
 
         shape = shape[0]
@@ -692,6 +727,8 @@ class HighPolyReviewTool:
             "uv_total": int(cmds.polyEvaluate(shape, uvcoord=True) or 0),
             "uv_sets": uv_info,
             "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
+            "pivot_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, rotatePivot=True)),
+            "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
         }
 
     def _mesh_center_world(self, mesh_transform: str) -> Tuple[float, float, float]:
@@ -777,6 +814,33 @@ class HighPolyReviewTool:
                 transforms.append(parent[0])
         return sorted(set(transforms))
 
+    def _get_selected_scope_keys(self) -> List[str]:
+        scope_checks = self.ui.get("scope_checks", {})
+        selected = [k for k in self.scope_keys if k in scope_checks and cmds.checkBox(scope_checks[k], q=True, value=True)]
+        if not selected:
+            selected = ["high_fbx", "high_ma"]
+        return selected
+
+    def _resolve_scope_meshes(self, scope_keys: Optional[List[str]] = None) -> Tuple[List[str], Dict[str, List[str]]]:
+        scope_keys = scope_keys or self._get_selected_scope_keys()
+        per_scope: Dict[str, List[str]] = {}
+        for key in scope_keys:
+            meshes: List[str] = []
+            if key == "placeholder":
+                meshes = self._collect_mesh_transforms(root=self.get_placeholder_root())
+            elif key == "high_fbx":
+                meshes = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"])
+            elif key == "high_ma":
+                meshes = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"])
+            elif key in {"all_mesh", "all_incl_mat"}:
+                meshes = self._collect_mesh_transforms(root=None)
+            per_scope[key] = sorted(set(meshes))
+        merged = sorted(set([m for meshes in per_scope.values() for m in meshes]))
+        return merged, per_scope
+
+    def _scope_label(self, scope_keys: List[str]) -> str:
+        return ", ".join([self.scope_labels.get(k, k) for k in scope_keys])
+
     def _extract_namespaces_from_path(self, node_path: str) -> Set[str]:
         found: Set[str] = set()
         for segment in [s for s in node_path.split("|") if s]:
@@ -789,8 +853,11 @@ class HighPolyReviewTool:
         return found
 
     def _is_allowed_namespace(self, namespace: str) -> bool:
-        allowed = self.context["fbx_namespace"]
-        return namespace == allowed or namespace.startswith(allowed + ":")
+        allowed_namespaces = [self.context["fbx_namespace"], self.context["ma_namespace"]]
+        for allowed in allowed_namespaces:
+            if namespace == allowed or namespace.startswith(allowed + ":"):
+                return True
+        return False
 
     def _get_scan_namespaces(self) -> List[str]:
         all_nodes = cmds.ls(long=True) or []
@@ -872,7 +939,8 @@ class HighPolyReviewTool:
         if selected_only:
             self._restore_texture_set_selection(target_sets)
         action = "affichés" if visible else "masqués"
-        self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
+        scope_label = self._scope_label(self.last_texture_scope) if self.last_texture_scope else "N/A"
+        self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)} (scope source: {scope_label})", list(sorted(set(impacted_objects)))[:150])
 
     def toggle_selected_texture_sets(self) -> None:
         target_sets = self._selected_texture_set_names()
@@ -896,6 +964,38 @@ class HighPolyReviewTool:
         self._restore_texture_set_selection(target_sets)
         self.log("INFO", "TextureSets", f"Toggle visibility appliqué à: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
 
+    def isolate_selected_texture_sets(self) -> None:
+        target_sets = self._selected_texture_set_names()
+        if not target_sets:
+            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour isolation.")
+            return
+        all_sets = list(self.detected_texture_sets.keys())
+        hidden_objects: List[str] = []
+        shown_objects: List[str] = []
+        for set_name in all_sets:
+            visible = set_name in target_sets
+            objs = self.detected_texture_sets[set_name].get("objects", [])
+            for obj in objs:
+                if not cmds.objExists(obj):
+                    continue
+                try:
+                    cmds.setAttr(obj + ".visibility", visible)
+                    if visible:
+                        shown_objects.append(obj)
+                    else:
+                        hidden_objects.append(obj)
+                except RuntimeError:
+                    continue
+            self.texture_set_visibility[set_name] = visible
+        self._refresh_texture_sets_list_ui()
+        self._restore_texture_set_selection(target_sets)
+        self.log(
+            "INFO",
+            "TextureSets",
+            f"Isolate Selected Sets appliqué ({len(target_sets)} set(s) visibles, scope source: {self._scope_label(self.last_texture_scope or self._get_selected_scope_keys())}).",
+            list(sorted(set(shown_objects + hidden_objects)))[:200],
+        )
+
     def show_all_texture_sets(self) -> None:
         if not self.detected_texture_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set détecté. Lancez d'abord Run Texture Sets.")
@@ -912,26 +1012,24 @@ class HighPolyReviewTool:
             self.log("FAIL", "File", f"Fichier .ma introuvable: {path}")
             return
 
-        should_open = cmds.confirmDialog(
-            title="Open MA",
-            message="Ouvrir ce .ma et remplacer la scène courante ?",
-            button=["Open", "Cancel"],
-            defaultButton="Open",
-            cancelButton="Cancel",
-            dismissString="Cancel",
-        )
-        if should_open != "Open":
-            self.log("INFO", "File", "Ouverture .ma annulée.")
-            return
+        namespace = self.context["ma_namespace"]
+        if cmds.namespace(exists=namespace):
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError as exc:
+                self.log("WARNING", "File", f"Namespace {namespace} déjà présent (merge impossible): {exc}")
 
-        cmds.file(path, open=True, force=True)
+        before = set(cmds.ls(long=True) or [])
+        cmds.file(path, reference=True, type="mayaAscii", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        after = set(cmds.ls(long=True) or [])
+        new_nodes = sorted(list(after - before))
+        self.context["ma_nodes"] = new_nodes
+        self.context["ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
         self.paths["ma"] = path
-        self.log("INFO", "File", f"Scène .ma ouverte: {path}")
-
-        # Auto-detect roots right after scene open.
+        self.log("INFO", "File", f"MA référencé sous namespace '{namespace}' ({len(self.context['ma_meshes'])} meshes détectés).")
         self.auto_detect_scene_roots()
 
-    def load_fbx_into_scene(self, as_reference: bool = False) -> None:
+    def load_fbx_into_scene(self) -> None:
         path = self.paths.get("fbx", "")
         if not path:
             self.log("FAIL", "File", "Aucun fichier .fbx sélectionné (scan requis).")
@@ -949,12 +1047,7 @@ class HighPolyReviewTool:
                 self.log("WARNING", "FBX", f"Namespace {namespace} déjà présent, merge impossible automatiquement.")
 
         before = set(cmds.ls(long=True) or [])
-        if as_reference:
-            cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
-            mode_label = "referenced"
-        else:
-            cmds.file(path, i=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
-            mode_label = "imported"
+        cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
 
         after = set(cmds.ls(long=True) or [])
         new_nodes = sorted(list(after - before))
@@ -962,32 +1055,31 @@ class HighPolyReviewTool:
         self.context["fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
 
         self.paths["fbx"] = path
-        self.log("INFO", "FBX", f"FBX {mode_label} ({len(self.context['fbx_meshes'])} meshes détectés).")
+        self.log("INFO", "FBX", f"FBX référencé sous namespace '{namespace}' ({len(self.context['fbx_meshes'])} meshes détectés).")
 
     def compare_ma_vs_fbx(self) -> None:
-        high_root = self.get_high_root()
         review_ns = self.context["fbx_namespace"]
+        ma_ns = self.context["ma_namespace"]
 
-        ma_source_meshes = self._collect_mesh_transforms(root=high_root)
-        if not ma_source_meshes:
-            self.log("FAIL", "Compare", "Aucun mesh High détecté pour la comparaison.")
+        ma_meshes = self._collect_mesh_transforms_in_namespace(ma_ns)
+        if not ma_meshes:
+            self.log("FAIL", "Compare", f"Aucun mesh MA détecté dans le namespace '{ma_ns}'. Utilisez Load MA.")
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        ma_meshes = [m for m in ma_source_meshes if not self._node_is_in_namespace(m, review_ns)]
         fbx_meshes = self._collect_mesh_transforms_in_namespace(review_ns)
 
         if not fbx_meshes:
             self.log(
                 "WARNING",
                 "Compare",
-                f"Aucun mesh FBX détecté dans le namespace '{review_ns}'. Vérifiez l'action Reference FBX/Import FBX.",
+                f"Aucun mesh FBX détecté dans le namespace '{review_ns}'. Vérifiez l'action Reference FBX.",
             )
             self.set_check_status("ma_fbx_compared", "PENDING")
             return
 
         self.log("INFO", "Compare", f"MA meshes: {len(ma_meshes)} | FBX meshes: {len(fbx_meshes)}")
-        ma_by_key = {self._normalized_relative_mesh_key(m, high_root): self._mesh_data_signature(m, high_root) for m in ma_meshes}
+        ma_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in ma_meshes}
         fbx_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in fbx_meshes}
 
         ma_keys = set(ma_by_key.keys())
@@ -1000,6 +1092,7 @@ class HighPolyReviewTool:
         topo_mismatch: List[str] = []
         hierarchy_mismatch: List[str] = []
         spatial_mismatch: List[str] = []
+        pivot_mismatch: List[str] = []
 
         for key in sorted(ma_keys & fbx_keys):
             ma_data = ma_by_key[key]
@@ -1016,6 +1109,14 @@ class HighPolyReviewTool:
             if ma_data["parent_path"] != fbx_data["parent_path"]:
                 hierarchy_mismatch.append(key)
                 details.append(f"hierarchy MA({ma_data['parent_path']}) != FBX({fbx_data['parent_path']})")
+
+            pivot_delta = self._vector_distance(ma_data["pivot_world"], fbx_data["pivot_world"])
+            pivot_tol = 0.001
+            if pivot_delta > pivot_tol:
+                pivot_mismatch.append(key)
+                details.append(f"pivotΔ={pivot_delta:.5f} (tol={pivot_tol:.5f})")
+
+            translate_delta = self._vector_distance(ma_data["translate_world"], fbx_data["translate_world"])
             ma_center = self._mesh_center_world(ma_data["path"])
             fbx_center = self._mesh_center_world(fbx_data["path"])
             ma_dims = self._mesh_bbox_dims_world(ma_data["path"])
@@ -1025,12 +1126,14 @@ class HighPolyReviewTool:
             dim_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
             center_tol = max(0.001, dim_ref * 0.01)
             dim_tol = max(0.001, dim_ref * 0.01)
-            if center_delta > center_tol or dim_delta > dim_tol:
+            translate_tol = max(0.001, dim_ref * 0.01)
+            if center_delta > center_tol or dim_delta > dim_tol or translate_delta > translate_tol:
                 spatial_mismatch.append(key)
                 details.append(
                     "spatial "
                     f"centerΔ={center_delta:.5f} (tol={center_tol:.5f}), "
-                    f"bboxΔ={dim_delta:.5f} (tol={dim_tol:.5f})"
+                    f"bboxΔ={dim_delta:.5f} (tol={dim_tol:.5f}), "
+                    f"translateΔ={translate_delta:.5f} (tol={translate_tol:.5f})"
                 )
             if details:
                 mismatch_items.append(f"{key} -> " + " | ".join(details))
@@ -1075,13 +1178,15 @@ class HighPolyReviewTool:
             self.log("FAIL", "Compare", f"Différences d'UV détectées (counts/sets/shells): {len(uv_mismatch)}", [ma_by_key[k]["path"] for k in uv_mismatch][:200])
         if hierarchy_mismatch:
             self.log("WARNING", "Compare", f"Différences de hiérarchie/path détectées: {len(hierarchy_mismatch)}", [ma_by_key[k]["path"] for k in hierarchy_mismatch][:200])
+        if pivot_mismatch:
+            self.log("FAIL", "Compare", f"Différences de pivot détectées: {len(pivot_mismatch)}", [ma_by_key[k]["path"] for k in pivot_mismatch][:200])
         if spatial_mismatch:
             self.log(
                 "FAIL",
                 "Compare",
                 (
                     f"Différences de positionnement spatial détectées: {len(spatial_mismatch)}. "
-                    "Possible asset exploded vs non exploded."
+                    "Possible exploded vs non exploded, ou placement incohérent."
                 ),
                 [ma_by_key[k]["path"] for k in spatial_mismatch][:200],
             )
@@ -1095,7 +1200,7 @@ class HighPolyReviewTool:
         self.last_scanned_namespaces = user_ns[:]
 
         if not user_ns:
-            self.log("INFO", "Namespace", "Aucun namespace indésirable détecté (fbxReview ignoré volontairement).")
+            self.log("INFO", "Namespace", "Aucun namespace indésirable détecté (High_FBX_File/High_Ma_File ignorés volontairement).")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -1114,7 +1219,7 @@ class HighPolyReviewTool:
         removable = self.last_scanned_namespaces[:] or self._get_scan_namespaces()
         removable = [ns for ns in removable if not self._is_allowed_namespace(ns)]
         if not removable:
-            self.log("INFO", "Namespace", "Aucun namespace à supprimer (fbxReview préservé).")
+            self.log("INFO", "Namespace", "Aucun namespace à supprimer (High_FBX_File/High_Ma_File préservés).")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -1140,30 +1245,33 @@ class HighPolyReviewTool:
                 self.log("WARNING", "Namespace", f"Suppression impossible pour {ns}: {err}")
             self.set_check_status("no_namespaces", "FAIL")
         else:
-            self.log("INFO", "Namespace", "Suppression des namespaces indésirables terminée (fbxReview conservé).")
+            self.log("INFO", "Namespace", "Suppression des namespaces indésirables terminée (High_FBX_File/High_Ma_File conservés).")
             self.set_check_status("no_namespaces", "OK")
         self.last_scanned_namespaces = self._get_scan_namespaces()
 
     def check_placeholder_match(self) -> None:
+        scope_keys = self._get_selected_scope_keys()
         placeholder = self.get_placeholder_root()
-        high = self.get_high_root()
-
         if not placeholder or not cmds.objExists(placeholder):
             self.log("FAIL", "Placeholder", "Placeholder root invalide/non détecté.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
-        if not high or not cmds.objExists(high):
-            self.log("FAIL", "Placeholder", "High root invalide/non détecté.")
+
+        _, per_scope = self._resolve_scope_meshes(scope_keys)
+        target_scope_keys = [k for k in scope_keys if k != "placeholder"]
+        target_meshes = sorted(set([m for k in target_scope_keys for m in per_scope.get(k, [])]))
+        if not target_meshes:
+            self.log("FAIL", "Placeholder", "Aucune cible High trouvée dans le scope sélectionné.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
         p_bb = cmds.exactWorldBoundingBox(placeholder)
-        h_bb = cmds.exactWorldBoundingBox(high)
+        h_bb = cmds.exactWorldBoundingBox(target_meshes)
         p_dim = (p_bb[3] - p_bb[0], p_bb[4] - p_bb[1], p_bb[5] - p_bb[2])
         h_dim = (h_bb[3] - h_bb[0], h_bb[4] - h_bb[1], h_bb[5] - h_bb[2])
 
         p_piv = cmds.xform(placeholder, q=True, ws=True, rotatePivot=True)
-        h_piv = cmds.xform(high, q=True, ws=True, rotatePivot=True)
+        h_piv = self._bbox_center(h_bb)
 
         ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
 
@@ -1175,26 +1283,36 @@ class HighPolyReviewTool:
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance_percent = max(0.0, float(tolerance_percent))
         tolerance = tolerance_percent / 100.0
-        ratio_deviation_percent = [abs(r - 1.0) * 100.0 for r in ratio if r != 0.0]
-        max_deviation = max(ratio_deviation_percent) if ratio_deviation_percent else 0.0
+        axis_names = ["X", "Y", "Z"]
+        axis_deviation_percent = [(abs(r - 1.0) * 100.0) if r != 0.0 else 100.0 for r in ratio]
+        max_deviation = max(axis_deviation_percent) if axis_deviation_percent else 0.0
+        mean_deviation = (sum(axis_deviation_percent) / float(len(axis_deviation_percent))) if axis_deviation_percent else 0.0
+        total_dims = max(sum(abs(v) for v in p_dim), 1e-6)
+        weighted_deviation = sum(axis_deviation_percent[i] * (abs(p_dim[i]) / total_dims) for i in range(3))
 
-        self.log("INFO", "Placeholder", f"Écart détecté: {max_deviation:.2f}%")
+        self.log("INFO", "Placeholder", f"Scope utilisé: {self._scope_label(scope_keys)}")
+        for idx, axis in enumerate(axis_names):
+            self.log("INFO", "Placeholder", f"Écart axe {axis}: {axis_deviation_percent[idx]:.2f}%")
+        self.log("INFO", "Placeholder", f"Écart maximal: {max_deviation:.2f}%")
+        self.log("INFO", "Placeholder", f"Écart moyen: {mean_deviation:.2f}%")
+        self.log("INFO", "Placeholder", f"Écart pondéré (dimensions): {weighted_deviation:.2f}%")
         self.log("INFO", "Placeholder", f"Seuil autorisé: {tolerance_percent:.2f}%")
         if all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0):
             self.log("INFO", "Placeholder", "Résultat: OK (proportions dans le seuil).")
             self.set_check_status("placeholder_checked", "OK")
         else:
-            self.log("WARNING", "Placeholder", "Résultat: Fail (proportions hors seuil). Vérifier visuellement.", [placeholder, high])
+            self.log("WARNING", "Placeholder", "Résultat: Fail (proportions hors seuil). Vérifier l'axe en écart max.", [placeholder] + target_meshes[:150])
             self.set_check_status("placeholder_checked", "PENDING")
 
     def run_topology_checks(self) -> None:
-        high_root = self.get_high_root()
-        meshes = self._collect_mesh_transforms(root=high_root)
+        scope_keys = self._get_selected_scope_keys()
+        meshes, _ = self._resolve_scope_meshes(scope_keys)
         if not meshes:
             self.log("FAIL", "Topology", "Aucun mesh trouvé pour les checks topologie.")
             self.set_check_status("topology_checked", "FAIL")
             return
 
+        self.log("INFO", "Topology", f"Scope utilisé: {self._scope_label(scope_keys)}")
         self.log("INFO", "Topology", f"Meshes analysés: {len(meshes)}")
 
         fail_count = 0
@@ -1305,7 +1423,8 @@ class HighPolyReviewTool:
             self.log("WARNING", "Topology", f"Instances détectées: {len(set(instances))} mesh(es).", list(set(instances)))
             warn_count += 1
 
-        if high_root:
+        high_root = self.get_high_root()
+        if high_root and "high_ma" in scope_keys:
             descendants = cmds.listRelatives(high_root, allDescendents=True, fullPath=True) or []
             non_mesh_desc = [d for d in descendants if cmds.nodeType(d) not in ("transform", "mesh")]
             if non_mesh_desc:
@@ -1330,8 +1449,9 @@ class HighPolyReviewTool:
             self.set_check_status("topology_checked", "FAIL")
 
     def analyze_texture_sets(self, mode: str = "combined") -> None:
+        scope_keys = self._get_selected_scope_keys()
+        meshes, _ = self._resolve_scope_meshes(scope_keys)
         high_root = self.get_high_root()
-        meshes = self._collect_mesh_transforms(root=high_root)
         if not meshes:
             self.log("FAIL", "TextureSets", "Aucun mesh trouvé pour l'analyse texture sets.")
             self.set_check_status("texture_sets_analyzed", "FAIL")
@@ -1341,6 +1461,8 @@ class HighPolyReviewTool:
         mode = (mode or "combined").lower().strip()
         include_material = mode in {"combined", "material", "materials"}
         include_groups = mode in {"combined", "groups", "group"}
+        if "all_mesh" in scope_keys and "all_incl_mat" not in scope_keys:
+            include_material = False
 
         mat_to_meshes: Dict[str, List[str]] = {}
         if include_material:
@@ -1374,10 +1496,15 @@ class HighPolyReviewTool:
                     "objects": sorted(set(mat_meshes)),
                 }
 
-        if include_groups and high_root and cmds.objExists(high_root):
-            direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
-            for child in direct_children:
-                child_meshes = self._collect_mesh_transforms(root=child)
+        if include_groups:
+            direct_children = [m for m in meshes if cmds.listRelatives(m, parent=True, fullPath=True)]
+            grouped: Dict[str, List[str]] = {}
+            for mesh in direct_children:
+                parent = cmds.listRelatives(mesh, parent=True, fullPath=True) or []
+                if not parent:
+                    continue
+                grouped.setdefault(parent[0], []).append(mesh)
+            for child, child_meshes in grouped.items():
                 if child_meshes:
                     key = f"GRP::{self._short_name(child)}"
                     display_name = self._clean_texture_set_display_name(self._short_name(child), high_root)
@@ -1404,12 +1531,14 @@ class HighPolyReviewTool:
             data["objects"] = unique_meshes
 
         self.detected_texture_sets = detected
+        self.last_texture_scope = scope_keys[:]
         self.texture_set_visibility = {k: self.texture_set_visibility.get(k, True) for k in self.detected_texture_sets.keys()}
         for set_key in self.detected_texture_sets:
             self.texture_set_visibility.setdefault(set_key, True)
         self._refresh_texture_sets_list_ui()
 
         mode_label = {"combined": "matériaux + groupes", "groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
+        self.log("INFO", "TextureSets", f"Scope utilisé: {self._scope_label(scope_keys)}")
         self.log("INFO", "TextureSets", f"Texture sets détectés ({mode_label}): {len(self.detected_texture_sets)}")
         self.log("INFO", "TextureSets", f"Total High root: {total_quads} quads")
         for set_key in sorted(self.detected_texture_sets.keys()):
@@ -1437,12 +1566,13 @@ class HighPolyReviewTool:
             self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
 
     def check_vertex_colors(self) -> None:
-        high_root = self.get_high_root()
-        meshes = self._collect_mesh_transforms(root=high_root)
+        scope_keys = self._get_selected_scope_keys()
+        meshes, _ = self._resolve_scope_meshes(scope_keys)
         if not meshes:
             self.log("FAIL", "VertexColor", "Aucun mesh trouvé pour le check vertex colors.")
             self.set_check_status("vertex_colors_checked", "FAIL")
             return
+        self.log("INFO", "VertexColor", f"Scope utilisé: {self._scope_label(scope_keys)}")
 
         with_vc = []
         without_vc = []
@@ -1486,8 +1616,8 @@ class HighPolyReviewTool:
             self.set_check_status("vertex_colors_checked", "OK")
 
     def display_vertex_colors(self) -> None:
-        selected = cmds.ls(selection=True, long=True, type="transform") or []
-        targets = selected if selected else self._collect_mesh_transforms(root=None)
+        scope_keys = self._get_selected_scope_keys()
+        targets, _ = self._resolve_scope_meshes(scope_keys)
         if not targets:
             self.log("WARNING", "VertexColor", "Aucun objet cible pour l'affichage des vertex colors.")
             return
@@ -1505,12 +1635,11 @@ class HighPolyReviewTool:
                     continue
 
         cmds.polyOptions(colorShadedDisplay=True)
-        scope = "sélection" if selected else "toute la scène (meshes détectés)"
-        self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({scope}).", list(sorted(set(shown)))[:150])
+        self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({self._scope_label(scope_keys)}).", list(sorted(set(shown)))[:150])
 
     def hide_vertex_colors(self) -> None:
-        selected = cmds.ls(selection=True, long=True, type="transform") or []
-        targets = selected if selected else self._collect_mesh_transforms(root=None)
+        scope_keys = self._get_selected_scope_keys()
+        targets, _ = self._resolve_scope_meshes(scope_keys)
         if not targets:
             self.log("WARNING", "VertexColor", "Aucun objet cible pour masquer les vertex colors.")
             return
@@ -1527,8 +1656,7 @@ class HighPolyReviewTool:
                 except RuntimeError:
                     continue
 
-        scope = "sélection" if selected else "toute la scène (meshes détectés)"
-        self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(set(hidden))} objet(s) ({scope}).", list(sorted(set(hidden)))[:150])
+        self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(set(hidden))} objet(s) ({self._scope_label(scope_keys)}).", list(sorted(set(hidden)))[:150])
 
     def isolate_meshes_without_vertex_color(self) -> None:
         high_root = self.get_high_root()
