@@ -5,7 +5,7 @@ High Poly Review Assistant (Maya)
 Production-oriented review helper for outsourcing High Poly deliveries.
 
 Usage in Maya Script Editor (Python tab):
-    import maya_highpoly_review.Outsource_Review_Script as ors
+    import Maya_Outsource_Review_Script.Outsource_Review_Script as ors
     ors.show_outsource_review_tool()
 """
 
@@ -21,7 +21,11 @@ import maya.cmds as cmds
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
-WINDOW_TITLE = "Outsource Review Script - High Poly v1"
+WINDOW_TITLE = "Outsource Review Script - High Poly v2"
+ROOT_SUFFIXES = {
+    "high": "_high",
+    "placeholder": "_placeholder",
+}
 
 
 @dataclass
@@ -41,8 +45,19 @@ class HighPolyReviewTool:
         self.result_index_to_objects: Dict[int, List[str]] = {}
 
         self.paths = {
+            "root": "",
             "ma": "",
             "fbx": "",
+        }
+
+        self.detected_files: Dict[str, List[str]] = {
+            "ma": [],
+            "fbx": [],
+        }
+
+        self.detected_roots: Dict[str, List[str]] = {
+            "high": [],
+            "placeholder": [],
         }
 
         self.context = {
@@ -61,6 +76,16 @@ class HighPolyReviewTool:
             "vertex_colors_checked": {"status": "PENDING", "mode": "AUTO"},
         }
 
+        self.check_ui_map = {
+            "ma_fbx_compared": "check_ma_fbx",
+            "no_namespaces": "check_ns",
+            "placeholder_checked": "check_placeholder",
+            "design_kit_checked": "check_design",
+            "topology_checked": "check_topology",
+            "texture_sets_analyzed": "check_texturesets",
+            "vertex_colors_checked": "check_vtx",
+        }
+
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
         if cmds.window(WINDOW_NAME, exists=True):
@@ -70,115 +95,156 @@ class HighPolyReviewTool:
             WINDOW_NAME,
             title=WINDOW_TITLE,
             sizeable=True,
-            widthHeight=(760, 780),
+            widthHeight=(860, 900),
+            minimizeButton=True,
+            maximizeButton=True,
         )
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
 
+        root_layout = cmds.formLayout()
+        self.ui["scroll"] = cmds.scrollLayout(
+            childResizable=True,
+            horizontalScrollBarThickness=12,
+            verticalScrollBarThickness=12,
+        )
+
+        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_file_section()
         self._build_checklist_section()
-        self._build_action_section()
+        self._build_global_action_section()
         self._build_results_section()
         self._build_notes_section()
         self._build_summary_section()
 
+        cmds.setParent(root_layout)
+        cmds.formLayout(
+            root_layout,
+            edit=True,
+            attachForm=[
+                (self.ui["scroll"], "top", 0),
+                (self.ui["scroll"], "left", 0),
+                (self.ui["scroll"], "right", 0),
+                (self.ui["scroll"], "bottom", 0),
+            ],
+        )
+
+        cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
         cmds.showWindow(self.ui["window"])
+
+        if cmds.window(self.ui["window"], exists=True):
+            cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
+
+        self.refresh_detected_file_labels()
+        self.refresh_root_ui()
         self.refresh_summary()
         self.refresh_checklist_ui()
 
     def _build_file_section(self) -> None:
-        cmds.frameLayout(label="1) Fichiers & contexte", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.frameLayout(label="1) Importation / Fichiers", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
 
-        self.ui["ma_field"] = cmds.textFieldButtonGrp(
-            label="High .ma",
+        self.ui["root_field"] = cmds.textFieldButtonGrp(
+            label="Root Folder",
             buttonLabel="Browse",
             adjustableColumn=2,
-            buttonCommand=lambda *_: self.pick_file("ma", "Maya ASCII (*.ma)")
+            buttonCommand=lambda *_: self.pick_root_folder(),
         )
+        cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder())
+
+        cmds.separator(style="in")
+
+        cmds.text(label="MA Found", align="left")
+        self.ui["ma_status"] = cmds.text(label="Aucun .ma détecté", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["ma_menu"])
         cmds.button(label="Load MA (Open Scene)", height=28, command=lambda *_: self.load_ma_scene())
+        cmds.setParent("..")
 
-        self.ui["fbx_field"] = cmds.textFieldButtonGrp(
-            label="High .fbx",
-            buttonLabel="Browse",
-            adjustableColumn=2,
-            buttonCommand=lambda *_: self.pick_file("fbx", "FBX (*.fbx)")
-        )
+        cmds.text(label="FBX Found", align="left")
+        self.ui["fbx_status"] = cmds.text(label="Aucun .fbx détecté", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
+        self.ui["fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("fbx"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["fbx_menu"])
+        cmds.button(label="Import FBX", height=28, command=lambda *_: self.load_fbx_into_scene(as_reference=False))
+        cmds.button(label="Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene(as_reference=True))
+        cmds.setParent("..")
 
-        self.ui["fbx_mode"] = cmds.radioButtonGrp(
-            label="FBX mode",
-            labelArray2=["Import", "Reference"],
-            numberOfRadioButtons=2,
-            select=1,
-        )
-        cmds.button(label="Import / Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene())
+        cmds.separator(style="in")
 
-        self.ui["placeholder_field"] = cmds.textFieldButtonGrp(
-            label="Placeholder root",
-            buttonLabel="From Selection",
-            adjustableColumn=2,
-            buttonCommand=lambda *_: self.set_field_from_selection("placeholder_field")
-        )
-        self.ui["high_field"] = cmds.textFieldButtonGrp(
-            label="High root",
-            buttonLabel="From Selection",
-            adjustableColumn=2,
-            buttonCommand=lambda *_: self.set_field_from_selection("high_field")
-        )
+        cmds.text(label="Detected High Root", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
+        self.ui["high_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("high"))
+        cmds.menuItem(label="High root non détecté", parent=self.ui["high_root_menu"])
+        cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("high"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Placeholder Root", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
+        self.ui["placeholder_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("placeholder"))
+        cmds.menuItem(label="Placeholder root non détecté", parent=self.ui["placeholder_root_menu"])
+        cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("placeholder"))
+        cmds.setParent("..")
 
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_checklist_section(self) -> None:
-        cmds.frameLayout(label="2) Checklist High Poly", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        cmds.frameLayout(label="2) Checks", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
 
-        self.ui["check_ma_fbx"] = cmds.checkBox(label="[AUTO] MA vs FBX comparés", value=False, enable=False)
-        self.ui["check_ns"] = cmds.checkBox(label="[AUTO] Pas de namespaces", value=False, enable=False)
-        self.ui["check_placeholder"] = cmds.checkBox(label="[AUTO] Placeholder vérifié", value=False, enable=False)
+        self._build_check_row("check_ma_fbx", "MA vs FBX", self.compare_ma_vs_fbx)
+        self._build_check_row("check_ns", "Pas de namespaces", self.scan_namespaces)
+        self._build_check_row("check_placeholder", "Placeholder match", self.check_placeholder_match)
+        self._build_check_row("check_topology", "Topologie", self.run_topology_checks)
+        self._build_check_row("check_texturesets", "Texture sets", self.analyze_texture_sets)
+        self._build_check_row("check_vtx", "Vertex Colors", self.check_vertex_colors)
+
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui["check_design"] = cmds.checkBox(
-            label="[MANUAL] Design kit vérifié manuellement",
+            label="",
             value=False,
             changeCommand=lambda *_: self.on_manual_design_toggle(),
         )
-        self.ui["check_topology"] = cmds.checkBox(label="[AUTO] Topologie vérifiée", value=False, enable=False)
-        self.ui["check_texturesets"] = cmds.checkBox(label="[AUTO] Texture sets analysés", value=False, enable=False)
-        self.ui["check_vtx"] = cmds.checkBox(label="[AUTO] Vertex colors vérifiées", value=False, enable=False)
+        cmds.text(label="Design kit review (manuel)", align="left")
+        cmds.button(label="Mark as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
+        cmds.setParent("..")
 
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_action_section(self) -> None:
-        cmds.frameLayout(label="3) Actions", collapsable=True, collapse=False, marginWidth=8)
+    def _build_check_row(self, check_key_ui: str, label: str, command) -> None:
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label=label, align="left")
+        cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
+        cmds.setParent("..")
+
+    def _build_global_action_section(self) -> None:
+        cmds.frameLayout(label="3) Actions globales", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3)
-        cmds.button(label="Compare MA vs FBX", height=28, command=lambda *_: self.compare_ma_vs_fbx())
-        cmds.button(label="Scan Namespaces", height=28, command=lambda *_: self.scan_namespaces())
-        cmds.button(label="Check Placeholder Match", height=28, command=lambda *_: self.check_placeholder_match())
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
+        cmds.button(label="Run All High Checks", height=30, command=lambda *_: self.run_all_checks())
+        cmds.button(label="Clear Results", height=30, command=lambda *_: self.clear_results())
+        cmds.button(label="Save Review Report", height=30, command=lambda *_: self.save_report())
         cmds.setParent("..")
 
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3)
-        cmds.button(label="Run Topology Checks", height=28, command=lambda *_: self.run_topology_checks())
-        cmds.button(label="Analyze Texture Sets", height=28, command=lambda *_: self.analyze_texture_sets())
-        cmds.button(label="Check Vertex Colors", height=28, command=lambda *_: self.check_vertex_colors())
-        cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=4)
-        cmds.button(label="Run All High Checks", height=28, command=lambda *_: self.run_all_checks())
-        cmds.button(label="Isolate meshes without VColor", height=28, command=lambda *_: self.isolate_meshes_without_vertex_color())
-        cmds.button(label="Clear Results", height=28, command=lambda *_: self.clear_results())
-        cmds.button(label="Save Review Report", height=28, command=lambda *_: self.save_report())
-        cmds.setParent("..")
+        cmds.button(
+            label="Isolate meshes without VColor",
+            height=28,
+            command=lambda *_: self.isolate_meshes_without_vertex_color(),
+        )
 
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_results_section(self) -> None:
-        cmds.frameLayout(label="4) Résultats", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self.ui["results_list"] = cmds.textScrollList(
             allowMultiSelection=False,
-            height=230,
+            height=260,
             selectCommand=lambda *_: self.on_result_selected(),
         )
         cmds.text(label="Tip: clique une ligne liée à des objets pour sélectionner en scène.")
@@ -186,9 +252,9 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_notes_section(self) -> None:
-        cmds.frameLayout(label="5) Notes de review", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="5) Notes", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self.ui["notes_field"] = cmds.scrollField(wordWrap=True, height=120, text="")
+        self.ui["notes_field"] = cmds.scrollField(wordWrap=True, height=130, text="")
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -247,16 +313,7 @@ class HighPolyReviewTool:
         cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
 
     def refresh_checklist_ui(self) -> None:
-        mapping = {
-            "ma_fbx_compared": "check_ma_fbx",
-            "no_namespaces": "check_ns",
-            "placeholder_checked": "check_placeholder",
-            "design_kit_checked": "check_design",
-            "topology_checked": "check_topology",
-            "texture_sets_analyzed": "check_texturesets",
-            "vertex_colors_checked": "check_vtx",
-        }
-        for key, ctrl in mapping.items():
+        for key, ctrl in self.check_ui_map.items():
             is_checked = self.check_states[key]["status"] == "OK"
             cmds.checkBox(self.ui[ctrl], e=True, value=is_checked)
 
@@ -265,13 +322,6 @@ class HighPolyReviewTool:
     def set_check_status(self, check_key: str, status: str) -> None:
         self.check_states[check_key]["status"] = status
         self.refresh_checklist_ui()
-
-    def set_field_from_selection(self, field_name: str) -> None:
-        sel = cmds.ls(selection=True, long=True) or []
-        if not sel:
-            self.log("WARNING", "Selection", "Aucun objet sélectionné.")
-            return
-        cmds.textFieldButtonGrp(self.ui[field_name], e=True, text=sel[0])
 
     def on_result_selected(self) -> None:
         selected = cmds.textScrollList(self.ui["results_list"], q=True, selectIndexedItem=True) or []
@@ -288,22 +338,214 @@ class HighPolyReviewTool:
         if checked:
             self.log("INFO", "DesignKit", "Validation design kit cochée manuellement.")
 
-    def pick_file(self, file_key: str, file_filter: str) -> None:
-        picked = cmds.fileDialog2(fileFilter=file_filter, dialogStyle=2, fileMode=1)
+    def mark_design_reviewed(self) -> None:
+        cmds.checkBox(self.ui["check_design"], e=True, value=True)
+        self.on_manual_design_toggle()
+
+    def _set_root_folder(self, path: str) -> None:
+        self.paths["root"] = path
+        cmds.textFieldButtonGrp(self.ui["root_field"], e=True, text=path)
+
+    def pick_root_folder(self) -> None:
+        picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Asset Delivery Root Folder")
         if not picked:
             return
-        self.paths[file_key] = picked[0]
-        cmds.textFieldButtonGrp(self.ui[f"{file_key}_field"], e=True, text=picked[0])
+        self._set_root_folder(picked[0])
+
+    def _clear_option_menu(self, menu: str) -> None:
+        items = cmds.optionMenu(menu, q=True, itemListLong=True) or []
+        for item in items:
+            cmds.deleteUI(item)
+
+    def _populate_file_option_menu(self, file_key: str) -> None:
+        menu = self.ui[f"{file_key}_menu"]
+        files = self.detected_files[file_key]
+        self._clear_option_menu(menu)
+
+        if not files:
+            cmds.menuItem(label="-- Aucun --", parent=menu)
+            self.paths[file_key] = ""
+            return
+
+        for p in files:
+            cmds.menuItem(label=os.path.basename(p), parent=menu)
+
+        self.paths[file_key] = files[0]
+        cmds.optionMenu(menu, edit=True, select=1)
+
+    def refresh_detected_file_labels(self) -> None:
+        ma_count = len(self.detected_files["ma"])
+        fbx_count = len(self.detected_files["fbx"])
+
+        ma_text = "Aucun .ma détecté"
+        if ma_count == 1:
+            ma_text = f"1 fichier détecté: {os.path.basename(self.detected_files['ma'][0])}"
+        elif ma_count > 1:
+            ma_text = f"{ma_count} fichiers .ma détectés. Sélectionnez le bon fichier."
+
+        fbx_text = "Aucun .fbx détecté"
+        if fbx_count == 1:
+            fbx_text = f"1 fichier détecté: {os.path.basename(self.detected_files['fbx'][0])}"
+        elif fbx_count > 1:
+            fbx_text = f"{fbx_count} fichiers .fbx détectés. Sélectionnez le bon fichier."
+
+        cmds.text(self.ui["ma_status"], e=True, label=ma_text)
+        cmds.text(self.ui["fbx_status"], e=True, label=fbx_text)
+
+    def on_detected_file_selected(self, file_key: str) -> None:
+        files = self.detected_files[file_key]
+        if not files:
+            self.paths[file_key] = ""
+            return
+
+        index = cmds.optionMenu(self.ui[f"{file_key}_menu"], q=True, select=True) - 1
+        index = max(0, min(index, len(files) - 1))
+        self.paths[file_key] = files[index]
+        self.log("INFO", "Scan", f"{file_key.upper()} sélectionné: {self.paths[file_key]}")
+
+    def scan_delivery_folder(self) -> None:
+        root = cmds.textFieldButtonGrp(self.ui["root_field"], q=True, text=True).strip()
+        if not root:
+            self.log("FAIL", "Scan", "Aucun dossier racine renseigné.")
+            return
+        if not os.path.isdir(root):
+            self.log("FAIL", "Scan", f"Dossier introuvable: {root}")
+            return
+
+        self._set_root_folder(root)
+        found_ma: List[str] = []
+        found_fbx: List[str] = []
+
+        for dirpath, _, filenames in os.walk(root):
+            for filename in filenames:
+                name_lower = filename.lower()
+                full_path = os.path.join(dirpath, filename)
+                if name_lower.endswith("_high.ma"):
+                    found_ma.append(full_path)
+                elif name_lower.endswith("_high.fbx"):
+                    found_fbx.append(full_path)
+
+        found_ma.sort()
+        found_fbx.sort()
+
+        self.detected_files["ma"] = found_ma
+        self.detected_files["fbx"] = found_fbx
+
+        self._populate_file_option_menu("ma")
+        self._populate_file_option_menu("fbx")
+        self.refresh_detected_file_labels()
+
+        if not found_ma:
+            self.log("WARNING", "Scan", "Aucun fichier *_HIGH.ma ou *_high.ma trouvé.")
+        else:
+            self.log("INFO", "Scan", f"{len(found_ma)} fichier(s) .ma High détecté(s).")
+
+        if not found_fbx:
+            self.log("WARNING", "Scan", "Aucun fichier *_HIGH.fbx ou *_high.fbx trouvé.")
+        else:
+            self.log("INFO", "Scan", f"{len(found_fbx)} fichier(s) .fbx High détecté(s).")
+
+    def _populate_root_option_menu(self, root_key: str) -> None:
+        menu = self.ui[f"{root_key}_root_menu"]
+        items = self.detected_roots[root_key]
+        self._clear_option_menu(menu)
+
+        if not items:
+            label = "High root non détecté" if root_key == "high" else "Placeholder root non détecté"
+            cmds.menuItem(label=label, parent=menu)
+            return
+
+        for node in items:
+            cmds.menuItem(label=node, parent=menu)
+
+        cmds.optionMenu(menu, edit=True, select=1)
+
+    def refresh_root_ui(self) -> None:
+        self._populate_root_option_menu("high")
+        self._populate_root_option_menu("placeholder")
+
+    def on_root_selection_changed(self, root_key: str) -> None:
+        root = self.get_detected_root(root_key)
+        if root:
+            self.log("INFO", "RootDetect", f"{root_key.capitalize()} root sélectionné: {root}")
+
+    def get_detected_root(self, root_key: str) -> Optional[str]:
+        candidates = self.detected_roots[root_key]
+        if not candidates:
+            return None
+
+        index = cmds.optionMenu(self.ui[f"{root_key}_root_menu"], q=True, select=True) - 1
+        index = max(0, min(index, len(candidates) - 1))
+        root = candidates[index]
+        return root if cmds.objExists(root) else None
+
+    def set_root_from_selection(self, root_key: str) -> None:
+        sel = cmds.ls(selection=True, long=True) or []
+        if not sel:
+            self.log("WARNING", "Selection", "Aucun objet sélectionné.")
+            return
+
+        current = self.detected_roots[root_key][:]
+        if sel[0] not in current:
+            current.insert(0, sel[0])
+        self.detected_roots[root_key] = current
+        self.refresh_root_ui()
+        self.log("INFO", "RootDetect", f"{root_key.capitalize()} root défini depuis la sélection: {sel[0]}")
+
+    def _candidate_root_score(self, node: str) -> Tuple[int, int, int]:
+        descendants = cmds.listRelatives(node, allDescendents=True, fullPath=True) or []
+        mesh_shapes = cmds.listRelatives(node, allDescendents=True, fullPath=True, type="mesh") or []
+        mesh_shapes = [m for m in mesh_shapes if not cmds.getAttr(m + ".intermediateObject")]
+
+        depth = node.count("|")
+        has_shape = 1 if (cmds.listRelatives(node, shapes=True, noIntermediate=True, fullPath=True) or []) else 0
+        return (len(mesh_shapes), len(descendants) + has_shape, -depth)
+
+    def _find_root_candidates(self, suffix_key: str) -> List[str]:
+        suffix = ROOT_SUFFIXES[suffix_key]
+        transforms = cmds.ls(type="transform", long=True) or []
+        valid = []
+        for node in transforms:
+            short_name = node.split("|")[-1]
+            if short_name.lower().endswith(suffix):
+                valid.append(node)
+
+        valid = sorted(valid, key=lambda x: self._candidate_root_score(x), reverse=True)
+        return valid
+
+    def auto_detect_scene_roots(self) -> None:
+        high_candidates = self._find_root_candidates("high")
+        placeholder_candidates = self._find_root_candidates("placeholder")
+
+        self.detected_roots["high"] = high_candidates
+        self.detected_roots["placeholder"] = placeholder_candidates
+        self.refresh_root_ui()
+
+        if high_candidates:
+            self.log("INFO", "RootDetect", f"High root détecté: {high_candidates[0]}")
+            if len(high_candidates) > 1:
+                self.log("WARNING", "RootDetect", f"Plusieurs High roots détectés ({len(high_candidates)}). Sélection manuelle possible.")
+        else:
+            self.log("WARNING", "RootDetect", "High root non détecté.")
+
+        if placeholder_candidates:
+            self.log("INFO", "RootDetect", f"Placeholder root détecté: {placeholder_candidates[0]}")
+            if len(placeholder_candidates) > 1:
+                self.log("WARNING", "RootDetect", f"Plusieurs Placeholder roots détectés ({len(placeholder_candidates)}). Sélection manuelle possible.")
+        else:
+            self.log("WARNING", "RootDetect", "Placeholder root non détecté.")
 
     def get_high_root(self) -> Optional[str]:
-        root = cmds.textFieldButtonGrp(self.ui["high_field"], q=True, text=True).strip()
-        if root and cmds.objExists(root):
-            return root
-        return None
+        return self.get_detected_root("high")
+
+    def get_placeholder_root(self) -> Optional[str]:
+        return self.get_detected_root("placeholder")
 
     def _collect_mesh_transforms(self, root: Optional[str] = None) -> List[str]:
         if root and cmds.objExists(root):
             shapes = cmds.listRelatives(root, allDescendents=True, fullPath=True, type="mesh") or []
+            direct_shape = cmds.listRelatives(root, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+            shapes.extend(direct_shape)
         else:
             shapes = cmds.ls(type="mesh", long=True) or []
 
@@ -330,9 +572,9 @@ class HighPolyReviewTool:
 
     # ----------------------------- Actions -----------------------------
     def load_ma_scene(self) -> None:
-        path = cmds.textFieldButtonGrp(self.ui["ma_field"], q=True, text=True).strip()
+        path = self.paths.get("ma", "")
         if not path:
-            self.log("FAIL", "File", "Aucun chemin .ma renseigné.")
+            self.log("FAIL", "File", "Aucun fichier .ma sélectionné (scan requis).")
             return
         if not os.path.isfile(path):
             self.log("FAIL", "File", f"Fichier .ma introuvable: {path}")
@@ -354,16 +596,18 @@ class HighPolyReviewTool:
         self.paths["ma"] = path
         self.log("INFO", "File", f"Scène .ma ouverte: {path}")
 
-    def load_fbx_into_scene(self) -> None:
-        path = cmds.textFieldButtonGrp(self.ui["fbx_field"], q=True, text=True).strip()
+        # Auto-detect roots right after scene open.
+        self.auto_detect_scene_roots()
+
+    def load_fbx_into_scene(self, as_reference: bool = False) -> None:
+        path = self.paths.get("fbx", "")
         if not path:
-            self.log("FAIL", "File", "Aucun chemin .fbx renseigné.")
+            self.log("FAIL", "File", "Aucun fichier .fbx sélectionné (scan requis).")
             return
         if not os.path.isfile(path):
             self.log("FAIL", "File", f"Fichier .fbx introuvable: {path}")
             return
 
-        mode = cmds.radioButtonGrp(self.ui["fbx_mode"], q=True, select=True)
         namespace = self.context["fbx_namespace"]
 
         if cmds.namespace(exists=namespace):
@@ -373,12 +617,12 @@ class HighPolyReviewTool:
                 self.log("WARNING", "FBX", f"Namespace {namespace} déjà présent, merge impossible automatiquement.")
 
         before = set(cmds.ls(long=True) or [])
-        if mode == 1:
-            cmds.file(path, i=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
-            mode_label = "imported"
-        else:
+        if as_reference:
             cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
             mode_label = "referenced"
+        else:
+            cmds.file(path, i=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+            mode_label = "imported"
 
         after = set(cmds.ls(long=True) or [])
         new_nodes = sorted(list(after - before))
@@ -435,15 +679,15 @@ class HighPolyReviewTool:
         self.set_check_status("no_namespaces", "FAIL")
 
     def check_placeholder_match(self) -> None:
-        placeholder = cmds.textFieldButtonGrp(self.ui["placeholder_field"], q=True, text=True).strip()
-        high = cmds.textFieldButtonGrp(self.ui["high_field"], q=True, text=True).strip()
+        placeholder = self.get_placeholder_root()
+        high = self.get_high_root()
 
         if not placeholder or not cmds.objExists(placeholder):
-            self.log("FAIL", "Placeholder", "Placeholder root invalide/non défini.")
+            self.log("FAIL", "Placeholder", "Placeholder root invalide/non détecté.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
         if not high or not cmds.objExists(high):
-            self.log("FAIL", "Placeholder", "High root invalide/non défini.")
+            self.log("FAIL", "Placeholder", "High root invalide/non détecté.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
@@ -460,7 +704,7 @@ class HighPolyReviewTool:
         self.log("INFO", "Placeholder", f"Placeholder dims: {tuple(round(v, 4) for v in p_dim)}")
         self.log("INFO", "Placeholder", f"High dims: {tuple(round(v, 4) for v in h_dim)}")
         self.log("INFO", "Placeholder", f"Scale ratio High/Placeholder: {tuple(round(v, 4) for v in ratio)}")
-        self.log("INFO", "Placeholder", f"Pivot delta: {tuple(round(h_piv[i]-p_piv[i], 4) for i in range(3))}")
+        self.log("INFO", "Placeholder", f"Pivot delta: {tuple(round(h_piv[i] - p_piv[i], 4) for i in range(3))}")
 
         tolerance = 0.05
         if all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0):
@@ -544,7 +788,6 @@ class HighPolyReviewTool:
             self.log("WARNING", "Topology", f"Noms dupliqués potentiels (paths DAG ambigus): {len(duplicate_short_names)}", duplicate_short_names[:100])
             warn_count += 1
 
-        # Non-mesh nodes under high root
         if high_root:
             descendants = cmds.listRelatives(high_root, allDescendents=True, fullPath=True) or []
             non_mesh_desc = [d for d in descendants if cmds.nodeType(d) not in ("transform", "mesh")]
