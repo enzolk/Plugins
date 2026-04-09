@@ -233,7 +233,7 @@ class HighPolyReviewTool:
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_texturesets"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Texture sets", align="left")
-        cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets(mode="combined"))
+        cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets(mode="materials"))
         cmds.button(label="Run Texture Sets (Groups Method)", height=26, command=lambda *_: self.analyze_texture_sets(mode="groups"))
         cmds.setParent("..")
 
@@ -692,6 +692,14 @@ class HighPolyReviewTool:
         short_without_ns = self._strip_namespaces_from_name(short_name)
         return self._contains_placeholder_token(short_without_ns) or self._contains_placeholder_token(short_name)
 
+    def _path_contains_placeholder_token(self, node: str) -> bool:
+        for segment in [seg for seg in node.split("|") if seg]:
+            if self._contains_placeholder_token(self._strip_namespaces_from_name(segment)):
+                return True
+            if self._contains_placeholder_token(segment):
+                return True
+        return False
+
     def _normalized_segments(self, path: str) -> List[str]:
         return [self._strip_namespaces_from_name(seg) for seg in path.split("|") if seg]
 
@@ -916,7 +924,9 @@ class HighPolyReviewTool:
             parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
             if parent:
                 parent_transform = parent[0]
-                if exclude_placeholder_named and self._is_placeholder_node(parent_transform):
+                if exclude_placeholder_named and (
+                    self._is_placeholder_node(parent_transform) or self._path_contains_placeholder_token(parent_transform)
+                ):
                     placeholder_excluded.append(parent_transform)
                     continue
                 transforms.append(parent_transform)
@@ -1278,19 +1288,33 @@ class HighPolyReviewTool:
         review_ns = self.context["fbx_namespace"]
         ma_ns = self.context["ma_namespace"]
 
-        ma_meshes, ma_placeholder_excluded = self._collect_mesh_transforms_in_namespace(ma_ns, exclude_placeholder_named=True)
-        if not ma_meshes:
+        ma_meshes_all, _ = self._collect_mesh_transforms_in_namespace(ma_ns)
+        if not ma_meshes_all:
             self.log("FAIL", "Compare", f"Aucun mesh MA détecté dans le namespace '{ma_ns}'. Utilisez Load MA.")
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        if ma_placeholder_excluded:
+        ma_placeholder_ignored = sorted([m for m in ma_meshes_all if self._path_contains_placeholder_token(m)])
+        ma_placeholder_set = set(ma_placeholder_ignored)
+        ma_meshes = sorted([m for m in ma_meshes_all if m not in ma_placeholder_set])
+
+        if ma_placeholder_ignored:
             self.log(
                 "INFO",
                 "Compare",
-                f"Priorité Placeholder: {len(ma_placeholder_excluded)} mesh(es) sous {ma_ns} exclus du comparatif MA (nom contenant placeholder).",
-                ma_placeholder_excluded[:80],
+                (
+                    f"Priorité Placeholder: {len(ma_placeholder_ignored)} mesh(es) sous {ma_ns} "
+                    "classés Placeholder et ignorés dans le compare MA vs FBX."
+                ),
+                ma_placeholder_ignored[:80],
             )
+            for mesh in ma_placeholder_ignored[:60]:
+                self.log(
+                    "INFO",
+                    "Compare",
+                    f"Objet présent dans MA mais absent du FBX (attendu) : {mesh} | Classé Placeholder | Ignoré.",
+                    [mesh],
+                )
 
         fbx_meshes, _ = self._collect_mesh_transforms_in_namespace(review_ns)
 
@@ -1303,7 +1327,14 @@ class HighPolyReviewTool:
             self.set_check_status("ma_fbx_compared", "PENDING")
             return
 
-        self.log("INFO", "Compare", f"MA meshes: {len(ma_meshes)} | FBX meshes: {len(fbx_meshes)}")
+        self.log(
+            "INFO",
+            "Compare",
+            (
+                f"MA meshes comparés (hors Placeholder): {len(ma_meshes)} | "
+                f"FBX meshes: {len(fbx_meshes)} | Placeholder MA ignorés: {len(ma_placeholder_ignored)}"
+            ),
+        )
         ma_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in ma_meshes}
         fbx_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in fbx_meshes}
 
@@ -1713,7 +1744,7 @@ class HighPolyReviewTool:
         else:
             self.set_check_status("topology_checked", "FAIL")
 
-    def analyze_texture_sets(self, mode: str = "combined") -> None:
+    def analyze_texture_sets(self, mode: str = "materials") -> None:
         resolution = self.resolve_scope_targets()
         scope_keys = resolution["scope_keys"]
         meshes = resolution["meshes"]
@@ -1750,9 +1781,9 @@ class HighPolyReviewTool:
                 self.log("INFO", "TextureSets", line)
 
         detected: Dict[str, Dict[str, object]] = {}
-        mode = (mode or "combined").lower().strip()
-        include_material = mode in {"combined", "material", "materials"}
-        include_groups = mode in {"combined", "groups", "group"}
+        mode = (mode or "materials").lower().strip()
+        include_material = mode in {"material", "materials"}
+        include_groups = mode in {"groups", "group"}
         if "all_mesh" in scope_keys and "all_incl_mat" not in scope_keys:
             include_material = False
 
@@ -1834,7 +1865,7 @@ class HighPolyReviewTool:
             self.texture_set_visibility.setdefault(set_key, True)
         self._refresh_texture_sets_list_ui()
 
-        mode_label = {"combined": "matériaux + groupes", "groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
+        mode_label = {"groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
         if group_method_log_lines:
             for line in group_method_log_lines:
                 self.log("INFO", "TextureSets", line)
@@ -1868,7 +1899,7 @@ class HighPolyReviewTool:
         else:
             self.set_check_status("texture_sets_analyzed", "OK" if self.detected_texture_sets else "PENDING")
         if not self.detected_texture_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set exploitable détecté via matériaux/groupes.")
+            self.log("WARNING", "TextureSets", "Aucun texture set exploitable détecté via la méthode active.")
         else:
             self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
 
@@ -2007,7 +2038,7 @@ class HighPolyReviewTool:
         self.scan_namespaces()
         self.check_placeholder_match()
         self.run_topology_checks()
-        self.analyze_texture_sets()
+        self.analyze_texture_sets(mode="materials")
         self.check_vertex_colors()
         self.log("INFO", "RunAll", "Checks High Poly terminés.")
 
