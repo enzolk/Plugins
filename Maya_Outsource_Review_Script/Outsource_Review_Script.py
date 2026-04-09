@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-High Poly Review Assistant (Maya)
----------------------------------
-Production-oriented review helper for outsourcing High Poly deliveries.
+Outsource Review Script (Maya)
+-----------------------------
+Pipeline-aware review assistant for outsourcing deliveries.
 
 Usage in Maya Script Editor (Python tab):
     import Maya_Outsource_Review_Script.Outsource_Review_Script as ors
@@ -19,2248 +19,991 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 
-
-WINDOW_NAME = "highPolyReviewAssistantWin"
+WINDOW_NAME = "outsourceReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
-MAX_UI_TEXT_LENGTH = 90
-MAX_MENU_LABEL_LENGTH = 72
-ROOT_SUFFIXES = {
-    "high": "_high",
-    "placeholder": "_placeholder",
-}
+MAX_UI_TEXT_LENGTH = 110
 PLACEHOLDER_TOKEN = "placeholder"
 
 
 @dataclass
 class ReviewIssue:
-    level: str  # INFO, WARNING, FAIL
+    level: str
     category: str
     message: str
     objects: List[str] = field(default_factory=list)
 
 
-class HighPolyReviewTool:
-    """Main tool class for High Poly outsourcing review."""
+@dataclass
+class TabConfig:
+    key: str
+    label: str
+    subtitle: str
+    files: List[Tuple[str, str, str]]  # (key, label, type)
+    roots: List[Tuple[str, str, str]]  # (key, label, suffix_kind)
+    checks: List[Tuple[str, str, str]]  # (key, label, handler)
+    run_all_label: str
 
+
+class OutsourceReviewTool:
     def __init__(self) -> None:
-        self.ui = {}
-        self.result_items: List[ReviewIssue] = []
-        self.result_index_to_objects: Dict[int, List[str]] = {}
-
-        self.paths = {
-            "root": "",
-            "ma": "",
-            "fbx": "",
-        }
-
-        self.detected_files: Dict[str, List[str]] = {
-            "ma": [],
-            "fbx": [],
-        }
-
-        self.detected_roots: Dict[str, List[str]] = {
-            "high": [],
-            "placeholder": [],
-        }
-
-        self.context = {
-            "fbx_namespace": "High_FBX_File",
-            "ma_namespace": "High_Ma_File",
-            "fbx_nodes": [],
-            "fbx_meshes": [],
-            "ma_nodes": [],
-            "ma_meshes": [],
-        }
-
-        self.check_states = {
-            "ma_fbx_compared": {"status": "PENDING", "mode": "AUTO"},
-            "no_namespaces": {"status": "PENDING", "mode": "AUTO"},
-            "placeholder_checked": {"status": "PENDING", "mode": "AUTO"},
-            "design_kit_checked": {"status": "PENDING", "mode": "MANUAL"},
-            "topology_checked": {"status": "PENDING", "mode": "AUTO"},
-            "texture_sets_analyzed": {"status": "PENDING", "mode": "AUTO"},
-            "vertex_colors_checked": {"status": "PENDING", "mode": "AUTO"},
-        }
-
-        self.check_ui_map = {
-            "ma_fbx_compared": "check_ma_fbx",
-            "no_namespaces": "check_ns",
-            "placeholder_checked": "check_placeholder",
-            "design_kit_checked": "check_design",
-            "topology_checked": "check_topology",
-            "texture_sets_analyzed": "check_texturesets",
-            "vertex_colors_checked": "check_vtx",
-        }
-
-        self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
-        self.texture_set_visibility: Dict[str, bool] = {}
-        self.texture_set_label_to_key: Dict[str, str] = {}
-        self.texture_set_section_headers: Set[str] = set()
+        self.ui: Dict[str, Any] = {}
+        self.tab_ui: Dict[str, Dict[str, Any]] = {}
+        self.tab_issues: Dict[str, List[ReviewIssue]] = {}
+        self.tab_result_index_to_objects: Dict[str, Dict[int, List[str]]] = {}
+        self.tab_paths: Dict[str, Dict[str, str]] = {}
+        self.tab_detected_files: Dict[str, Dict[str, List[str]]] = {}
+        self.tab_detected_roots: Dict[str, Dict[str, List[str]]] = {}
+        self.tab_check_states: Dict[str, Dict[str, str]] = {}
+        self.tab_texture_sets: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self.tab_texture_map: Dict[str, Dict[str, str]] = {}
         self.last_scanned_namespaces: List[str] = []
-        self.scope_keys = ["placeholder", "high_fbx", "high_ma", "all_mesh", "all_incl_mat"]
-        self.scope_labels = {
-            "placeholder": "Placeholder",
-            "high_fbx": "High FBX",
-            "high_ma": "High MA",
-            "all_mesh": "ALL (Mesh only)",
-            "all_incl_mat": "ALL (Incl. Mat.)",
-        }
-        self.last_texture_scope: List[str] = []
 
-    # --------------------------- UI BUILD ---------------------------
+        self.reference_namespaces = {
+            "high_ma": "High_Ma_File",
+            "high_fbx": "High_FBX_File",
+            "low_fbx": "Low_FBX_File",
+            "bakescene": "BakeScene_File",
+            "final_ma": "Final_MA_File",
+        }
+
+        self.tab_configs = self._build_tab_configs()
+        for tab_key, cfg in self.tab_configs.items():
+            self.tab_issues[tab_key] = []
+            self.tab_result_index_to_objects[tab_key] = {}
+            self.tab_paths[tab_key] = {"root": ""}
+            self.tab_detected_files[tab_key] = {file_key: [] for file_key, _, _ in cfg.files}
+            self.tab_detected_roots[tab_key] = {root_key: [] for root_key, _, _ in cfg.roots}
+            self.tab_texture_sets[tab_key] = {}
+            self.tab_texture_map[tab_key] = {}
+            self.tab_check_states[tab_key] = {check_key: "PENDING" for check_key, _, _ in cfg.checks}
+
+    def _build_tab_configs(self) -> Dict[str, TabConfig]:
+        return {
+            "high": TabConfig(
+                key="high",
+                label="High",
+                subtitle="Validation du High livré + cohérence avec le High de la Bake Scene",
+                files=[
+                    ("high_ma", "High MA Found", "ma"),
+                    ("high_fbx", "High FBX Found", "fbx"),
+                    ("bakescene", "Bake Scene Found", "ma"),
+                ],
+                roots=[
+                    ("high_ma_root", "Detected High MA Root", "high"),
+                    ("high_fbx_root", "Detected High FBX Root", "high"),
+                    ("bake_high_root", "Detected BakeScene High", "high"),
+                    ("placeholder_root", "Detected Placeholder Root", "placeholder"),
+                ],
+                checks=[
+                    ("compare", "Compare High MA vs High FBX vs BakeScene High", "check_compare"),
+                    ("namespaces", "Pas de namespaces", "check_namespaces"),
+                    ("placeholder", "Placeholder Match", "check_placeholder"),
+                    ("topology", "Topology", "check_topology"),
+                    ("tex_mats", "Texture Sets (Materials)", "check_texture_sets_materials"),
+                    ("tex_groups", "Texture Sets (Groups Method)", "check_texture_sets_groups"),
+                    ("vcolor", "Vertex Colors", "check_vertex_colors"),
+                    ("design", "Design Kit Review (manuel)", "check_design_manual"),
+                ],
+                run_all_label="Run All High Checks",
+            ),
+            "low": TabConfig(
+                key="low",
+                label="Low",
+                subtitle="Validation du Low livré + cohérence avec BakeScene Low et Final MA",
+                files=[
+                    ("low_fbx", "Low FBX Found", "fbx"),
+                    ("bakescene", "Bake Scene Found", "ma"),
+                    ("final_ma", "Final Asset MA Found", "ma"),
+                ],
+                roots=[
+                    ("low_fbx_root", "Detected Low FBX Root", "low"),
+                    ("bake_low_root", "Detected BakeScene Low", "low"),
+                    ("final_root", "Detected Final Asset Root", "final"),
+                    ("placeholder_root", "Detected Placeholder Root", "placeholder"),
+                ],
+                checks=[
+                    ("compare", "Compare Low FBX vs BakeScene Low vs Final MA", "check_compare"),
+                    ("namespaces", "Pas de namespaces", "check_namespaces"),
+                    ("placeholder", "Placeholder Match", "check_placeholder"),
+                    ("topology", "Topology", "check_topology"),
+                    ("uv01", "UV01 Setup for Bake", "check_uv01"),
+                    ("uv02", "UV02 Setup for Texture 20.48", "check_uv02"),
+                    ("tex_mats", "Texture Sets (Materials)", "check_texture_sets_materials"),
+                    ("tex_groups", "Texture Sets (Groups Method)", "check_texture_sets_groups"),
+                    ("vcolor", "Vertex Colors", "check_vertex_colors"),
+                    ("design", "Design Kit Review (manuel)", "check_design_manual"),
+                ],
+                run_all_label="Run All Low Checks",
+            ),
+            "bakescene": TabConfig(
+                key="bakescene",
+                label="Bake Scene",
+                subtitle="Validation de la scène de bake et cohérence avec les livrables High / Low",
+                files=[
+                    ("bakescene", "Bake Scene Found", "ma"),
+                    ("high_ma", "High MA Found", "ma"),
+                    ("high_fbx", "High FBX Found", "fbx"),
+                    ("low_fbx", "Low FBX Found", "fbx"),
+                ],
+                roots=[
+                    ("bake_high_root", "Detected Bake High Root", "high"),
+                    ("bake_low_root", "Detected Bake Low Root", "low"),
+                    ("ref_high_root", "Detected Ref High Root", "high"),
+                    ("ref_low_root", "Detected Ref Low Root", "low"),
+                ],
+                checks=[
+                    ("compare", "Bake Scene = mêmes fichiers que High / Low livrés", "check_compare"),
+                    ("namespaces", "Pas de namespaces", "check_namespaces"),
+                    ("presence", "High / Low bien présents dans la scène", "check_bake_presence"),
+                    ("align", "High / Low bien alignés pour bake", "check_bake_alignment"),
+                    ("topology", "Topology", "check_topology"),
+                    ("uv01", "UV01 Setup for Bake", "check_uv01"),
+                    ("uv02", "UV02 Setup for Texture 20.48", "check_uv02"),
+                    ("tex_mats", "Texture Sets (Materials)", "check_texture_sets_materials"),
+                    ("tex_groups", "Texture Sets (Groups Method)", "check_texture_sets_groups"),
+                    ("vcolor", "Vertex Colors", "check_vertex_colors"),
+                    ("naming", "Naming Meshes + Mats", "check_naming_bake"),
+                ],
+                run_all_label="Run All Bake Scene Checks",
+            ),
+            "final": TabConfig(
+                key="final",
+                label="Final Asset",
+                subtitle="Validation du livrable final .ma + cohérence avec Low FBX et BakeScene Low",
+                files=[
+                    ("final_ma", "Final Asset MA Found", "ma"),
+                    ("low_fbx", "Low FBX Found", "fbx"),
+                    ("bakescene", "Bake Scene Found", "ma"),
+                ],
+                roots=[
+                    ("final_root", "Detected Final Root", "final"),
+                    ("low_fbx_root", "Detected Low FBX Root", "low"),
+                    ("bake_low_root", "Detected BakeScene Low", "low"),
+                ],
+                checks=[
+                    ("compare", "Compare Final MA vs Low FBX vs BakeScene Low", "check_compare"),
+                    ("namespaces", "Pas de namespaces", "check_namespaces"),
+                    ("naming", "Naming final sans suffix _low", "check_naming_final"),
+                    ("topology", "Topology", "check_topology"),
+                    ("uv01", "UV01 Setup for Bake", "check_uv01"),
+                    ("uv02", "UV02 Setup for Texture 20.48", "check_uv02"),
+                    ("tex_mats", "Texture Sets (Materials)", "check_texture_sets_materials"),
+                    ("tex_groups", "Texture Sets (Groups Method)", "check_texture_sets_groups"),
+                    ("vcolor", "Vertex Colors", "check_vertex_colors"),
+                ],
+                run_all_label="Run All Final Asset Checks",
+            ),
+        }
+
+    # ---------------- UI ----------------
     def build(self) -> None:
         if cmds.window(WINDOW_NAME, exists=True):
             cmds.deleteUI(WINDOW_NAME)
+        self.ui["window"] = cmds.window(WINDOW_NAME, title=WINDOW_TITLE, sizeable=True, widthHeight=(1200, 900))
+        root = cmds.formLayout()
+        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6)
+        self.ui["tabs"] = tabs
 
-        self.ui["window"] = cmds.window(
-            WINDOW_NAME,
-            title=WINDOW_TITLE,
-            sizeable=True,
-            widthHeight=(860, 900),
-            minimizeButton=True,
-            maximizeButton=True,
-        )
+        for tab_key, cfg in self.tab_configs.items():
+            child = cmds.scrollLayout(childResizable=True, horizontalScrollBarThickness=12, verticalScrollBarThickness=12)
+            col = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            self.tab_ui[tab_key] = {"root_col": col}
+            cmds.frameLayout(label=f"{cfg.label.upper()} REVIEW", collapsable=False, marginWidth=8)
+            cmds.columnLayout(adjustableColumn=True)
+            cmds.text(label=cfg.subtitle, align="left")
+            cmds.setParent("..")
+            cmds.setParent("..")
+            self._build_file_block(tab_key, cfg)
+            self._build_context_block(tab_key, cfg)
+            self._build_checks_block(tab_key, cfg)
+            self._build_texture_block(tab_key)
+            self._build_actions_block(tab_key, cfg)
+            self._build_results_block(tab_key)
+            self._build_notes_block(tab_key)
+            self._build_summary_block(tab_key)
+            cmds.setParent("..")
+            cmds.setParent(tabs)
+            cmds.tabLayout(tabs, edit=True, tabLabel=(child, cfg.label))
 
-        root_layout = cmds.formLayout()
-        self.ui["scroll"] = cmds.scrollLayout(
-            childResizable=True,
-            horizontalScrollBarThickness=12,
-            verticalScrollBarThickness=12,
-        )
-
-        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_file_section()
-        self._build_scope_section()
-        self._build_technical_checks_section()
-        self._build_texture_sets_section()
-        self._build_global_action_section()
-        self._build_results_section()
-        self._build_notes_section()
-        self._build_summary_section()
-
-        cmds.setParent(root_layout)
-        cmds.formLayout(
-            root_layout,
-            edit=True,
-            attachForm=[
-                (self.ui["scroll"], "top", 0),
-                (self.ui["scroll"], "left", 0),
-                (self.ui["scroll"], "right", 0),
-                (self.ui["scroll"], "bottom", 0),
-            ],
-        )
-
-        cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
+        cmds.formLayout(root, e=True, attachForm=[(tabs, "top", 0), (tabs, "left", 0), (tabs, "right", 0), (tabs, "bottom", 0)])
         cmds.showWindow(self.ui["window"])
+        self.refresh_all_ui()
 
-        if cmds.window(self.ui["window"], exists=True):
-            cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
-
-        self.refresh_detected_file_labels()
-        self.refresh_root_ui()
-        self.refresh_summary()
-        self.refresh_checklist_ui()
-
-    def _build_file_section(self) -> None:
-        cmds.frameLayout(label="1) Fichiers / Détection / Références", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-
-        self.ui["root_field"] = cmds.textFieldButtonGrp(
+    def _build_file_block(self, tab_key: str, cfg: TabConfig) -> None:
+        cmds.frameLayout(label="1) Fichiers / Détection", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
+        t = self.tab_ui[tab_key]
+        t["root_field"] = cmds.textFieldButtonGrp(
             label="Root Folder",
             buttonLabel="Browse",
             adjustableColumn=2,
-            buttonCommand=lambda *_: self.pick_root_folder(),
+            buttonCommand=lambda *_: self.pick_root_folder(tab_key),
         )
-        cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder())
-
+        cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder(tab_key))
         cmds.separator(style="in")
 
-        cmds.text(label="MA Found", align="left")
-        self.ui["ma_status"] = cmds.text(label="Aucun .ma détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["ma_menu"])
-        cmds.button(label="Load MA (Reference)", height=28, command=lambda *_: self.load_ma_scene())
-        cmds.setParent("..")
-
-        cmds.text(label="FBX Found", align="left")
-        self.ui["fbx_status"] = cmds.text(label="Aucun .fbx détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["fbx_menu"])
-        cmds.button(label="Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene())
-        cmds.setParent("..")
+        for file_key, file_label, file_type in cfg.files:
+            cmds.text(label=file_label, align="left")
+            t[f"{file_key}_status"] = cmds.text(label="Aucun fichier détecté", align="left")
+            cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+            t[f"{file_key}_menu"] = cmds.optionMenu(changeCommand=lambda *_f, tk=tab_key, fk=file_key: self.on_file_selected(tk, fk))
+            cmds.menuItem(label="-- Aucun --", parent=t[f"{file_key}_menu"])
+            label = "Reference MA" if file_type == "ma" else "Reference FBX"
+            cmds.button(label=label, height=26, command=lambda *_f, tk=tab_key, fk=file_key: self.reference_file(tk, fk))
+            cmds.setParent("..")
 
         cmds.separator(style="in")
-
-        cmds.text(label="Detected High Root", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
-        self.ui["high_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("high"))
-        cmds.menuItem(label="High root non détecté", parent=self.ui["high_root_menu"])
-        cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("high"))
-        cmds.setParent("..")
-
-        cmds.text(label="Detected Placeholder Root", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
-        self.ui["placeholder_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("placeholder"))
-        cmds.menuItem(label="Placeholder root non détecté", parent=self.ui["placeholder_root_menu"])
-        cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("placeholder"))
-        cmds.setParent("..")
+        for root_key, root_label, _ in cfg.roots:
+            cmds.text(label=root_label, align="left")
+            cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+            t[f"{root_key}_menu"] = cmds.optionMenu(changeCommand=lambda *_f, tk=tab_key, rk=root_key: self.on_root_selected(tk, rk))
+            cmds.menuItem(label="Root non détecté", parent=t[f"{root_key}_menu"])
+            cmds.button(label="Auto", height=24, command=lambda *_f, tk=tab_key: self.auto_detect_roots(tk))
+            cmds.button(label="From Sel", height=24, command=lambda *_f, tk=tab_key, rk=root_key: self.set_root_from_selection(tk, rk))
+            cmds.setParent("..")
 
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_technical_checks_section(self) -> None:
+    def _build_context_block(self, tab_key: str, cfg: TabConfig) -> None:
+        cmds.frameLayout(label="2) Contexte détecté", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True)
+        bullets = "\n".join([f"• {f[1].replace(' Found', '')}" for f in cfg.files])
+        self.tab_ui[tab_key]["context_text"] = cmds.text(label=f"Scope implicite actif :\n{bullets}", align="left")
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _build_checks_block(self, tab_key: str, cfg: TabConfig) -> None:
         cmds.frameLayout(label="3) Checks techniques", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-
-        self._build_check_row("check_ma_fbx", "Compare MA vs FBX", self.compare_ma_vs_fbx)
-
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Pas de namespaces", align="left")
-        cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
-        cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
-        cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
-        self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Placeholder match", align="left")
-        cmds.button(label="Run Placeholder match", height=26, command=lambda *_: self.check_placeholder_match())
-        cmds.text(label="Tolerance %", align="right")
-        self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
-        cmds.setParent("..")
-        self._build_check_row("check_topology", "Topology", self.run_topology_checks)
-        self._build_check_row("check_texturesets", "Texture Sets", lambda: self.analyze_texture_sets(mode="materials"))
-
-        cmds.rowLayout(
-            numberOfColumns=5,
-            adjustableColumn=2,
-            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)],
-        )
-        self.ui["check_vtx"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Vertex Colors", align="left")
-        cmds.button(label="Run Vertex Colors", height=26, command=lambda *_: self.check_vertex_colors())
-        cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
-        cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
-        cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_design"] = cmds.checkBox(
-            label="",
-            value=False,
-            changeCommand=lambda *_: self.on_manual_design_toggle(),
-        )
-        cmds.text(label="Design kit review (manuel)", align="left")
-        cmds.button(label="Mark as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
-        cmds.setParent("..")
-
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_scope_section(self) -> None:
-        cmds.frameLayout(label="2) Scope / Cibles", collapsable=True, collapse=False, marginWidth=8, marginHeight=6)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        cmds.text(
-            label="Choisissez une ou plusieurs cibles pour Placeholder / Topology / TextureSets / VertexColor.",
-            align="left",
-        )
-        self.ui["scope_checks"] = {}
-        cmds.separator(style="none", height=2)
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 10), (3, "both", 10)])
-        self.ui["scope_checks"]["placeholder"] = cmds.checkBox(label=self.scope_labels["placeholder"], value=False)
-        self.ui["scope_checks"]["high_fbx"] = cmds.checkBox(label=self.scope_labels["high_fbx"], value=True)
-        self.ui["scope_checks"]["high_ma"] = cmds.checkBox(label=self.scope_labels["high_ma"], value=True)
-        cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 10)])
-        self.ui["scope_checks"]["all_mesh"] = cmds.checkBox(label=self.scope_labels["all_mesh"], value=False)
-        self.ui["scope_checks"]["all_incl_mat"] = cmds.checkBox(label=self.scope_labels["all_incl_mat"], value=False)
+        t = self.tab_ui[tab_key]
+        t["check_boxes"] = {}
+        for check_key, label, handler in cfg.checks:
+            if check_key == "namespaces":
+                cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+                t["check_boxes"][check_key] = cmds.checkBox(label="", value=False, enable=False)
+                cmds.text(label=label, align="left")
+                cmds.button(label="Scan", height=24, command=lambda *_f, tk=tab_key: self.scan_namespaces(tk))
+                cmds.button(label="Remove", height=24, command=lambda *_f, tk=tab_key: self.remove_namespaces(tk))
+                cmds.setParent("..")
+                continue
+            if check_key == "placeholder":
+                cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)])
+                t["check_boxes"][check_key] = cmds.checkBox(label="", value=False, enable=False)
+                cmds.text(label=label, align="left")
+                cmds.button(label="Run", height=24, command=lambda *_f, tk=tab_key, hk=handler: self._run_handler(tk, hk))
+                cmds.text(label="Tolérance %", align="right")
+                t["placeholder_tol"] = cmds.floatField(value=7.0, minValue=0.0, precision=2, width=70)
+                cmds.setParent("..")
+                continue
+            if check_key == "vcolor":
+                cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)])
+                t["check_boxes"][check_key] = cmds.checkBox(label="", value=False, enable=False)
+                cmds.text(label=label, align="left")
+                cmds.button(label="Run", height=24, command=lambda *_f, tk=tab_key, hk=handler: self._run_handler(tk, hk))
+                cmds.button(label="Display", height=24, command=lambda *_f, tk=tab_key: self.display_vertex_colors(tk))
+                cmds.button(label="Hide", height=24, command=lambda *_f, tk=tab_key: self.hide_vertex_colors(tk))
+                cmds.setParent("..")
+                continue
+            if check_key == "design":
+                cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+                t["check_boxes"][check_key] = cmds.checkBox(label="", value=False, changeCommand=lambda *_f, tk=tab_key: self.check_design_manual(tk))
+                cmds.text(label=label, align="left")
+                cmds.button(label="Mark as Reviewed", height=24, command=lambda *_f, tk=tab_key: self.mark_design_reviewed(tk))
+                cmds.setParent("..")
+                continue
+            cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+            t["check_boxes"][check_key] = cmds.checkBox(label="", value=False, enable=False)
+            cmds.text(label=label, align="left")
+            cmds.button(label="Run", height=24, command=lambda *_f, tk=tab_key, hk=handler: self._run_handler(tk, hk))
+            cmds.setParent("..")
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_texture_sets_section(self) -> None:
+    def _build_texture_block(self, tab_key: str) -> None:
         cmds.frameLayout(label="4) Texture Sets / Contrôles visuels", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        cmds.button(label="Run Texture Sets", height=28, command=lambda *_: self.analyze_texture_sets(mode="materials"))
-        cmds.button(label="Run Texture Sets (Groups Method)", height=28, command=lambda *_: self.analyze_texture_sets(mode="groups"))
-        cmds.setParent("..")
-
-        cmds.text(
-            label="Liste des sets (sélection multiple possible) — séparée par source quand plusieurs scopes sont actifs.",
-            align="left",
-        )
-        self.ui["texture_sets_list"] = cmds.textScrollList(
-            allowMultiSelection=True,
-            height=180,
-            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
-        )
-
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
+        t = self.tab_ui[tab_key]
+        t["texture_list"] = cmds.textScrollList(allowMultiSelection=True, height=160)
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        cmds.button(label="Hide Selected Sets", height=26, command=lambda *_: self.set_texture_set_visibility(False, selected_only=True))
-        cmds.button(label="Show Selected Sets", height=26, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
-        cmds.button(label="Toggle Selected Sets", height=26, command=lambda *_: self.toggle_selected_texture_sets())
+        cmds.button(label="Hide Selected", height=24, command=lambda *_: self.set_texture_visibility(tab_key, False, True))
+        cmds.button(label="Show Selected", height=24, command=lambda *_: self.set_texture_visibility(tab_key, True, True))
+        cmds.button(label="Toggle Selected", height=24, command=lambda *_: self.toggle_selected_texture(tab_key))
         cmds.setParent("..")
-
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        cmds.button(label="Isolate Selected Sets", height=26, command=lambda *_: self.isolate_selected_texture_sets())
-        cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
-        cmds.setParent("..")
-
+        cmds.button(label="Isolate Selected", height=24, command=lambda *_: self.isolate_selected_texture(tab_key))
+        cmds.button(label="Show All", height=24, command=lambda *_: self.show_all_texture(tab_key))
         cmds.setParent("..")
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_check_row(self, check_key_ui: str, label: str, command) -> None:
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label=label, align="left")
-        cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
-        cmds.setParent("..")
-
-    def _build_global_action_section(self) -> None:
+    def _build_actions_block(self, tab_key: str, cfg: TabConfig) -> None:
         cmds.frameLayout(label="5) Actions globales", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
-        cmds.button(label="Run All High Checks", height=30, command=lambda *_: self.run_all_checks())
-        cmds.button(label="Clear Results", height=30, command=lambda *_: self.clear_results())
-        cmds.button(label="Save Review Report", height=30, command=lambda *_: self.save_report())
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.button(label=cfg.run_all_label, height=30, command=lambda *_: self.run_all_checks(tab_key))
+        cmds.button(label="Clear Results", height=30, command=lambda *_: self.clear_results(tab_key))
+        cmds.button(label="Save Report", height=30, command=lambda *_: self.save_report(tab_key))
         cmds.setParent("..")
-
-        cmds.button(
-            label="Isolate meshes without VColor",
-            height=28,
-            command=lambda *_: self.isolate_meshes_without_vertex_color(),
-        )
-
+        cmds.button(label="Isolate Meshes Without VColor", height=26, command=lambda *_: self.isolate_meshes_without_vcolor(tab_key))
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_results_section(self) -> None:
+    def _build_results_block(self, tab_key: str) -> None:
         cmds.frameLayout(label="6) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self.ui["results_list"] = cmds.textScrollList(
-            allowMultiSelection=False,
-            height=260,
-            selectCommand=lambda *_: self.on_result_selected(),
-        )
-        cmds.text(label="Tip: clique une ligne liée à des objets pour sélectionner en scène.")
+        cmds.columnLayout(adjustableColumn=True)
+        self.tab_ui[tab_key]["results"] = cmds.textScrollList(allowMultiSelection=False, height=220, selectCommand=lambda *_: self.on_result_selected(tab_key))
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_notes_section(self) -> None:
+    def _build_notes_block(self, tab_key: str) -> None:
         cmds.frameLayout(label="7) Notes", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self.ui["notes_field"] = cmds.scrollField(wordWrap=True, height=130, text="")
+        cmds.columnLayout(adjustableColumn=True)
+        self.tab_ui[tab_key]["notes"] = cmds.scrollField(wordWrap=True, height=110, text="")
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_summary_section(self) -> None:
-        cmds.frameLayout(label="8) Résumé global", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self.ui["summary_text"] = cmds.text(label="Pending checks", align="left", backgroundColor=(0.22, 0.22, 0.22))
+    def _build_summary_block(self, tab_key: str) -> None:
+        cmds.frameLayout(label="8) Résumé", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True)
+        self.tab_ui[tab_key]["summary"] = cmds.text(label="Pending checks", align="left", backgroundColor=(0.22, 0.22, 0.22))
         cmds.setParent("..")
         cmds.setParent("..")
 
-    # ------------------------- Utility methods -------------------------
-    def _ellipsize_middle(self, text: str, max_length: int = MAX_UI_TEXT_LENGTH) -> str:
-        if len(text) <= max_length:
+    # ---------------- shared helpers ----------------
+    def refresh_all_ui(self) -> None:
+        for tab_key in self.tab_configs:
+            self.refresh_file_labels(tab_key)
+            self.refresh_root_ui(tab_key)
+            self.refresh_checklist_ui(tab_key)
+
+    def _short(self, node: str) -> str:
+        return node.split("|")[-1]
+
+    def _strip_ns(self, name: str) -> str:
+        return name.split(":")[-1]
+
+    def _ellipsize(self, text: str, max_len: int = MAX_UI_TEXT_LENGTH) -> str:
+        if len(text) <= max_len:
             return text
-        if max_length < 8:
-            return text[:max_length]
-        keep = (max_length - 3) // 2
-        return f"{text[:keep]}...{text[-(max_length - 3 - keep):]}"
+        keep = (max_len - 3) // 2
+        return f"{text[:keep]}...{text[-(max_len - 3 - keep):]}"
 
-    def _format_node_menu_label(self, node: str) -> str:
-        short = self._short_name(node)
-        if len(node) <= MAX_MENU_LABEL_LENGTH:
-            return node
-        hint_max = max(12, MAX_MENU_LABEL_LENGTH - len(short) - 5)
-        tail_hint = self._ellipsize_middle(node, max_length=hint_max)
-        return f"{short} | {tail_hint}"
+    def _is_placeholder_name(self, text: str) -> bool:
+        return PLACEHOLDER_TOKEN in text.lower()
 
-    def log(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
+    def _check_done(self, tab_key: str, check_key: str, ok: bool) -> None:
+        self.tab_check_states[tab_key][check_key] = "OK" if ok else "PENDING"
+        self.refresh_checklist_ui(tab_key)
+
+    def log(self, tab_key: str, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
-        self.result_items.append(issue)
+        self.tab_issues[tab_key].append(issue)
+        idx = cmds.textScrollList(self.tab_ui[tab_key]["results"], q=True, numberOfItems=True) or 0
+        prefix = {"INFO": "[INFO]", "WARNING": "[WARN]", "FAIL": "[FAIL]"}.get(level, "[INFO]")
+        display = self._ellipsize(f"{prefix} {category}: {message}")
+        cmds.textScrollList(self.tab_ui[tab_key]["results"], e=True, append=display)
+        self.tab_result_index_to_objects[tab_key][idx + 1] = issue.objects
 
-        prefix = {
-            "INFO": "[INFO]",
-            "WARNING": "[WARN]",
-            "FAIL": "[FAIL]",
-        }.get(level, "[INFO]")
+    def clear_results(self, tab_key: str) -> None:
+        self.tab_issues[tab_key] = []
+        self.tab_result_index_to_objects[tab_key] = {}
+        cmds.textScrollList(self.tab_ui[tab_key]["results"], e=True, removeAll=True)
+        self.refresh_checklist_ui(tab_key)
 
-        display = self._ellipsize_middle(f"{prefix} {category}: {message}", max_length=MAX_UI_TEXT_LENGTH)
-        idx = cmds.textScrollList(self.ui["results_list"], q=True, numberOfItems=True) or 0
-        cmds.textScrollList(self.ui["results_list"], e=True, append=display)
-        self.result_index_to_objects[idx + 1] = issue.objects
+    def refresh_checklist_ui(self, tab_key: str) -> None:
+        check_boxes = self.tab_ui[tab_key].get("check_boxes", {})
+        for check_key, cb in check_boxes.items():
+            cmds.checkBox(cb, e=True, value=self.tab_check_states[tab_key].get(check_key) == "OK")
+        self.refresh_summary(tab_key)
 
-    def clear_results(self) -> None:
-        self.result_items = []
-        self.result_index_to_objects = {}
-        cmds.textScrollList(self.ui["results_list"], e=True, removeAll=True)
-        self.refresh_summary()
-
-    def refresh_summary(self) -> None:
-        ok_count = sum(1 for c in self.check_states.values() if c["status"] == "OK")
-        warn_count = sum(1 for i in self.result_items if i.level == "WARNING")
-        fail_count = sum(1 for i in self.result_items if i.level == "FAIL")
-        pending = sum(1 for c in self.check_states.values() if c["status"] == "PENDING")
-
-        if fail_count > 0:
-            color = (0.35, 0.18, 0.18)
-            global_state = "FAIL"
-        elif warn_count > 0:
-            color = (0.35, 0.28, 0.16)
-            global_state = "WARNING"
+    def refresh_summary(self, tab_key: str) -> None:
+        checks = self.tab_check_states[tab_key]
+        ok_count = sum(1 for v in checks.values() if v == "OK")
+        pending = sum(1 for v in checks.values() if v == "PENDING")
+        warns = sum(1 for i in self.tab_issues[tab_key] if i.level == "WARNING")
+        fails = sum(1 for i in self.tab_issues[tab_key] if i.level == "FAIL")
+        if fails:
+            state, color = "FAIL", (0.35, 0.18, 0.18)
+        elif warns:
+            state, color = "WARNING", (0.35, 0.28, 0.16)
         elif pending == 0:
-            color = (0.16, 0.32, 0.20)
-            global_state = "OK"
+            state, color = "OK", (0.16, 0.32, 0.20)
         else:
-            color = (0.22, 0.22, 0.22)
-            global_state = "IN PROGRESS"
+            state, color = "IN PROGRESS", (0.22, 0.22, 0.22)
+        text = f"Global: {state} | Checks OK: {ok_count}/{len(checks)} | Warnings: {warns} | Fails: {fails} | Pending: {pending}"
+        cmds.text(self.tab_ui[tab_key]["summary"], e=True, label=text, backgroundColor=color)
 
-        text = (
-            f"Global: {global_state} | Checks OK: {ok_count}/{len(self.check_states)} | "
-            f"Warnings: {warn_count} | Fails: {fail_count} | Pending: {pending}"
-        )
-        cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
-
-    def refresh_checklist_ui(self) -> None:
-        for key, ctrl in self.check_ui_map.items():
-            is_checked = self.check_states[key]["status"] == "OK"
-            cmds.checkBox(self.ui[ctrl], e=True, value=is_checked)
-
-        self.refresh_summary()
-
-    def set_check_status(self, check_key: str, status: str) -> None:
-        self.check_states[check_key]["status"] = status
-        self.refresh_checklist_ui()
-
-    def on_result_selected(self) -> None:
-        selected = cmds.textScrollList(self.ui["results_list"], q=True, selectIndexedItem=True) or []
+    def on_result_selected(self, tab_key: str) -> None:
+        selected = cmds.textScrollList(self.tab_ui[tab_key]["results"], q=True, selectIndexedItem=True) or []
         if not selected:
             return
-        idx = selected[0]
-        targets = [o for o in self.result_index_to_objects.get(idx, []) if cmds.objExists(o)]
-        if targets:
-            cmds.select(targets, replace=True)
+        nodes = [n for n in self.tab_result_index_to_objects[tab_key].get(selected[0], []) if cmds.objExists(n)]
+        if nodes:
+            cmds.select(nodes, r=True)
 
-    def on_manual_design_toggle(self) -> None:
-        checked = cmds.checkBox(self.ui["check_design"], q=True, value=True)
-        self.set_check_status("design_kit_checked", "OK" if checked else "PENDING")
-        if checked:
-            self.log("INFO", "DesignKit", "Validation design kit cochée manuellement.")
-
-    def mark_design_reviewed(self) -> None:
-        cmds.checkBox(self.ui["check_design"], e=True, value=True)
-        self.on_manual_design_toggle()
-
-    def _set_root_folder(self, path: str) -> None:
-        self.paths["root"] = path
-        cmds.textFieldButtonGrp(self.ui["root_field"], e=True, text=path)
-
-    def pick_root_folder(self) -> None:
-        picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Asset Delivery Root Folder")
+    # ---------------- file scan/reference ----------------
+    def pick_root_folder(self, tab_key: str) -> None:
+        picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Delivery Root Folder")
         if not picked:
             return
-        self._set_root_folder(picked[0])
+        self.tab_paths[tab_key]["root"] = picked[0]
+        cmds.textFieldButtonGrp(self.tab_ui[tab_key]["root_field"], e=True, text=picked[0])
 
-    def _clear_option_menu(self, menu: str) -> None:
-        items = cmds.optionMenu(menu, q=True, itemListLong=True) or []
-        for item in items:
+    def _detect_file_role(self, filename_lower: str) -> Optional[str]:
+        if filename_lower.endswith(".ma") and "bakescene" in filename_lower:
+            return "bakescene"
+        if filename_lower.endswith(".ma") and "finalasset" in filename_lower:
+            return "final_ma"
+        if filename_lower.endswith(".ma") and "high" in filename_lower and "bakescene" not in filename_lower:
+            return "high_ma"
+        if filename_lower.endswith(".fbx") and "high" in filename_lower:
+            return "high_fbx"
+        if filename_lower.endswith(".fbx") and "low" in filename_lower:
+            return "low_fbx"
+        return None
+
+    def scan_delivery_folder(self, tab_key: str) -> None:
+        root = cmds.textFieldButtonGrp(self.tab_ui[tab_key]["root_field"], q=True, text=True).strip()
+        if not root or not os.path.isdir(root):
+            self.log(tab_key, "FAIL", "Scan", f"Root folder invalide: {root or '(vide)'}")
+            return
+        self.tab_paths[tab_key]["root"] = root
+        all_found: Dict[str, List[str]] = {k: [] for k in self.tab_detected_files[tab_key]}
+        for d, _, files in os.walk(root):
+            for name in files:
+                role = self._detect_file_role(name.lower())
+                if role in all_found:
+                    all_found[role].append(os.path.join(d, name))
+        for k, arr in all_found.items():
+            arr.sort()
+            self.tab_detected_files[tab_key][k] = arr
+            self._populate_file_menu(tab_key, k)
+        self.refresh_file_labels(tab_key)
+        self.log(tab_key, "INFO", "Scan", f"Scan terminé pour {self.tab_configs[tab_key].label}.")
+
+    def _clear_menu(self, menu: str) -> None:
+        for item in cmds.optionMenu(menu, q=True, itemListLong=True) or []:
             cmds.deleteUI(item)
 
-    def _populate_file_option_menu(self, file_key: str) -> None:
-        menu = self.ui[f"{file_key}_menu"]
-        files = self.detected_files[file_key]
-        self._clear_option_menu(menu)
-
+    def _populate_file_menu(self, tab_key: str, file_key: str) -> None:
+        menu = self.tab_ui[tab_key].get(f"{file_key}_menu")
+        if not menu:
+            return
+        self._clear_menu(menu)
+        files = self.tab_detected_files[tab_key][file_key]
         if not files:
             cmds.menuItem(label="-- Aucun --", parent=menu)
-            self.paths[file_key] = ""
+            self.tab_paths[tab_key][file_key] = ""
             return
+        for path in files:
+            cmds.menuItem(label=os.path.basename(path), parent=menu)
+        cmds.optionMenu(menu, e=True, select=1)
+        self.tab_paths[tab_key][file_key] = files[0]
 
-        for p in files:
-            cmds.menuItem(label=os.path.basename(p), parent=menu)
+    def refresh_file_labels(self, tab_key: str) -> None:
+        for file_key, label, _ in self.tab_configs[tab_key].files:
+            count = len(self.tab_detected_files[tab_key][file_key])
+            if count == 0:
+                txt = f"Aucun fichier pour {label}"
+            elif count == 1:
+                txt = f"1 fichier: {os.path.basename(self.tab_detected_files[tab_key][file_key][0])}"
+            else:
+                txt = f"{count} fichiers détectés. Sélectionnez le bon fichier."
+            cmds.text(self.tab_ui[tab_key][f"{file_key}_status"], e=True, label=txt)
 
-        self.paths[file_key] = files[0]
-        cmds.optionMenu(menu, edit=True, select=1)
-
-    def refresh_detected_file_labels(self) -> None:
-        ma_count = len(self.detected_files["ma"])
-        fbx_count = len(self.detected_files["fbx"])
-
-        ma_text = "Aucun .ma détecté"
-        if ma_count == 1:
-            ma_text = f"1 fichier détecté: {os.path.basename(self.detected_files['ma'][0])}"
-        elif ma_count > 1:
-            ma_text = f"{ma_count} fichiers .ma détectés. Sélectionnez le bon fichier."
-
-        fbx_text = "Aucun .fbx détecté"
-        if fbx_count == 1:
-            fbx_text = f"1 fichier détecté: {os.path.basename(self.detected_files['fbx'][0])}"
-        elif fbx_count > 1:
-            fbx_text = f"{fbx_count} fichiers .fbx détectés. Sélectionnez le bon fichier."
-
-        cmds.text(self.ui["ma_status"], e=True, label=ma_text)
-        cmds.text(self.ui["fbx_status"], e=True, label=fbx_text)
-
-    def on_detected_file_selected(self, file_key: str) -> None:
-        files = self.detected_files[file_key]
+    def on_file_selected(self, tab_key: str, file_key: str) -> None:
+        files = self.tab_detected_files[tab_key].get(file_key, [])
         if not files:
-            self.paths[file_key] = ""
             return
+        idx = (cmds.optionMenu(self.tab_ui[tab_key][f"{file_key}_menu"], q=True, select=True) or 1) - 1
+        self.tab_paths[tab_key][file_key] = files[max(0, min(idx, len(files) - 1))]
 
-        index = cmds.optionMenu(self.ui[f"{file_key}_menu"], q=True, select=True) - 1
-        index = max(0, min(index, len(files) - 1))
-        self.paths[file_key] = files[index]
-        self.log("INFO", "Scan", f"{file_key.upper()} sélectionné: {self.paths[file_key]}")
-
-    def scan_delivery_folder(self) -> None:
-        root = cmds.textFieldButtonGrp(self.ui["root_field"], q=True, text=True).strip()
-        if not root:
-            self.log("FAIL", "Scan", "Aucun dossier racine renseigné.")
+    def reference_file(self, tab_key: str, file_key: str) -> None:
+        path = self.tab_paths[tab_key].get(file_key, "")
+        if not path or not os.path.exists(path):
+            self.log(tab_key, "FAIL", "Reference", f"Fichier introuvable pour {file_key}.")
             return
-        if not os.path.isdir(root):
-            self.log("FAIL", "Scan", f"Dossier introuvable: {root}")
-            return
+        ns = self.reference_namespaces.get(file_key, f"{file_key}_File")
+        try:
+            if path.lower().endswith(".fbx"):
+                try:
+                    if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
+                        cmds.loadPlugin("fbxmaya", quiet=True)
+                except Exception:
+                    pass
+                cmds.file(path, reference=True, namespace=ns, options="v=0", type="FBX")
+            else:
+                cmds.file(path, reference=True, namespace=ns, ignoreVersion=True, mergeNamespacesOnClash=False)
+            self.log(tab_key, "INFO", "Reference", f"Référence chargée: {os.path.basename(path)} ({ns})")
+            self.auto_detect_roots(tab_key)
+        except Exception as exc:
+            self.log(tab_key, "FAIL", "Reference", f"Erreur de référence: {exc}")
 
-        self._set_root_folder(root)
-        found_ma: List[str] = []
-        found_fbx: List[str] = []
-
-        for dirpath, _, filenames in os.walk(root):
-            for filename in filenames:
-                name_lower = filename.lower()
-                full_path = os.path.join(dirpath, filename)
-                if name_lower.endswith("_high.ma"):
-                    found_ma.append(full_path)
-                elif name_lower.endswith("_high.fbx"):
-                    found_fbx.append(full_path)
-
-        found_ma.sort()
-        found_fbx.sort()
-
-        self.detected_files["ma"] = found_ma
-        self.detected_files["fbx"] = found_fbx
-
-        self._populate_file_option_menu("ma")
-        self._populate_file_option_menu("fbx")
-        self.refresh_detected_file_labels()
-
-        if not found_ma:
-            self.log("WARNING", "Scan", "Aucun fichier *_HIGH.ma ou *_high.ma trouvé.")
-        else:
-            self.log("INFO", "Scan", f"{len(found_ma)} fichier(s) .ma High détecté(s).")
-
-        if not found_fbx:
-            self.log("WARNING", "Scan", "Aucun fichier *_HIGH.fbx ou *_high.fbx trouvé.")
-        else:
-            self.log("INFO", "Scan", f"{len(found_fbx)} fichier(s) .fbx High détecté(s).")
-
-    def _populate_root_option_menu(self, root_key: str) -> None:
-        menu = self.ui[f"{root_key}_root_menu"]
-        items = self.detected_roots[root_key]
-        self._clear_option_menu(menu)
-
-        if not items:
-            label = "High root non détecté" if root_key == "high" else "Placeholder root non détecté"
-            cmds.menuItem(label=label, parent=menu)
-            return
-
-        for node in items:
-            cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
-
-        cmds.optionMenu(menu, edit=True, select=1)
-
-    def refresh_root_ui(self) -> None:
-        self._populate_root_option_menu("high")
-        self._populate_root_option_menu("placeholder")
-
-    def on_root_selection_changed(self, root_key: str) -> None:
-        root = self.get_detected_root(root_key)
-        if root:
-            self.log(
-                "INFO",
-                "RootDetect",
-                f"{root_key.capitalize()} root sélectionné: {self._ellipsize_middle(root, max_length=MAX_UI_TEXT_LENGTH - 36)}",
-                [root],
-            )
-
-    def get_detected_root(self, root_key: str) -> Optional[str]:
-        candidates = self.detected_roots[root_key]
-        if not candidates:
-            return None
-
-        index = cmds.optionMenu(self.ui[f"{root_key}_root_menu"], q=True, select=True) - 1
-        index = max(0, min(index, len(candidates) - 1))
-        root = candidates[index]
-        return root if cmds.objExists(root) else None
-
-    def set_root_from_selection(self, root_key: str) -> None:
-        sel = cmds.ls(selection=True, long=True) or []
-        if not sel:
-            self.log("WARNING", "Selection", "Aucun objet sélectionné.")
-            return
-        if root_key == "high" and self._is_placeholder_node(sel[0]):
-            self.log(
-                "WARNING",
-                "RootDetect",
-                "Sélection ignorée pour High root : nom contenant 'placeholder' détecté (priorité Placeholder).",
-                [sel[0]],
-            )
-            return
-
-        current = self.detected_roots[root_key][:]
-        if sel[0] not in current:
-            current.insert(0, sel[0])
-        self.detected_roots[root_key] = current
-        self.refresh_root_ui()
-        self.log(
-            "INFO",
-            "RootDetect",
-            f"{root_key.capitalize()} root défini depuis la sélection: {self._ellipsize_middle(sel[0], max_length=MAX_UI_TEXT_LENGTH - 45)}",
-            [sel[0]],
-        )
-
-    def _candidate_root_score(self, node: str) -> Tuple[int, int, int]:
-        descendants = cmds.listRelatives(node, allDescendents=True, fullPath=True) or []
-        mesh_shapes = cmds.listRelatives(node, allDescendents=True, fullPath=True, type="mesh") or []
-        mesh_shapes = [m for m in mesh_shapes if not cmds.getAttr(m + ".intermediateObject")]
-
-        depth = node.count("|")
-        has_shape = 1 if (cmds.listRelatives(node, shapes=True, noIntermediate=True, fullPath=True) or []) else 0
-        return (len(mesh_shapes), len(descendants) + has_shape, -depth)
-
-    def _find_root_candidates(self, suffix_key: str) -> List[str]:
-        suffix = ROOT_SUFFIXES[suffix_key]
-        transforms = cmds.ls(type="transform", long=True) or []
-        valid = []
-        for node in transforms:
-            short_name = node.split("|")[-1]
-            short_without_ns = self._strip_namespaces_from_name(short_name)
-            if suffix_key == "placeholder":
-                if short_without_ns.lower().endswith(suffix) or self._is_placeholder_node(node):
-                    valid.append(node)
-            elif suffix_key == "high":
-                if short_without_ns.lower().endswith(suffix) and not self._is_placeholder_node(node):
-                    valid.append(node)
-            elif short_without_ns.lower().endswith(suffix):
-                valid.append(node)
-
-        valid = sorted(valid, key=lambda x: self._candidate_root_score(x), reverse=True)
-        return valid
-
-    def auto_detect_scene_roots(self) -> None:
-        high_candidates = self._find_root_candidates("high")
-        placeholder_candidates = self._find_root_candidates("placeholder")
-
-        self.detected_roots["high"] = high_candidates
-        self.detected_roots["placeholder"] = placeholder_candidates
-        self.refresh_root_ui()
-
-        if high_candidates:
-            self.log(
-                "INFO",
-                "RootDetect",
-                f"High root détecté: {self._ellipsize_middle(high_candidates[0], max_length=MAX_UI_TEXT_LENGTH - 22)}",
-                [high_candidates[0]],
-            )
-            if len(high_candidates) > 1:
-                self.log("WARNING", "RootDetect", f"Plusieurs High roots détectés ({len(high_candidates)}). Sélection manuelle possible.")
-        else:
-            self.log("WARNING", "RootDetect", "High root non détecté.")
-
-        if placeholder_candidates:
-            self.log(
-                "INFO",
-                "RootDetect",
-                f"Placeholder root détecté: {self._ellipsize_middle(placeholder_candidates[0], max_length=MAX_UI_TEXT_LENGTH - 29)}",
-                [placeholder_candidates[0]],
-            )
-            if len(placeholder_candidates) > 1:
-                self.log("WARNING", "RootDetect", f"Plusieurs Placeholder roots détectés ({len(placeholder_candidates)}). Sélection manuelle possible.")
-        else:
-            self.log("WARNING", "RootDetect", "Placeholder root non détecté.")
-
-    def get_high_root(self) -> Optional[str]:
-        return self.get_detected_root("high")
-
-    def get_placeholder_root(self) -> Optional[str]:
-        return self.get_detected_root("placeholder")
-
+    # ---------------- root detection ----------------
     def _collect_mesh_transforms(self, root: Optional[str] = None) -> List[str]:
         if root and cmds.objExists(root):
             shapes = cmds.listRelatives(root, allDescendents=True, fullPath=True, type="mesh") or []
-            direct_shape = cmds.listRelatives(root, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            shapes.extend(direct_shape)
+            direct = cmds.listRelatives(root, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+            shapes += direct
         else:
             shapes = cmds.ls(type="mesh", long=True) or []
-
-        transforms = []
-        for shape in shapes:
-            if cmds.getAttr(shape + ".intermediateObject"):
+        out = []
+        for s in shapes:
+            if cmds.getAttr(s + ".intermediateObject"):
                 continue
-            parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
-            if parent:
-                transforms.append(parent[0])
+            p = cmds.listRelatives(s, p=True, fullPath=True) or []
+            if p:
+                out.append(p[0])
+        return sorted(set(out))
 
-        return sorted(list(set(transforms)))
+    def _find_candidates(self, suffix_kind: str) -> List[str]:
+        transforms = cmds.ls(type="transform", long=True) or []
+        out: List[str] = []
+        for node in transforms:
+            base = self._strip_ns(self._short(node)).lower()
+            if suffix_kind == "placeholder" and (base.endswith("_placeholder") or self._is_placeholder_name(base)):
+                out.append(node)
+            elif suffix_kind == "high" and base.endswith("_high") and not self._is_placeholder_name(base):
+                out.append(node)
+            elif suffix_kind == "low" and base.endswith("_low"):
+                out.append(node)
+            elif suffix_kind == "final" and (not base.endswith("_low") and not base.endswith("_high") and "placeholder" not in base):
+                if self._collect_mesh_transforms(node):
+                    out.append(node)
+        return sorted(set(out), key=lambda n: len(self._collect_mesh_transforms(n)), reverse=True)
 
-    def _mesh_signature(self, mesh_transform: str) -> Tuple[int, int, int]:
-        shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
-        if not shape:
-            return 0, 0, 0
-        shape = shape[0]
-        return (
-            cmds.polyEvaluate(shape, vertex=True),
-            cmds.polyEvaluate(shape, edge=True),
-            cmds.polyEvaluate(shape, face=True),
-        )
+    def auto_detect_roots(self, tab_key: str) -> None:
+        for root_key, _, suffix_kind in self.tab_configs[tab_key].roots:
+            self.tab_detected_roots[tab_key][root_key] = self._find_candidates(suffix_kind)
+        self.refresh_root_ui(tab_key)
+        self.log(tab_key, "INFO", "RootDetect", f"Auto-detect roots terminé pour {self.tab_configs[tab_key].label}.")
 
-    def _short_name(self, node: str) -> str:
-        return node.split("|")[-1]
-
-    def _strip_namespaces_from_name(self, name: str) -> str:
-        parts = name.split(":")
-        return parts[-1] if parts else name
-
-    def _contains_placeholder_token(self, text: str) -> bool:
-        return PLACEHOLDER_TOKEN in text.lower()
-
-    def _is_placeholder_node(self, node: str) -> bool:
-        short_name = self._short_name(node)
-        short_without_ns = self._strip_namespaces_from_name(short_name)
-        return self._contains_placeholder_token(short_without_ns) or self._contains_placeholder_token(short_name)
-
-    def _path_contains_placeholder_token(self, node: str) -> bool:
-        for segment in [seg for seg in node.split("|") if seg]:
-            if self._contains_placeholder_token(self._strip_namespaces_from_name(segment)):
-                return True
-            if self._contains_placeholder_token(segment):
-                return True
-        return False
-
-    def _normalized_segments(self, path: str) -> List[str]:
-        return [self._strip_namespaces_from_name(seg) for seg in path.split("|") if seg]
-
-    def _normalized_relative_mesh_key(self, mesh_transform: str, root: Optional[str] = None) -> str:
-        mesh_segments = self._normalized_segments(mesh_transform)
-        if root and cmds.objExists(root):
-            root_segments = self._normalized_segments(root)
-            if mesh_segments[: len(root_segments)] == root_segments:
-                mesh_segments = mesh_segments[len(root_segments):]
-        elif len(mesh_segments) > 1:
-            mesh_segments = mesh_segments[1:]
-        return "/".join(mesh_segments)
-
-    def _mesh_data_signature(self, mesh_transform: str, root: Optional[str] = None) -> Dict[str, object]:
-        shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
-        if not shape:
-            return {
-                "path": mesh_transform,
-                "key": self._normalized_relative_mesh_key(mesh_transform, root),
-                "v": 0,
-                "e": 0,
-                "f": 0,
-                "uv_total": 0,
-                "uv_sets": {},
-                "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
-                "pivot_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, rotatePivot=True)),
-                "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
-            }
-
-        shape = shape[0]
-        uv_sets = cmds.polyUVSet(shape, query=True, allUVSets=True) or []
-        uv_info: Dict[str, Dict[str, int]] = {}
-        current_uv = cmds.polyUVSet(shape, query=True, currentUVSet=True) or []
-        original_uv = current_uv[0] if current_uv else None
-
-        for uv_set in uv_sets:
-            try:
-                cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
-            except RuntimeError:
+    def refresh_root_ui(self, tab_key: str) -> None:
+        for root_key, _, _ in self.tab_configs[tab_key].roots:
+            menu = self.tab_ui[tab_key][f"{root_key}_menu"]
+            self._clear_menu(menu)
+            candidates = self.tab_detected_roots[tab_key][root_key]
+            if not candidates:
+                cmds.menuItem(label="Root non détecté", parent=menu)
                 continue
+            for node in candidates:
+                cmds.menuItem(label=self._ellipsize(node, 80), parent=menu)
+            cmds.optionMenu(menu, e=True, select=1)
 
-            uv_count = int(cmds.polyEvaluate(shape, uvcoord=True) or 0)
-            try:
-                shell_count = int(cmds.polyEvaluate(shape, uvShell=True) or 0)
-            except RuntimeError:
-                shell_count = 0
-            uv_info[uv_set] = {"count": uv_count, "shells": shell_count}
-
-        if original_uv:
-            try:
-                cmds.polyUVSet(shape, currentUVSet=True, uvSet=original_uv)
-            except RuntimeError:
-                pass
-
-        return {
-            "path": mesh_transform,
-            "key": self._normalized_relative_mesh_key(mesh_transform, root),
-            "v": int(cmds.polyEvaluate(shape, vertex=True) or 0),
-            "e": int(cmds.polyEvaluate(shape, edge=True) or 0),
-            "f": int(cmds.polyEvaluate(shape, face=True) or 0),
-            "uv_total": int(cmds.polyEvaluate(shape, uvcoord=True) or 0),
-            "uv_sets": uv_info,
-            "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
-            "pivot_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, rotatePivot=True)),
-            "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
-        }
-
-    def _mesh_center_world(self, mesh_transform: str) -> Tuple[float, float, float]:
-        bb = cmds.exactWorldBoundingBox(mesh_transform)
-        return (
-            (bb[0] + bb[3]) * 0.5,
-            (bb[1] + bb[4]) * 0.5,
-            (bb[2] + bb[5]) * 0.5,
-        )
-
-    def _mesh_bbox_dims_world(self, mesh_transform: str) -> Tuple[float, float, float]:
-        bb = cmds.exactWorldBoundingBox(mesh_transform)
-        return (bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
-
-    def _world_union_bbox(self, nodes: List[str]) -> Optional[Tuple[float, float, float, float, float, float]]:
-        existing = [n for n in nodes if cmds.objExists(n)]
-        if not existing:
+    def get_selected_root(self, tab_key: str, root_key: str) -> Optional[str]:
+        arr = self.tab_detected_roots[tab_key].get(root_key, [])
+        if not arr:
             return None
-        bb = cmds.exactWorldBoundingBox(existing)
-        return (bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
+        idx = (cmds.optionMenu(self.tab_ui[tab_key][f"{root_key}_menu"], q=True, select=True) or 1) - 1
+        node = arr[max(0, min(idx, len(arr) - 1))]
+        return node if cmds.objExists(node) else None
 
-    def _bbox_dims(self, bbox: Tuple[float, float, float, float, float, float]) -> Tuple[float, float, float]:
-        return (bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2])
+    def on_root_selected(self, tab_key: str, root_key: str) -> None:
+        root = self.get_selected_root(tab_key, root_key)
+        if root:
+            self.log(tab_key, "INFO", "RootDetect", f"{root_key} sélectionné: {self._short(root)}", [root])
 
-    def _bbox_center(self, bbox: Tuple[float, float, float, float, float, float]) -> Tuple[float, float, float]:
-        return ((bbox[0] + bbox[3]) * 0.5, (bbox[1] + bbox[4]) * 0.5, (bbox[2] + bbox[5]) * 0.5)
+    def set_root_from_selection(self, tab_key: str, root_key: str) -> None:
+        sel = cmds.ls(sl=True, long=True) or []
+        if not sel:
+            self.log(tab_key, "WARNING", "RootDetect", "Aucune sélection.")
+            return
+        arr = self.tab_detected_roots[tab_key][root_key]
+        if sel[0] not in arr:
+            arr.insert(0, sel[0])
+        self.refresh_root_ui(tab_key)
+        self.log(tab_key, "INFO", "RootDetect", f"{root_key} défini depuis sélection.", [sel[0]])
 
-    def _vector_distance(self, a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
+    # ---------------- checks ----------------
+    def _run_handler(self, tab_key: str, handler: str) -> None:
+        getattr(self, handler)(tab_key)
+
+    def _mesh_key(self, mesh: str, root: Optional[str]) -> str:
+        segs = [self._strip_ns(s) for s in mesh.split("|") if s]
+        if root and cmds.objExists(root):
+            rsegs = [self._strip_ns(s) for s in root.split("|") if s]
+            if segs[: len(rsegs)] == rsegs:
+                segs = segs[len(rsegs):]
+        return "/".join(segs)
+
+    def _mesh_sig(self, mesh: str) -> Tuple[int, int, int]:
+        shape = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
+        if not shape:
+            return (0, 0, 0)
+        s = shape[0]
+        return (
+            int(cmds.polyEvaluate(s, vertex=True) or 0),
+            int(cmds.polyEvaluate(s, edge=True) or 0),
+            int(cmds.polyEvaluate(s, face=True) or 0),
+        )
+
+    def _bbox_center(self, node: str) -> Tuple[float, float, float]:
+        bb = cmds.exactWorldBoundingBox(node)
+        return ((bb[0] + bb[3]) * 0.5, (bb[1] + bb[4]) * 0.5, (bb[2] + bb[5]) * 0.5)
+
+    def _dist(self, a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
         return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
-    def _strip_suffix_ci(self, text: str, suffix: str) -> str:
-        if text.lower().endswith(suffix.lower()):
-            return text[: -len(suffix)]
-        return text
+    def _active_mesh_sets(self, tab_key: str) -> Dict[str, List[str]]:
+        out: Dict[str, List[str]] = {}
+        for root_key, _, _ in self.tab_configs[tab_key].roots:
+            root = self.get_selected_root(tab_key, root_key)
+            if root:
+                out[root_key] = self._collect_mesh_transforms(root)
+        return out
 
-    def _clean_texture_set_display_name(self, raw_name: str, high_root: Optional[str]) -> str:
-        cleaned = self._strip_namespaces_from_name(raw_name)
-        cleaned = self._strip_suffix_ci(cleaned, "_high").strip("_")
-        if high_root and cmds.objExists(high_root):
-            root_name = self._strip_namespaces_from_name(self._short_name(high_root))
-            root_base = self._strip_suffix_ci(root_name, "_high").strip("_")
-            root_base_ci = root_base.lower()
-            cleaned_ci = cleaned.lower()
-            if cleaned_ci.startswith(root_base_ci + "_"):
-                cleaned = cleaned[len(root_base) + 1 :]
-            elif cleaned_ci == root_base_ci:
-                cleaned = root_base
-        return cleaned.strip("_- ") or self._strip_namespaces_from_name(raw_name)
-
-    def _mesh_quad_and_face_count(self, mesh_transform: str) -> Tuple[int, int]:
-        face_count = int(cmds.polyEvaluate(mesh_transform, face=True) or 0)
-        quad_count = 0
-        for face_idx in range(face_count):
-            face_info = cmds.polyInfo(f"{mesh_transform}.f[{face_idx}]", faceToVertex=True) or []
-            if not face_info:
-                continue
-            tokens = [tok for tok in face_info[0].replace(":", " ").split() if tok.isdigit()]
-            vertex_count = max(0, len(tokens) - 1)
-            if vertex_count == 4:
-                quad_count += 1
-        return quad_count, face_count
-
-    def _namespace_from_node(self, node: str) -> str:
-        short = node.split("|")[-1]
-        if ":" not in short:
-            return ""
-        return short.rsplit(":", 1)[0]
-
-    def _node_is_in_namespace(self, node: str, namespace: str) -> bool:
-        ns = self._namespace_from_node(node)
-        return ns == namespace or ns.startswith(namespace + ":")
-
-    def _path_ancestors(self, node: str) -> List[str]:
-        parts = [p for p in node.split("|") if p]
-        ancestors: List[str] = []
-        for i in range(len(parts)):
-            ancestors.append("|" + "|".join(parts[: i + 1]))
-        return ancestors
-
-    def _find_namespace_root_for_node(self, node: str, namespace: str) -> Optional[str]:
-        for ancestor in self._path_ancestors(node):
-            short = self._short_name(ancestor)
-            if short == namespace or short.startswith(namespace + ":"):
-                return ancestor
-        return None
-
-    def _roots_from_scope_meshes(self, scope_key: str, scope_meshes: List[str]) -> List[str]:
-        roots: List[str] = []
-        namespace = ""
-        if scope_key == "high_fbx":
-            namespace = self.context["fbx_namespace"]
-        elif scope_key == "high_ma":
-            namespace = self.context["ma_namespace"]
-
-        if scope_key == "placeholder":
-            placeholder_root = self.get_placeholder_root()
-            if placeholder_root and cmds.objExists(placeholder_root):
-                return [placeholder_root]
-
-        for mesh in scope_meshes:
-            if not cmds.objExists(mesh):
-                continue
-            root = self._find_namespace_root_for_node(mesh, namespace) if namespace else None
-            if not root:
-                ancestors = self._path_ancestors(mesh)
-                root = ancestors[0] if ancestors else None
-            if root and cmds.objExists(root):
-                roots.append(root)
-        return sorted(set(roots))
-
-    def _resolve_texture_scope_roots(self, resolution: Dict[str, Any]) -> Dict[str, Any]:
-        scope_keys = resolution.get("scope_keys", [])
-        per_scope = resolution.get("per_scope_meshes", {})
-        all_scope_keys = ["placeholder", "high_fbx", "high_ma"]
-
-        roots_per_scope: Dict[str, List[str]] = {}
-        for key in all_scope_keys:
-            meshes_for_key = per_scope.get(key, [])
-            if not meshes_for_key:
-                key_resolution = self.resolve_scope_targets(scope_keys=[key])
-                meshes_for_key = key_resolution.get("per_scope_meshes", {}).get(key, [])
-            roots_per_scope[key] = self._roots_from_scope_meshes(key, meshes_for_key)
-
-        included_roots: List[str] = []
-        for key in scope_keys:
-            included_roots.extend(roots_per_scope.get(key, []))
-        included_roots = sorted(set(included_roots))
-
-        excluded_roots: Dict[str, List[str]] = {}
-        for key in all_scope_keys:
-            if key in scope_keys:
-                continue
-            excluded_roots[key] = roots_per_scope.get(key, [])
-
-        primary_root = included_roots[0] if included_roots else None
-        return {
-            "roots_per_scope": roots_per_scope,
-            "included_roots": included_roots,
-            "excluded_roots": excluded_roots,
-            "primary_root": primary_root,
-        }
-
-    def _collect_mesh_transforms_in_namespace(
-        self,
-        namespace: str,
-        *,
-        exclude_placeholder_named: bool = False,
-    ) -> Tuple[List[str], List[str]]:
-        if not namespace:
-            return [], []
-        shapes = cmds.ls(namespace + ":*", type="mesh", long=True) or []
-        transforms = []
-        placeholder_excluded: List[str] = []
-        for shape in shapes:
-            if cmds.getAttr(shape + ".intermediateObject"):
-                continue
-            parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
-            if parent:
-                parent_transform = parent[0]
-                if exclude_placeholder_named and (
-                    self._is_placeholder_node(parent_transform) or self._path_contains_placeholder_token(parent_transform)
-                ):
-                    placeholder_excluded.append(parent_transform)
-                    continue
-                transforms.append(parent_transform)
-        return sorted(set(transforms)), sorted(set(placeholder_excluded))
-
-    def _get_selected_scope_keys(self) -> List[str]:
-        scope_checks = self.ui.get("scope_checks", {})
-        selected = [k for k in self.scope_keys if k in scope_checks and cmds.checkBox(scope_checks[k], q=True, value=True)]
-        return selected
-
-    def _resolve_scope_meshes(self, scope_keys: Optional[List[str]] = None) -> Tuple[List[str], Dict[str, List[str]]]:
-        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
-        return resolution["meshes"], resolution["per_scope_meshes"]
-
-    def resolve_scope_targets(self, scope_keys: Optional[List[str]] = None) -> Dict[str, Any]:
-        scope_keys = scope_keys if scope_keys is not None else self._get_selected_scope_keys()
-        normalized_scope_keys = [k for k in self.scope_keys if k in scope_keys]
-        per_scope: Dict[str, List[str]] = {}
-        roots_by_scope: Dict[str, List[str]] = {}
-        classification_notes: Dict[str, List[str]] = {}
-        for key in normalized_scope_keys:
-            meshes: List[str] = []
-            if key == "placeholder":
-                placeholder_root = self.get_placeholder_root()
-                meshes = self._collect_mesh_transforms(root=placeholder_root)
-                roots_by_scope[key] = [placeholder_root] if placeholder_root else []
-            elif key == "high_fbx":
-                meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"])
-                roots_by_scope[key] = [self.context["fbx_namespace"]]
-            elif key == "high_ma":
-                meshes, placeholder_excluded = self._collect_mesh_transforms_in_namespace(
-                    self.context["ma_namespace"],
-                    exclude_placeholder_named=True,
-                )
-                high_root = self.get_high_root()
-                roots_by_scope[key] = [high_root] if high_root else [self.context["ma_namespace"]]
-                classification_notes[key] = placeholder_excluded
-            elif key in {"all_mesh", "all_incl_mat"}:
-                meshes = self._collect_mesh_transforms(root=None)
-                roots_by_scope[key] = ["<SCENE_ALL_MESHES>"]
-            per_scope[key] = sorted(set(meshes))
-        merged = sorted(set([m for meshes in per_scope.values() for m in meshes]))
-        return {
-            "scope_keys": normalized_scope_keys,
-            "per_scope_meshes": per_scope,
-            "meshes": merged,
-            "roots_by_scope": roots_by_scope,
-            "classification_notes": classification_notes,
-        }
-
-    def _scope_label(self, scope_keys: List[str]) -> str:
-        return ", ".join([self.scope_labels.get(k, k) for k in scope_keys])
-
-    def _log_scope_resolution(self, category: str, resolution: Dict[str, Any]) -> None:
-        scope_keys = resolution.get("scope_keys", [])
-        per_scope = resolution.get("per_scope_meshes", {})
-        roots_by_scope = resolution.get("roots_by_scope", {})
-        classification_notes = resolution.get("classification_notes", {})
-        merged = resolution.get("meshes", [])
-        scope_label = self._scope_label(scope_keys) if scope_keys else "(aucun scope)"
-        self.log("INFO", category, f"Scope demandé: {scope_label}")
-        if not scope_keys:
-            self.log("WARNING", category, "Aucun scope sélectionné dans l'UI.")
+    def check_compare(self, tab_key: str) -> None:
+        scopes = self._active_mesh_sets(tab_key)
+        if len(scopes) < 2:
+            self.log(tab_key, "FAIL", "Compare", "Pas assez de roots valides pour comparer.")
+            self._check_done(tab_key, "compare", False)
             return
-        for key in scope_keys:
-            roots = roots_by_scope.get(key, [])
-            meshes = per_scope.get(key, [])
-            pretty_roots = ", ".join([self._short_name(r) for r in roots if r]) if roots else "Aucun root résolu"
-            self.log(
-                "INFO",
-                category,
-                f"- {self.scope_labels.get(key, key)} | roots: {pretty_roots} | meshes: {len(meshes)}",
-            )
-            if key == "high_ma":
-                excluded = classification_notes.get(key, [])
-                if excluded:
-                    self.log(
-                        "INFO",
-                        category,
-                        f"- Priorité Placeholder active: {len(excluded)} objet(s) sous {self.context['ma_namespace']} exclus du scope High MA.",
-                    )
-                    for node in excluded[:20]:
-                        self.log(
-                            "INFO",
-                            category,
-                            "Objet détecté sous High_Ma_File | Nom contient PLACEHOLDER | Classé comme : Placeholder | Exclu de : High MA",
-                            [node],
-                        )
-        self.log("INFO", category, f"Meshes ciblés (union des scopes): {len(merged)}")
-        self.log("INFO", category, f"Placeholder inclus: {'Oui' if 'placeholder' in scope_keys else 'Non'}")
-        self.log("INFO", category, f"High FBX inclus: {'Oui' if 'high_fbx' in scope_keys else 'Non'}")
-        self.log("INFO", category, f"High MA inclus: {'Oui' if 'high_ma' in scope_keys else 'Non'}")
+        ref_name = list(scopes.keys())[0]
+        ref_root = self.get_selected_root(tab_key, ref_name)
+        ref = {self._mesh_key(m, ref_root): self._mesh_sig(m) for m in scopes[ref_name]}
+        ok = True
+        for scope_name, meshes in scopes.items():
+            root = self.get_selected_root(tab_key, scope_name)
+            current = {self._mesh_key(m, root): self._mesh_sig(m) for m in meshes}
+            missing = sorted(set(ref) - set(current))
+            extra = sorted(set(current) - set(ref))
+            if missing:
+                ok = False
+                self.log(tab_key, "FAIL", "Compare", f"{scope_name}: meshes manquants ({len(missing)})")
+            if extra:
+                ok = False
+                self.log(tab_key, "WARNING", "Compare", f"{scope_name}: meshes supplémentaires ({len(extra)})")
+            for k in sorted(set(ref).intersection(current)):
+                if ref[k] != current[k]:
+                    ok = False
+                    self.log(tab_key, "FAIL", "Compare", f"{scope_name}: topo différente sur {k}")
+                    break
+        if ok:
+            self.log(tab_key, "INFO", "Compare", "Comparaison multi-sources OK.")
+        self._check_done(tab_key, "compare", ok)
 
-    def _fmt_vec(self, values: Tuple[float, float, float], precision: int = 4) -> str:
-        rounded = tuple(round(v, precision) for v in values)
-        return f"({rounded[0]}, {rounded[1]}, {rounded[2]})"
+    def scan_namespaces(self, tab_key: str) -> None:
+        ns = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
+        allowed = set(self.reference_namespaces.values())
+        bad = [n for n in ns if n not in {":", "UI", "shared"} and n not in allowed and not any(n.startswith(a + ":") for a in allowed)]
+        self.last_scanned_namespaces = sorted(set(bad))
+        if bad:
+            self.log(tab_key, "WARNING", "Namespaces", f"Namespaces non autorisés: {', '.join(self.last_scanned_namespaces[:8])}")
+            self._check_done(tab_key, "namespaces", False)
+        else:
+            self.log(tab_key, "INFO", "Namespaces", "Aucun namespace non autorisé.")
+            self._check_done(tab_key, "namespaces", True)
 
-    def _fmt_size_percent(self, ratio: float) -> str:
-        return f"{ratio * 100.0:.2f}% de la taille placeholder"
-
-    def _placeholder_axis_deviation(self, ratio: float) -> float:
-        return (abs(ratio - 1.0) * 100.0) if ratio != 0.0 else 100.0
-
-    def _compute_root_children_texture_sets(
-        self,
-        analysis_roots: List[str],
-        scope_meshes: List[str],
-    ) -> Tuple[Dict[str, Dict[str, object]], List[str]]:
-        sets: Dict[str, Dict[str, object]] = {}
-        log_lines: List[str] = []
-        valid_roots = [r for r in analysis_roots if r and cmds.objExists(r)]
-        if not valid_roots:
-            log_lines.append("Méthode groupes: aucun root valide résolu pour le scope actif.")
-            return sets, log_lines
-
-        scope_set = set(scope_meshes)
-        for analysis_root in valid_roots:
-            direct_children = cmds.listRelatives(analysis_root, children=True, fullPath=True, type="transform") or []
-            log_lines.append(f"Root analysé : {self._short_name(analysis_root)}")
-            log_lines.append("Éléments de premier niveau détectés :")
-
-            for child in direct_children:
-                child_meshes = [m for m in self._collect_mesh_transforms(root=child) if m in scope_set]
-                if not child_meshes:
-                    continue
-                child_shapes = cmds.listRelatives(child, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-                child_kind = "mesh" if child_shapes else "group"
-                child_name = self._short_name(child)
-                log_lines.append(f"- {child_name} ({child_kind})")
-
-                key = f"GRP_CHILD::{analysis_root}::{child}"
-                display_name = self._clean_texture_set_display_name(child_name, analysis_root)
-                sets[key] = {
-                    "name": self._strip_namespaces_from_name(child_name),
-                    "display_name": display_name,
-                    "method": "group_root_children",
-                    "objects": sorted(set(child_meshes)),
-                }
-
-        return sets, log_lines
-
-    def _extract_namespaces_from_path(self, node_path: str) -> Set[str]:
-        found: Set[str] = set()
-        for segment in [s for s in node_path.split("|") if s]:
-            if ":" not in segment:
-                continue
-            ns_chain = segment.rsplit(":", 1)[0]
-            chain_parts = [p for p in ns_chain.split(":") if p]
-            for i in range(len(chain_parts)):
-                found.add(":".join(chain_parts[: i + 1]))
-        return found
-
-    def _is_allowed_namespace(self, namespace: str) -> bool:
-        allowed_namespaces = [self.context["fbx_namespace"], self.context["ma_namespace"]]
-        for allowed in allowed_namespaces:
-            if namespace == allowed or namespace.startswith(allowed + ":"):
-                return True
-        return False
-
-    def _get_scan_namespaces(self) -> List[str]:
-        all_nodes = cmds.ls(long=True) or []
-        dag_ns: Set[str] = set()
-        for node in all_nodes:
-            dag_ns.update(self._extract_namespaces_from_path(node))
-
-        namespaces = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
-        dag_ns.update({n for n in namespaces if n and n not in {":", "UI", "shared"}})
-        filtered = [n for n in dag_ns if not self._is_allowed_namespace(n) and n not in {"UI", "shared", ":"}]
-        return sorted(filtered, key=lambda x: (x.count(":"), x))
-
-    def _infer_set_sources(self, objects: List[str], per_scope_meshes: Dict[str, List[str]]) -> List[str]:
-        candidate_sources = ["high_ma", "high_fbx", "placeholder"]
-        obj_set = set(objects)
-        sources: List[str] = []
-        for source in candidate_sources:
-            meshes = set(per_scope_meshes.get(source, []))
-            if meshes and obj_set.intersection(meshes):
-                sources.append(source)
-        if not sources:
-            if obj_set.intersection(set(per_scope_meshes.get("all_mesh", []))):
-                return ["all_mesh"]
-            if obj_set.intersection(set(per_scope_meshes.get("all_incl_mat", []))):
-                return ["all_incl_mat"]
-            return ["unknown"]
-        return sources
-
-    def _refresh_texture_sets_list_ui(self) -> None:
-        if "texture_sets_list" not in self.ui:
-            return
-        previous_selection = self._selected_texture_set_names()
-        self.texture_set_label_to_key = {}
-        self.texture_set_section_headers = set()
-        cmds.textScrollList(self.ui["texture_sets_list"], edit=True, removeAll=True)
-
-        grouped_keys: Dict[str, List[str]] = {}
-        source_order = ["high_ma", "high_fbx", "placeholder", "all_mesh", "all_incl_mat", "mixed", "unknown"]
-        for set_key in sorted(self.detected_texture_sets.keys()):
-            data = self.detected_texture_sets[set_key]
-            sources = data.get("sources", []) or ["unknown"]
-            source_key = "mixed" if len(sources) > 1 else sources[0]
-            grouped_keys.setdefault(source_key, []).append(set_key)
-
-        for source in source_order:
-            set_keys = grouped_keys.get(source, [])
-            if not set_keys:
-                continue
-            header = f"━━ {self.scope_labels.get(source, source.replace('_', ' ').title())} ━━"
-            self.texture_set_section_headers.add(header)
-            cmds.textScrollList(self.ui["texture_sets_list"], edit=True, append=header)
-            for set_name in set_keys:
-                data = self.detected_texture_sets[set_name]
-                method = data.get("method", "unknown")
-                count = len(data.get("objects", []))
-                display_name = data.get("display_name", data.get("name", set_name))
-                quad_count = int(data.get("quad_count", 0))
-                percent_of_total = float(data.get("percent_of_total", 0.0))
-                visible = self.texture_set_visibility.get(set_name, True)
-                state = "Shown" if visible else "Hidden"
-                label = f"  {display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
-                unique_label = label
-                duplicate_index = 2
-                while unique_label in self.texture_set_label_to_key:
-                    unique_label = f"{label} [{duplicate_index}]"
-                    duplicate_index += 1
-                self.texture_set_label_to_key[unique_label] = set_name
-                cmds.textScrollList(self.ui["texture_sets_list"], edit=True, append=unique_label)
-        self._restore_texture_set_selection(previous_selection)
-
-    def _selected_texture_set_names(self) -> List[str]:
-        selected = cmds.textScrollList(self.ui["texture_sets_list"], query=True, selectItem=True) or []
-        names: List[str] = []
-        for label in selected:
-            if label in self.texture_set_section_headers:
-                continue
-            set_name = self.texture_set_label_to_key.get(label)
-            if set_name in self.detected_texture_sets:
-                names.append(set_name)
-        return names
-
-    def _restore_texture_set_selection(self, set_names: List[str]) -> None:
-        if not set_names:
-            return
-        labels_to_select = [label for label, set_name in self.texture_set_label_to_key.items() if set_name in set_names]
-        if labels_to_select:
-            cmds.textScrollList(self.ui["texture_sets_list"], edit=True, selectItem=labels_to_select)
-
-    def on_texture_set_selection_changed(self) -> None:
-        selected_names = self._selected_texture_set_names()
-        objects: List[str] = []
-        for set_name in selected_names:
-            objects.extend(self.detected_texture_sets[set_name].get("objects", []))
-        objects = sorted(set([o for o in objects if cmds.objExists(o)]))
-        if objects:
-            cmds.select(objects, replace=True)
-
-    def set_texture_set_visibility(self, visible: bool, selected_only: bool = False) -> None:
-        target_sets = self._selected_texture_set_names() if selected_only else list(self.detected_texture_sets.keys())
-        if not target_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné.")
-            return
-        impacted_objects: List[str] = []
-        for set_name in target_sets:
-            objs = self.detected_texture_sets[set_name].get("objects", [])
-            for obj in objs:
-                if cmds.objExists(obj):
-                    try:
-                        cmds.setAttr(obj + ".visibility", visible)
-                        impacted_objects.append(obj)
-                    except RuntimeError:
-                        pass
-            self.texture_set_visibility[set_name] = visible
-        self._refresh_texture_sets_list_ui()
-        if selected_only:
-            self._restore_texture_set_selection(target_sets)
-        action = "affichés" if visible else "masqués"
-        scope_label = self._scope_label(self.last_texture_scope) if self.last_texture_scope else "N/A"
-        self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)} (scope source: {scope_label})", list(sorted(set(impacted_objects)))[:150])
-
-    def toggle_selected_texture_sets(self) -> None:
-        target_sets = self._selected_texture_set_names()
-        if not target_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour toggle.")
-            return
-        impacted_objects: List[str] = []
-        for set_name in target_sets:
-            current = self.texture_set_visibility.get(set_name, True)
-            new_state = not current
-            objs = self.detected_texture_sets[set_name].get("objects", [])
-            for obj in objs:
-                if cmds.objExists(obj):
-                    try:
-                        cmds.setAttr(obj + ".visibility", new_state)
-                        impacted_objects.append(obj)
-                    except RuntimeError:
-                        pass
-            self.texture_set_visibility[set_name] = new_state
-        self._refresh_texture_sets_list_ui()
-        self._restore_texture_set_selection(target_sets)
-        self.log("INFO", "TextureSets", f"Toggle visibility appliqué à: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
-
-    def isolate_selected_texture_sets(self) -> None:
-        target_sets = self._selected_texture_set_names()
-        if not target_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour isolation.")
-            return
-        scene_transforms = cmds.ls(type="transform", long=True) or []
-        default_camera_transforms = set(cmds.listRelatives(cmds.ls(type="camera") or [], parent=True, fullPath=True) or [])
-        all_sets = list(self.detected_texture_sets.keys())
-        hidden_objects: List[str] = []
-        shown_objects: List[str] = []
-        selected_objects: Set[str] = set()
-        for set_name in all_sets:
-            visible = set_name in target_sets
-            objs = self.detected_texture_sets[set_name].get("objects", [])
-            for obj in objs:
-                if not cmds.objExists(obj):
-                    continue
-                if visible:
-                    selected_objects.add(obj)
+    def remove_namespaces(self, tab_key: str) -> None:
+        if not self.last_scanned_namespaces:
+            self.scan_namespaces(tab_key)
+        removed = 0
+        for ns in sorted(self.last_scanned_namespaces, key=lambda x: x.count(":"), reverse=True):
+            if cmds.namespace(exists=ns):
                 try:
-                    cmds.setAttr(obj + ".visibility", visible)
-                    if visible:
-                        shown_objects.append(obj)
-                    else:
-                        hidden_objects.append(obj)
-                except RuntimeError:
-                    continue
-            self.texture_set_visibility[set_name] = visible
+                    cmds.namespace(removeNamespace=ns, mergeNamespaceWithRoot=True)
+                    removed += 1
+                except Exception:
+                    pass
+        self.log(tab_key, "INFO", "Namespaces", f"Namespaces supprimés: {removed}")
+        self.scan_namespaces(tab_key)
 
-        keep_visible: Set[str] = set()
-        for obj in selected_objects:
-            keep_visible.update(self._path_ancestors(obj))
-        for tr in scene_transforms:
-            if tr in default_camera_transforms:
-                continue
-            target_visibility = tr in keep_visible
-            try:
-                if cmds.getAttr(tr + ".visibility", settable=True):
-                    cmds.setAttr(tr + ".visibility", target_visibility)
-            except RuntimeError:
-                continue
-
-        self._refresh_texture_sets_list_ui()
-        self._restore_texture_set_selection(target_sets)
-        self.log(
-            "INFO",
-            "TextureSets",
-            (
-                f"Isolate Selected Sets appliqué à l'échelle scène "
-                f"({len(target_sets)} set(s) visibles, scope source: {self._scope_label(self.last_texture_scope or self._get_selected_scope_keys())})."
-            ),
-            list(sorted(set(shown_objects + hidden_objects)))[:200],
-        )
-
-    def show_all_texture_sets(self) -> None:
-        if not self.detected_texture_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set détecté. Lancez d'abord Run Texture Sets.")
+    def check_placeholder(self, tab_key: str) -> None:
+        roots = self.tab_detected_roots[tab_key]
+        placeholder_key = next((k for k in roots if "placeholder" in k), None)
+        if not placeholder_key:
+            self.log(tab_key, "FAIL", "Placeholder", "Aucun root placeholder dans cet onglet.")
+            self._check_done(tab_key, "placeholder", False)
             return
-        for tr in cmds.ls(type="transform", long=True) or []:
-            try:
-                if cmds.getAttr(tr + ".visibility", settable=True):
-                    cmds.setAttr(tr + ".visibility", True)
-            except RuntimeError:
-                continue
-        self.set_texture_set_visibility(True, selected_only=False)
-
-    # ----------------------------- Actions -----------------------------
-    def load_ma_scene(self) -> None:
-        path = self.paths.get("ma", "")
-        if not path:
-            self.log("FAIL", "File", "Aucun fichier .ma sélectionné (scan requis).")
+        ph = self.get_selected_root(tab_key, placeholder_key)
+        primaries = [self.get_selected_root(tab_key, k) for k in roots if k != placeholder_key]
+        primaries = [p for p in primaries if p]
+        if not ph or not primaries:
+            self.log(tab_key, "FAIL", "Placeholder", "Roots insuffisants pour Placeholder Match.")
+            self._check_done(tab_key, "placeholder", False)
             return
-        if not os.path.isfile(path):
-            self.log("FAIL", "File", f"Fichier .ma introuvable: {path}")
-            return
+        tol = cmds.floatField(self.tab_ui[tab_key].get("placeholder_tol"), q=True, value=True) if self.tab_ui[tab_key].get("placeholder_tol") else 7.0
+        c0 = self._bbox_center(ph)
+        ok = True
+        for root in primaries:
+            dist = self._dist(c0, self._bbox_center(root))
+            if dist > tol:
+                ok = False
+                self.log(tab_key, "WARNING", "Placeholder", f"Décalage > tolérance ({dist:.3f}) entre placeholder et {self._short(root)}", [ph, root])
+        if ok:
+            self.log(tab_key, "INFO", "Placeholder", "Placeholder Match OK.")
+        self._check_done(tab_key, "placeholder", ok)
 
-        namespace = self.context["ma_namespace"]
-        if cmds.namespace(exists=namespace):
-            try:
-                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
-            except RuntimeError as exc:
-                self.log("WARNING", "File", f"Namespace {namespace} déjà présent (merge impossible): {exc}")
-
-        before = set(cmds.ls(long=True) or [])
-        cmds.file(path, reference=True, type="mayaAscii", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
-        after = set(cmds.ls(long=True) or [])
-        new_nodes = sorted(list(after - before))
-        self.context["ma_nodes"] = new_nodes
-        self.context["ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
-        self.paths["ma"] = path
-        self.log("INFO", "File", f"MA référencé sous namespace '{namespace}' ({len(self.context['ma_meshes'])} meshes détectés).")
-        self.auto_detect_scene_roots()
-
-    def load_fbx_into_scene(self) -> None:
-        path = self.paths.get("fbx", "")
-        if not path:
-            self.log("FAIL", "File", "Aucun fichier .fbx sélectionné (scan requis).")
-            return
-        if not os.path.isfile(path):
-            self.log("FAIL", "File", f"Fichier .fbx introuvable: {path}")
-            return
-
-        namespace = self.context["fbx_namespace"]
-
-        if cmds.namespace(exists=namespace):
-            try:
-                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
-            except RuntimeError:
-                self.log("WARNING", "FBX", f"Namespace {namespace} déjà présent, merge impossible automatiquement.")
-
-        before = set(cmds.ls(long=True) or [])
-        cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
-
-        after = set(cmds.ls(long=True) or [])
-        new_nodes = sorted(list(after - before))
-        self.context["fbx_nodes"] = new_nodes
-        self.context["fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
-
-        self.paths["fbx"] = path
-        self.log("INFO", "FBX", f"FBX référencé sous namespace '{namespace}' ({len(self.context['fbx_meshes'])} meshes détectés).")
-
-    def compare_ma_vs_fbx(self) -> None:
-        review_ns = self.context["fbx_namespace"]
-        ma_ns = self.context["ma_namespace"]
-
-        ma_meshes_all, _ = self._collect_mesh_transforms_in_namespace(ma_ns)
-        if not ma_meshes_all:
-            self.log("FAIL", "Compare", f"Aucun mesh MA détecté dans le namespace '{ma_ns}'. Utilisez Load MA.")
-            self.set_check_status("ma_fbx_compared", "FAIL")
-            return
-
-        ma_placeholder_ignored = sorted([m for m in ma_meshes_all if self._path_contains_placeholder_token(m)])
-        ma_placeholder_set = set(ma_placeholder_ignored)
-        ma_meshes = sorted([m for m in ma_meshes_all if m not in ma_placeholder_set])
-
-        if ma_placeholder_ignored:
-            self.log(
-                "INFO",
-                "Compare",
-                (
-                    f"Priorité Placeholder: {len(ma_placeholder_ignored)} mesh(es) sous {ma_ns} "
-                    "classés Placeholder et ignorés dans le compare MA vs FBX."
-                ),
-                ma_placeholder_ignored[:80],
-            )
-            for mesh in ma_placeholder_ignored[:60]:
-                self.log(
-                    "INFO",
-                    "Compare",
-                    f"Objet présent dans MA mais absent du FBX (attendu) : {mesh} | Classé Placeholder | Ignoré.",
-                    [mesh],
-                )
-
-        fbx_meshes, _ = self._collect_mesh_transforms_in_namespace(review_ns)
-
-        if not fbx_meshes:
-            self.log(
-                "WARNING",
-                "Compare",
-                f"Aucun mesh FBX détecté dans le namespace '{review_ns}'. Vérifiez l'action Reference FBX.",
-            )
-            self.set_check_status("ma_fbx_compared", "PENDING")
-            return
-
-        self.log(
-            "INFO",
-            "Compare",
-            (
-                f"MA meshes comparés (hors Placeholder): {len(ma_meshes)} | "
-                f"FBX meshes: {len(fbx_meshes)} | Placeholder MA ignorés: {len(ma_placeholder_ignored)}"
-            ),
-        )
-        ma_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in ma_meshes}
-        fbx_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in fbx_meshes}
-
-        ma_keys = set(ma_by_key.keys())
-        fbx_keys = set(fbx_by_key.keys())
-        missing_in_fbx = sorted(ma_keys - fbx_keys)
-        missing_in_ma = sorted(fbx_keys - ma_keys)
-
-        mismatch_items: List[str] = []
-        uv_mismatch: List[str] = []
-        topo_mismatch: List[str] = []
-        hierarchy_mismatch: List[str] = []
-        spatial_mismatch: List[str] = []
-        pivot_mismatch: List[str] = []
-
-        for key in sorted(ma_keys & fbx_keys):
-            ma_data = ma_by_key[key]
-            fbx_data = fbx_by_key[key]
-            details = []
-            if (ma_data["v"], ma_data["e"], ma_data["f"]) != (fbx_data["v"], fbx_data["e"], fbx_data["f"]):
-                topo_mismatch.append(key)
-                details.append(
-                    f"topo v/e/f MA({ma_data['v']}/{ma_data['e']}/{ma_data['f']}) != FBX({fbx_data['v']}/{fbx_data['e']}/{fbx_data['f']})"
-                )
-            if ma_data["uv_total"] != fbx_data["uv_total"] or ma_data["uv_sets"] != fbx_data["uv_sets"]:
-                uv_mismatch.append(key)
-                details.append(f"UV MA(total={ma_data['uv_total']}, sets={ma_data['uv_sets']}) != FBX(total={fbx_data['uv_total']}, sets={fbx_data['uv_sets']})")
-            if ma_data["parent_path"] != fbx_data["parent_path"]:
-                hierarchy_mismatch.append(key)
-                details.append(f"hierarchy MA({ma_data['parent_path']}) != FBX({fbx_data['parent_path']})")
-
-            pivot_delta = self._vector_distance(ma_data["pivot_world"], fbx_data["pivot_world"])
-            pivot_tol = 0.001
-            if pivot_delta > pivot_tol:
-                pivot_mismatch.append(key)
-                details.append(f"pivotΔ={pivot_delta:.5f} (tol={pivot_tol:.5f})")
-
-            translate_delta = self._vector_distance(ma_data["translate_world"], fbx_data["translate_world"])
-            ma_center = self._mesh_center_world(ma_data["path"])
-            fbx_center = self._mesh_center_world(fbx_data["path"])
-            ma_dims = self._mesh_bbox_dims_world(ma_data["path"])
-            fbx_dims = self._mesh_bbox_dims_world(fbx_data["path"])
-            center_delta = self._vector_distance(ma_center, fbx_center)
-            dim_delta = self._vector_distance(ma_dims, fbx_dims)
-            dim_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
-            center_tol = max(0.001, dim_ref * 0.01)
-            dim_tol = max(0.001, dim_ref * 0.01)
-            translate_tol = max(0.001, dim_ref * 0.01)
-            if center_delta > center_tol or dim_delta > dim_tol or translate_delta > translate_tol:
-                spatial_mismatch.append(key)
-                details.append(
-                    "spatial "
-                    f"centerΔ={center_delta:.5f} (tol={center_tol:.5f}), "
-                    f"bboxΔ={dim_delta:.5f} (tol={dim_tol:.5f}), "
-                    f"translateΔ={translate_delta:.5f} (tol={translate_tol:.5f})"
-                )
-            if details:
-                mismatch_items.append(f"{key} -> " + " | ".join(details))
-
-        ma_union = self._world_union_bbox([ma_by_key[k]["path"] for k in ma_keys]) if ma_keys else None
-        fbx_union = self._world_union_bbox([fbx_by_key[k]["path"] for k in fbx_keys]) if fbx_keys else None
-        global_bbox_warning = False
-        if ma_union and fbx_union:
-            ma_dims = self._bbox_dims(ma_union)
-            fbx_dims = self._bbox_dims(fbx_union)
-            ma_center = self._bbox_center(ma_union)
-            fbx_center = self._bbox_center(fbx_union)
-            global_dim_delta = self._vector_distance(ma_dims, fbx_dims)
-            global_center_delta = self._vector_distance(ma_center, fbx_center)
-            global_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
-            global_tol = max(0.001, global_ref * 0.02)
-            if global_dim_delta > global_tol or global_center_delta > global_tol:
-                global_bbox_warning = True
-                self.log(
-                    "WARNING",
-                    "Compare",
-                    (
-                        "Différence spatiale globale MA vs FBX détectée "
-                        f"(bboxΔ={global_dim_delta:.5f}, centerΔ={global_center_delta:.5f}, tol={global_tol:.5f}). "
-                        "Possible asset exploded vs non exploded."
-                    ),
-                )
-
-        if not missing_in_fbx and not missing_in_ma and not mismatch_items and not global_bbox_warning:
-            self.log("INFO", "Compare", "MA et FBX cohérents: topologie, UVs, hiérarchie et positionnement spatial alignés.")
-            self.set_check_status("ma_fbx_compared", "OK")
-            return
-
-        self.log("WARNING", "Compare", "Mismatch MA vs FBX détecté. Détails ci-dessous pour orienter la review.")
-        if missing_in_fbx:
-            self.log("FAIL", "Compare", f"Objets présents dans MA mais absents du FBX: {len(missing_in_fbx)}", [ma_by_key[k]["path"] for k in missing_in_fbx][:200])
-        if missing_in_ma:
-            self.log("FAIL", "Compare", f"Objets présents dans FBX mais absents du MA: {len(missing_in_ma)}", [fbx_by_key[k]["path"] for k in missing_in_ma][:200])
-        if topo_mismatch:
-            self.log("FAIL", "Compare", f"Différences de topologie/composants détectées: {len(topo_mismatch)}", [ma_by_key[k]["path"] for k in topo_mismatch][:200])
-        if uv_mismatch:
-            self.log("FAIL", "Compare", f"Différences d'UV détectées (counts/sets/shells): {len(uv_mismatch)}", [ma_by_key[k]["path"] for k in uv_mismatch][:200])
-        if hierarchy_mismatch:
-            self.log("WARNING", "Compare", f"Différences de hiérarchie/path détectées: {len(hierarchy_mismatch)}", [ma_by_key[k]["path"] for k in hierarchy_mismatch][:200])
-        if pivot_mismatch:
-            self.log("FAIL", "Compare", f"Différences de pivot détectées: {len(pivot_mismatch)}", [ma_by_key[k]["path"] for k in pivot_mismatch][:200])
-        if spatial_mismatch:
-            self.log(
-                "FAIL",
-                "Compare",
-                (
-                    f"Différences de positionnement spatial détectées: {len(spatial_mismatch)}. "
-                    "Possible exploded vs non exploded, ou placement incohérent."
-                ),
-                [ma_by_key[k]["path"] for k in spatial_mismatch][:200],
-            )
-        for detail in mismatch_items[:30]:
-            self.log("INFO", "CompareDetail", detail)
-
-        self.set_check_status("ma_fbx_compared", "FAIL")
-
-    def scan_namespaces(self) -> None:
-        user_ns = self._get_scan_namespaces()
-        self.last_scanned_namespaces = user_ns[:]
-
-        if not user_ns:
-            self.log("INFO", "Namespace", "Aucun namespace indésirable détecté (High_FBX_File/High_Ma_File ignorés volontairement).")
-            self.set_check_status("no_namespaces", "OK")
-            return
-
-        total_objs: List[str] = []
-        for ns in user_ns:
-            objs = cmds.ls(ns + ":*", long=True) or []
-            if not objs:
-                objs = [n for n in (cmds.ls(long=True) or []) if any(seg.startswith(ns + ":") for seg in n.split("|") if seg)]
-            total_objs.extend(objs)
-            self.log("WARNING", "Namespace", f"Namespace détecté: {ns} ({len(objs)} objets)", objs[:50])
-
-        self.log("FAIL", "Namespace", f"{len(user_ns)} namespace(s) utilisateur détecté(s).", total_objs[:200])
-        self.set_check_status("no_namespaces", "FAIL")
-
-    def remove_namespaces(self) -> None:
-        removable = self.last_scanned_namespaces[:] or self._get_scan_namespaces()
-        removable = [ns for ns in removable if not self._is_allowed_namespace(ns)]
-        if not removable:
-            self.log("INFO", "Namespace", "Aucun namespace à supprimer (High_FBX_File/High_Ma_File préservés).")
-            self.set_check_status("no_namespaces", "OK")
-            return
-
-        impacted_before = {ns: (cmds.ls(ns + ":*", long=True) or []) for ns in removable}
-        removed = []
-        failed = []
-        # remove deepest first to avoid parent/child namespace conflicts
-        for ns in sorted(removable, key=lambda n: n.count(":"), reverse=True):
-            try:
-                cmds.namespace(removeNamespace=ns, mergeNamespaceWithRoot=True)
-                removed.append(ns)
-            except RuntimeError as exc:
-                failed.append((ns, str(exc)))
-
-        if removed:
-            impacted_objs = []
-            for ns in removed:
-                impacted_objs.extend(impacted_before.get(ns, []))
-            self.log("INFO", "Namespace", f"Namespaces supprimés (merge vers root): {', '.join(removed)}", impacted_objs[:200])
-
-        if failed:
-            for ns, err in failed:
-                self.log("WARNING", "Namespace", f"Suppression impossible pour {ns}: {err}")
-            self.set_check_status("no_namespaces", "FAIL")
-        else:
-            self.log("INFO", "Namespace", "Suppression des namespaces indésirables terminée (High_FBX_File/High_Ma_File conservés).")
-            self.set_check_status("no_namespaces", "OK")
-        self.last_scanned_namespaces = self._get_scan_namespaces()
-
-    def check_placeholder_match(self) -> None:
-        resolution = self.resolve_scope_targets()
-        scope_keys = resolution["scope_keys"]
-        self._log_scope_resolution("Placeholder", resolution)
-        if not scope_keys:
-            self.log("FAIL", "Placeholder", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
-            self.set_check_status("placeholder_checked", "FAIL")
-            return
-        placeholder = self.get_placeholder_root()
-        if not placeholder or not cmds.objExists(placeholder):
-            self.log("FAIL", "Placeholder", "Placeholder root invalide/non détecté.")
-            self.set_check_status("placeholder_checked", "FAIL")
-            return
-
-        per_scope = resolution["per_scope_meshes"]
-        target_scope_keys = [k for k in scope_keys if k != "placeholder"]
-        target_meshes = sorted(set([m for k in target_scope_keys for m in per_scope.get(k, [])]))
-        if not target_meshes:
-            self.log("FAIL", "Placeholder", "Aucune cible High trouvée dans le scope sélectionné.")
-            self.set_check_status("placeholder_checked", "FAIL")
-            return
-
-        p_bb = cmds.exactWorldBoundingBox(placeholder)
-        h_bb = cmds.exactWorldBoundingBox(target_meshes)
-        p_dim = (p_bb[3] - p_bb[0], p_bb[4] - p_bb[1], p_bb[5] - p_bb[2])
-        h_dim = (h_bb[3] - h_bb[0], h_bb[4] - h_bb[1], h_bb[5] - h_bb[2])
-        p_piv = tuple(cmds.xform(placeholder, q=True, ws=True, rotatePivot=True))
-        h_piv = self._bbox_center(h_bb)
-        pivot_delta = tuple(h_piv[i] - p_piv[i] for i in range(3))
-
-        ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
-
-        tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
-        tolerance_percent = max(0.0, float(tolerance_percent))
-        tolerance = tolerance_percent / 100.0
-        axis_names = ["X", "Y", "Z"]
-        axis_deviation_percent = [self._placeholder_axis_deviation(r) for r in ratio]
-        max_deviation = max(axis_deviation_percent) if axis_deviation_percent else 0.0
-        mean_deviation = (sum(axis_deviation_percent) / float(len(axis_deviation_percent))) if axis_deviation_percent else 0.0
-        total_dims = max(sum(abs(v) for v in p_dim), 1e-6)
-        weighted_deviation = sum(axis_deviation_percent[i] * (abs(p_dim[i]) / total_dims) for i in range(3))
-        max_pivot_delta = max(abs(v) for v in pivot_delta)
-        pivot_info_threshold = max(max(abs(v) for v in p_dim), 1e-6) * tolerance
-        pivot_ok = max_pivot_delta <= pivot_info_threshold
-        dimensions_ok = all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0)
-
-        self.log("INFO", "Placeholder", "----- Placeholder Match -----")
-        self.log("INFO", "Placeholder", f"Scope utilisé: {self._scope_label(scope_keys)}")
-        self.log("INFO", "Placeholder", "Dimensions / proportions")
-        self.log("INFO", "Placeholder", f"Placeholder dims: {self._fmt_vec(p_dim)}")
-        self.log("INFO", "Placeholder", f"High dims: {self._fmt_vec(h_dim)}")
-        for idx, axis in enumerate(axis_names):
-            self.log(
-                "INFO",
-                "Placeholder",
-                f"Ratio axe {axis}: {ratio[idx]:.4f} ({self._fmt_size_percent(ratio[idx])})",
-            )
-            self.log("INFO", "Placeholder", f"Écart axe {axis}: {axis_deviation_percent[idx]:.2f}%")
-        self.log("INFO", "Placeholder", f"Écart maximal: {max_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Écart moyen: {mean_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Écart pondéré (dimensions): {weighted_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Seuil autorisé: {tolerance_percent:.2f}%")
-        self.log("INFO", "Placeholder", "Critère principal (validation): Écart maximal par axe <= seuil.")
-        self.log("INFO", "Placeholder", f"Décision proportions: {'OK' if dimensions_ok else 'FAIL'}")
-
-        self.log("INFO", "Placeholder", "Pivot / position")
-        self.log("INFO", "Placeholder", f"Pivot placeholder: {self._fmt_vec(p_piv)}")
-        self.log("INFO", "Placeholder", f"Pivot high (centre bbox scope): {self._fmt_vec(h_piv)}")
-        self.log("INFO", "Placeholder", f"Pivot delta: {self._fmt_vec(pivot_delta)}")
-        self.log(
-            "INFO",
-            "Placeholder",
-            (
-                f"Décision pivot: {'OK' if pivot_ok else 'FAIL'} "
-                f"(informatif, seuil={pivot_info_threshold:.4f}, max delta={max_pivot_delta:.4f})"
-            ),
-        )
-
-        if dimensions_ok:
-            self.log("INFO", "Placeholder", "Résultat final: OK (proportions validées).")
-            self.set_check_status("placeholder_checked", "OK")
-        else:
-            worst_axis_idx = axis_deviation_percent.index(max_deviation) if axis_deviation_percent else 1
-            reason = (
-                f"Résultat final: FAIL | raison principale: l'axe {axis_names[worst_axis_idx]} "
-                f"dépasse le seuil ({max_deviation:.2f}% > {tolerance_percent:.2f}%)."
-            )
-            self.log("WARNING", "Placeholder", reason, [placeholder] + target_meshes[:150])
-            self.set_check_status("placeholder_checked", "FAIL")
-
-    def run_topology_checks(self) -> None:
-        resolution = self.resolve_scope_targets()
-        scope_keys = resolution["scope_keys"]
-        meshes = resolution["meshes"]
-        self._log_scope_resolution("Topology", resolution)
-        if not scope_keys:
-            self.log("FAIL", "Topology", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
-            self.set_check_status("topology_checked", "FAIL")
-            return
+    def check_topology(self, tab_key: str) -> None:
+        meshes = sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr})
         if not meshes:
-            self.log("FAIL", "Topology", "Aucun objet trouvé pour le scope sélectionné.")
-            self.set_check_status("topology_checked", "FAIL")
+            self.log(tab_key, "FAIL", "Topology", "Aucun mesh dans le scope implicite.")
+            self._check_done(tab_key, "topology", False)
             return
-
-        self.log("INFO", "Topology", f"Meshes analysés: {len(meshes)}")
-
-        fail_count = 0
-        warn_count = 0
-
-        non_manifold_items = []
-        lamina_items = []
-        ngon_faces = []
-        zero_length_edges = []
-        zero_area_faces = []
-        hidden_meshes = []
-        meshes_with_history = []
-        non_identity = []
-        instances = []
-
-        for m in meshes:
-            nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
-            nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
-            lam = cmds.polyInfo(m, laminaFaces=True) or []
-
-            if nmv or nme:
-                non_manifold_items.append(m)
-            if lam:
-                lamina_items.append(m)
-
-            face_count = cmds.polyEvaluate(m, face=True) or 0
-            for face_idx in range(face_count):
-                vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
-                if not vtx:
-                    continue
-                # "FACE    0:    10 11 12 13" -> keep numeric tokens only.
-                tokens = [tok for tok in vtx[0].replace(":", " ").split() if tok.isdigit()]
-                if len(tokens) > 5:  # first numeric token is face id
-                    ngon_faces.append(f"{m}.f[{face_idx}]")
-
-            edge_count = cmds.polyEvaluate(m, edge=True) or 0
-            for edge_idx in range(edge_count):
-                edge_comp = f"{m}.e[{edge_idx}]"
-                edge_info = cmds.polyInfo(edge_comp, edgeToVertex=True) or []
-                if not edge_info:
-                    continue
-                # "EDGE   1:   3 7"
-                verts = [tok for tok in edge_info[0].replace(":", " ").split() if tok.isdigit()]
-                if len(verts) < 3:
-                    continue
-                v1 = f"{m}.vtx[{verts[-2]}]"
-                v2 = f"{m}.vtx[{verts[-1]}]"
-                p1 = cmds.pointPosition(v1, world=True)
-                p2 = cmds.pointPosition(v2, world=True)
-                length_sq = sum((p1[i] - p2[i]) ** 2 for i in range(3))
-                if length_sq <= 1e-12:
-                    zero_length_edges.append(edge_comp)
-
-            face_area = cmds.polyEvaluate(f"{m}.f[*]", area=True) or 0.0
-            if isinstance(face_area, list):
-                for idx, area in enumerate(face_area):
-                    if area <= 1e-12:
-                        zero_area_faces.append(f"{m}.f[{idx}]")
-            elif face_area <= 1e-12 and face_count > 0:
-                # fallback when Maya returns one total area value
-                zero_area_faces.extend([f"{m}.f[{i}]" for i in range(face_count)])
-
-            if not cmds.getAttr(m + ".visibility"):
-                hidden_meshes.append(m)
-
-            hist = cmds.listHistory(m, pruneDagObjects=True) or []
-            hist = [h for h in hist if cmds.nodeType(h) not in ("transform", "mesh", "groupId", "shadingEngine")]
-            if hist:
-                meshes_with_history.append(m)
-
-            t = cmds.xform(m, q=True, os=True, translation=True)
-            r = cmds.xform(m, q=True, os=True, rotation=True)
-            s = cmds.xform(m, q=True, r=True, scale=True)
-            if any(abs(v) > 1e-4 for v in (t + r)) or any(abs(v - 1.0) > 1e-4 for v in s):
-                non_identity.append(m)
-
-            shape = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
-            if shape:
-                parents = cmds.listRelatives(shape[0], allParents=True, fullPath=True) or []
-                if len(parents) > 1:
-                    instances.append(m)
-
-        if ngon_faces:
-            self.log("FAIL", "Topology", f"Faces avec plus de 4 côtés: {len(ngon_faces)}", ngon_faces[:200])
-            fail_count += 1
-        if lamina_items:
-            self.log("FAIL", "Topology", f"Lamina faces détectées sur {len(lamina_items)} mesh(es).", lamina_items)
-            fail_count += 1
-        if non_manifold_items:
-            self.log("FAIL", "Topology", f"Non-manifold détecté sur {len(non_manifold_items)} mesh(es).", non_manifold_items)
-            fail_count += 1
-        if zero_length_edges:
-            self.log("FAIL", "Topology", f"Edges de longueur nulle détectées: {len(zero_length_edges)}", zero_length_edges[:200])
-            fail_count += 1
-        if zero_area_faces:
-            self.log("FAIL", "Topology", f"Faces avec aire nulle détectées: {len(zero_area_faces)}", zero_area_faces[:200])
-            fail_count += 1
-        if meshes_with_history:
-            self.log("WARNING", "Topology", f"Historique non supprimé sur {len(meshes_with_history)} mesh(es).", meshes_with_history)
-            warn_count += 1
-        if non_identity:
-            self.log("WARNING", "Topology", f"Transforms non gelées/non identitaires sur {len(non_identity)} mesh(es).", non_identity)
-            warn_count += 1
-        if hidden_meshes:
-            self.log("WARNING", "Topology", f"Géométrie cachée détectée: {len(hidden_meshes)} mesh(es).", hidden_meshes)
-            warn_count += 1
-        if instances:
-            self.log("WARNING", "Topology", f"Instances détectées: {len(set(instances))} mesh(es).", list(set(instances)))
-            warn_count += 1
-
-        high_root = self.get_high_root()
-        if high_root and "high_ma" in scope_keys:
-            descendants = cmds.listRelatives(high_root, allDescendents=True, fullPath=True) or []
-            non_mesh_desc = [d for d in descendants if cmds.nodeType(d) not in ("transform", "mesh")]
-            if non_mesh_desc:
-                self.log("INFO", "Topology", f"Objets non mesh sous High root: {len(non_mesh_desc)}", non_mesh_desc[:80])
-
-            empty_transforms = []
-            for tr in (cmds.listRelatives(high_root, allDescendents=True, fullPath=True, type="transform") or []):
-                children = cmds.listRelatives(tr, children=True, fullPath=True) or []
-                if not children:
-                    empty_transforms.append(tr)
-            if empty_transforms:
-                self.log("WARNING", "Topology", f"Transforms vides détectées: {len(empty_transforms)}", empty_transforms[:80])
-                warn_count += 1
-
-        if fail_count == 0 and warn_count == 0:
-            self.log("INFO", "Topology", "Aucun problème topologique majeur détecté.")
-            self.set_check_status("topology_checked", "OK")
-        elif fail_count == 0:
-            self.log("WARNING", "Topology", "Checks topologie terminés avec warnings.")
-            self.set_check_status("topology_checked", "PENDING")
-        else:
-            self.set_check_status("topology_checked", "FAIL")
-
-    def analyze_texture_sets(self, mode: str = "materials") -> None:
-        resolution = self.resolve_scope_targets()
-        scope_keys = resolution["scope_keys"]
-        meshes = resolution["meshes"]
-        per_scope_meshes = resolution["per_scope_meshes"]
-        texture_scope_roots = self._resolve_texture_scope_roots(resolution)
-        analysis_roots = texture_scope_roots["included_roots"]
-        primary_root = texture_scope_roots["primary_root"]
-        self._log_scope_resolution("TextureSets", resolution)
-        if not scope_keys:
-            self.log("FAIL", "TextureSets", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
-            self.set_check_status("texture_sets_analyzed", "FAIL")
-            return
-        if not meshes:
-            self.log("FAIL", "TextureSets", "Aucun objet trouvé pour le scope sélectionné.")
-            self.set_check_status("texture_sets_analyzed", "FAIL")
-            return
-        self.log("INFO", "TextureSets", "Root(s) résolus pour Texture Sets :")
-        if analysis_roots:
-            for root in analysis_roots:
-                self.log("INFO", "TextureSets", f"- {self._short_name(root)}")
-        else:
-            self.log("WARNING", "TextureSets", "- Aucun root explicite résolu pour le scope actif.")
-
-        excluded_roots = texture_scope_roots.get("excluded_roots", {})
-        excluded_lines: List[str] = []
-        for key in ["placeholder", "high_fbx", "high_ma"]:
-            for root in excluded_roots.get(key, []):
-                reason = "hors scope"
-                if key == "placeholder":
-                    reason = "placeholder / hors scope"
-                excluded_lines.append(f"- {self._short_name(root)} ({reason})")
-        if excluded_lines:
-            self.log("INFO", "TextureSets", "Root(s) exclus :")
-            for line in excluded_lines:
-                self.log("INFO", "TextureSets", line)
-
-        detected: Dict[str, Dict[str, object]] = {}
-        mode = (mode or "materials").lower().strip()
-        include_material = mode in {"material", "materials"}
-        include_groups = mode in {"groups", "group"}
-        if "all_mesh" in scope_keys and "all_incl_mat" not in scope_keys:
-            include_material = False
-
-        mat_to_meshes: Dict[str, List[str]] = {}
-        if include_material:
-            for m in meshes:
-                shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
-                if not shapes:
-                    continue
-                shape = shapes[0]
-
-                sgs = cmds.listConnections(shape, type="shadingEngine") or []
-                if not sgs:
-                    mat_to_meshes.setdefault("<NO_MATERIAL>", []).append(m)
-                    continue
-
-                mats_for_mesh = set()
-                for sg in sgs:
-                    mats = cmds.listConnections(sg + ".surfaceShader") or []
-                    if mats:
-                        mats_for_mesh.update(mats)
-                    else:
-                        mats_for_mesh.add("<UNBOUND_SURFACESHADER>")
-
-                for mat in mats_for_mesh:
-                    mat_to_meshes.setdefault(mat, []).append(m)
-
-            for mat, mat_meshes in mat_to_meshes.items():
-                detected[f"MAT::{mat}"] = {
-                    "name": mat,
-                    "display_name": self._strip_namespaces_from_name(mat),
-                    "method": "material",
-                    "objects": sorted(set(mat_meshes)),
-                }
-
-        group_method_log_lines: List[str] = []
-        if include_groups:
-            if mode in {"groups", "group"}:
-                group_sets, group_method_log_lines = self._compute_root_children_texture_sets(analysis_roots, meshes)
-                detected.update(group_sets)
-            else:
-                direct_children = [m for m in meshes if cmds.listRelatives(m, parent=True, fullPath=True)]
-                grouped: Dict[str, List[str]] = {}
-                for mesh in direct_children:
-                    parent = cmds.listRelatives(mesh, parent=True, fullPath=True) or []
-                    if not parent:
-                        continue
-                    grouped.setdefault(parent[0], []).append(mesh)
-                for child, child_meshes in grouped.items():
-                    if child_meshes:
-                        key = f"GRP::{self._short_name(child)}"
-                        display_name = self._clean_texture_set_display_name(self._short_name(child), primary_root)
-                        detected[key] = {
-                            "name": self._strip_namespaces_from_name(self._short_name(child)),
-                            "display_name": display_name,
-                            "method": "group",
-                            "objects": sorted(set(child_meshes)),
-                        }
-
-        total_quads = 0
-        mesh_quad_cache: Dict[str, Tuple[int, int]] = {}
+        problems = 0
         for mesh in meshes:
-            quad_count, _ = self._mesh_quad_and_face_count(mesh)
-            mesh_quad_cache[mesh] = (quad_count, 0)
-            total_quads += quad_count
-
-        for set_key, data in detected.items():
-            unique_meshes = sorted(set(data.get("objects", [])))
-            set_quads = sum(mesh_quad_cache.get(mesh, (0, 0))[0] for mesh in unique_meshes)
-            percentage = (float(set_quads) / float(total_quads) * 100.0) if total_quads else 0.0
-            data["quad_count"] = int(set_quads)
-            data["percent_of_total"] = percentage
-            data["objects"] = unique_meshes
-            data["sources"] = self._infer_set_sources(unique_meshes, per_scope_meshes)
-
-        self.detected_texture_sets = detected
-        self.last_texture_scope = scope_keys[:]
-        self.texture_set_visibility = {k: self.texture_set_visibility.get(k, True) for k in self.detected_texture_sets.keys()}
-        for set_key in self.detected_texture_sets:
-            self.texture_set_visibility.setdefault(set_key, True)
-        self._refresh_texture_sets_list_ui()
-
-        mode_label = {"groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
-        if group_method_log_lines:
-            for line in group_method_log_lines:
-                self.log("INFO", "TextureSets", line)
-        if mode in {"groups", "group"}:
-            cleaned_names = [
-                data.get("display_name", data.get("name", set_key))
-                for set_key, data in sorted(self.detected_texture_sets.items())
-            ]
-            self.log("INFO", "TextureSets", f"Nombre de texture sets détectés (1er niveau): {len(cleaned_names)}")
-            if cleaned_names:
-                self.log("INFO", "TextureSets", f"Texture sets lisibles: {', '.join(cleaned_names)}")
-        self.log("INFO", "TextureSets", f"Texture sets détectés ({mode_label}): {len(self.detected_texture_sets)}")
-        self.log("INFO", "TextureSets", f"Total High root: {total_quads} quads")
-        for set_key in sorted(self.detected_texture_sets.keys()):
-            data = self.detected_texture_sets[set_key]
-            objs = data.get("objects", [])
-            display_name = data.get("display_name", data.get("name", set_key))
-            method = data.get("method", "unknown")
-            quad_count = int(data.get("quad_count", 0))
-            percent = float(data.get("percent_of_total", 0.0))
-            self.log(
-                "INFO",
-                "TextureSets",
-                f"{display_name} | méthode={method} | {quad_count} quads | {percent:.1f}% du High | {len(objs)} objet(s)",
-                objs[:150],
-            )
-
-        if "<NO_MATERIAL>" in mat_to_meshes or "<UNBOUND_SURFACESHADER>" in mat_to_meshes:
-            self.log("WARNING", "TextureSets", "Des meshes sans matériau valide ont été détectés.")
-            self.set_check_status("texture_sets_analyzed", "PENDING")
+            try:
+                ngons = cmds.polyInfo(mesh, faceToVertex=True) or []
+                if any(len([t for t in line.split() if t.isdigit()]) - 1 > 4 for line in ngons[:200]):
+                    problems += 1
+            except Exception:
+                continue
+        if problems:
+            self.log(tab_key, "WARNING", "Topology", f"Meshes avec faces potentiellement non-quad: {problems}")
+            self._check_done(tab_key, "topology", False)
         else:
-            self.set_check_status("texture_sets_analyzed", "OK" if self.detected_texture_sets else "PENDING")
-        if not self.detected_texture_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set exploitable détecté via la méthode active.")
+            self.log(tab_key, "INFO", "Topology", "Topology check OK.")
+            self._check_done(tab_key, "topology", True)
+
+    def _check_uv_set(self, tab_key: str, minimum_sets: int, check_key: str, label: str) -> None:
+        meshes = sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr})
+        bad = []
+        for mesh in meshes:
+            shape = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
+            if not shape:
+                continue
+            uv_sets = cmds.polyUVSet(shape[0], q=True, allUVSets=True) or []
+            if len(uv_sets) < minimum_sets:
+                bad.append(mesh)
+        if bad:
+            self.log(tab_key, "FAIL", label, f"{len(bad)} mesh(es) sans setup UV requis.", bad[:20])
+            self._check_done(tab_key, check_key, False)
         else:
-            self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
+            self.log(tab_key, "INFO", label, "Setup UV conforme.")
+            self._check_done(tab_key, check_key, True)
 
-    def check_vertex_colors(self) -> None:
-        resolution = self.resolve_scope_targets()
-        scope_keys = resolution["scope_keys"]
-        meshes = resolution["meshes"]
-        self._log_scope_resolution("VertexColor", resolution)
-        if not scope_keys:
-            self.log("FAIL", "VertexColor", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
-            self.set_check_status("vertex_colors_checked", "FAIL")
-            return
-        if not meshes:
-            self.log("FAIL", "VertexColor", "Aucun objet trouvé pour le scope sélectionné.")
-            self.set_check_status("vertex_colors_checked", "FAIL")
-            return
+    def check_uv01(self, tab_key: str) -> None:
+        self._check_uv_set(tab_key, 1, "uv01", "UV01")
 
-        with_vc = []
-        without_vc = []
-        partial_missing: Dict[str, int] = {}
+    def check_uv02(self, tab_key: str) -> None:
+        self._check_uv_set(tab_key, 2, "uv02", "UV02")
 
-        for m in meshes:
-            shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
+    def _collect_texture_sets(self, tab_key: str, mode: str) -> Dict[str, Dict[str, Any]]:
+        sets: Dict[str, Dict[str, Any]] = {}
+        for scope, meshes in self._active_mesh_sets(tab_key).items():
+            for mesh in meshes:
+                if mode == "materials":
+                    shapes = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
+                    if not shapes:
+                        continue
+                    engines = cmds.listConnections(shapes[0], type="shadingEngine") or []
+                    names = [self._strip_ns(e) for e in engines] or ["NoMaterial"]
+                else:
+                    names = [self._strip_ns(self._short(mesh).split("_")[0])]
+                for n in names:
+                    key = f"{scope}::{n}"
+                    if key not in sets:
+                        sets[key] = {"name": n, "scope": scope, "objects": []}
+                    sets[key]["objects"].append(mesh)
+        return sets
+
+    def _apply_texture_list(self, tab_key: str, sets: Dict[str, Dict[str, Any]]) -> None:
+        self.tab_texture_sets[tab_key] = sets
+        self.tab_texture_map[tab_key] = {}
+        list_ui = self.tab_ui[tab_key]["texture_list"]
+        cmds.textScrollList(list_ui, e=True, removeAll=True)
+        for key in sorted(sets):
+            data = sets[key]
+            label = f"{data['scope']} | {data['name']} | {len(data['objects'])} obj(s)"
+            self.tab_texture_map[tab_key][label] = key
+            cmds.textScrollList(list_ui, e=True, append=label)
+
+    def check_texture_sets_materials(self, tab_key: str) -> None:
+        sets = self._collect_texture_sets(tab_key, "materials")
+        self._apply_texture_list(tab_key, sets)
+        self.log(tab_key, "INFO", "TextureSets", f"Texture sets (Materials) détectés: {len(sets)}")
+        self._check_done(tab_key, "tex_mats", len(sets) > 0)
+
+    def check_texture_sets_groups(self, tab_key: str) -> None:
+        sets = self._collect_texture_sets(tab_key, "groups")
+        self._apply_texture_list(tab_key, sets)
+        self.log(tab_key, "INFO", "TextureSets", f"Texture sets (Groups) détectés: {len(sets)}")
+        self._check_done(tab_key, "tex_groups", len(sets) > 0)
+
+    def _selected_texture_keys(self, tab_key: str) -> List[str]:
+        selected = cmds.textScrollList(self.tab_ui[tab_key]["texture_list"], q=True, selectItem=True) or []
+        return [self.tab_texture_map[tab_key][s] for s in selected if s in self.tab_texture_map[tab_key]]
+
+    def set_texture_visibility(self, tab_key: str, visible: bool, selected_only: bool) -> None:
+        keys = self._selected_texture_keys(tab_key) if selected_only else list(self.tab_texture_sets[tab_key].keys())
+        for key in keys:
+            for obj in self.tab_texture_sets[tab_key][key]["objects"]:
+                if cmds.objExists(obj):
+                    cmds.setAttr(obj + ".visibility", 1 if visible else 0)
+
+    def toggle_selected_texture(self, tab_key: str) -> None:
+        for key in self._selected_texture_keys(tab_key):
+            for obj in self.tab_texture_sets[tab_key][key]["objects"]:
+                if cmds.objExists(obj):
+                    state = cmds.getAttr(obj + ".visibility")
+                    cmds.setAttr(obj + ".visibility", 0 if state else 1)
+
+    def isolate_selected_texture(self, tab_key: str) -> None:
+        selected_objs: Set[str] = set()
+        for key in self._selected_texture_keys(tab_key):
+            selected_objs.update(self.tab_texture_sets[tab_key][key]["objects"])
+        all_objs = {o for data in self.tab_texture_sets[tab_key].values() for o in data["objects"]}
+        for obj in all_objs:
+            if cmds.objExists(obj):
+                cmds.setAttr(obj + ".visibility", 1 if obj in selected_objs else 0)
+
+    def show_all_texture(self, tab_key: str) -> None:
+        self.set_texture_visibility(tab_key, True, selected_only=False)
+
+    def check_vertex_colors(self, tab_key: str) -> None:
+        meshes = sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr})
+        bad = []
+        for mesh in meshes:
+            shapes = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
             if not shapes:
                 continue
-            shape = shapes[0]
-            color_sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
-            if color_sets:
-                with_vc.append(m)
-                face_count = int(cmds.polyEvaluate(shape, face=True) or 0)
-                missing_faces = 0
-                for face_idx in range(face_count):
-                    face_comp = f"{shape}.f[{face_idx}]"
-                    rgb = cmds.polyColorPerVertex(face_comp, query=True, rgb=True) or []
-                    if not rgb:
-                        missing_faces += 1
-                if missing_faces > 0:
-                    partial_missing[m] = missing_faces
-            else:
-                without_vc.append(m)
-
-        self.log("INFO", "VertexColor", f"Meshes avec vertex colors: {len(with_vc)}", with_vc[:150])
-        self.log("INFO", "VertexColor", f"Meshes sans vertex colors: {len(without_vc)}", without_vc[:150])
-
-        if partial_missing:
-            self.log("FAIL", "VertexColor", f"Faces sans vertex color détectées sur {len(partial_missing)} mesh(es).")
-            for mesh, count in sorted(partial_missing.items())[:50]:
-                self.log("INFO", "VertexColorDetail", f"{mesh}: {count} face(s) sans vertex color", [mesh])
-
-        if without_vc:
-            self.log("FAIL", "VertexColor", "Certains meshes n'ont pas de vertex color set.", without_vc)
-
-        if without_vc or partial_missing:
-            self.set_check_status("vertex_colors_checked", "FAIL")
+            sets = cmds.polyColorSet(shapes[0], q=True, allColorSets=True) or []
+            if not sets:
+                bad.append(mesh)
+        if bad:
+            self.log(tab_key, "WARNING", "VertexColor", f"Meshes sans color set: {len(bad)}", bad[:20])
+            self._check_done(tab_key, "vcolor", False)
         else:
-            self.log("INFO", "VertexColor", "Tous les meshes analysés possèdent au moins un color set.")
-            self.set_check_status("vertex_colors_checked", "OK")
+            self.log(tab_key, "INFO", "VertexColor", "Vertex colors OK.")
+            self._check_done(tab_key, "vcolor", True)
 
-    def display_vertex_colors(self) -> None:
-        resolution = self.resolve_scope_targets()
-        scope_keys = resolution["scope_keys"]
-        targets = resolution["meshes"]
-        self._log_scope_resolution("VertexColor", resolution)
-        if not scope_keys:
-            self.log("WARNING", "VertexColor", "Aucun scope sélectionné. Action annulée.")
-            return
-        if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet trouvé pour le scope sélectionné.")
-            return
-
-        shown = []
-        for tr in targets:
-            shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            if not shapes:
-                continue
-            for shape in shapes:
+    def display_vertex_colors(self, tab_key: str) -> None:
+        for mesh in sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr}):
+            shapes = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
+            for s in shapes:
                 try:
-                    cmds.setAttr(shape + ".displayColors", 1)
-                    shown.append(tr)
-                except RuntimeError:
-                    continue
+                    cmds.setAttr(s + ".displayColors", 1)
+                except Exception:
+                    pass
 
-        cmds.polyOptions(colorShadedDisplay=True)
-        self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({self._scope_label(scope_keys)}).", list(sorted(set(shown)))[:150])
-
-    def hide_vertex_colors(self) -> None:
-        resolution = self.resolve_scope_targets()
-        scope_keys = resolution["scope_keys"]
-        targets = resolution["meshes"]
-        self._log_scope_resolution("VertexColor", resolution)
-        if not scope_keys:
-            self.log("WARNING", "VertexColor", "Aucun scope sélectionné. Action annulée.")
-            return
-        if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet trouvé pour le scope sélectionné.")
-            return
-
-        hidden = []
-        for tr in targets:
-            shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            if not shapes:
-                continue
-            for shape in shapes:
+    def hide_vertex_colors(self, tab_key: str) -> None:
+        for mesh in sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr}):
+            shapes = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
+            for s in shapes:
                 try:
-                    cmds.setAttr(shape + ".displayColors", 0)
-                    hidden.append(tr)
-                except RuntimeError:
-                    continue
+                    cmds.setAttr(s + ".displayColors", 0)
+                except Exception:
+                    pass
 
-        self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(set(hidden))} objet(s) ({self._scope_label(scope_keys)}).", list(sorted(set(hidden)))[:150])
-
-    def isolate_meshes_without_vertex_color(self) -> None:
-        high_root = self.get_high_root()
-        meshes = self._collect_mesh_transforms(root=high_root)
-
-        without_vc = []
-        for m in meshes:
-            shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
+    def isolate_meshes_without_vcolor(self, tab_key: str) -> None:
+        missing = []
+        for mesh in sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr}):
+            shapes = cmds.listRelatives(mesh, s=True, ni=True, f=True, type="mesh") or []
             if not shapes:
                 continue
-            color_sets = cmds.polyColorSet(shapes[0], query=True, allColorSets=True) or []
-            if not color_sets:
-                without_vc.append(m)
-
-        if not without_vc:
-            self.log("INFO", "VertexColor", "Aucun mesh sans vertex color à isoler.")
+            if not (cmds.polyColorSet(shapes[0], q=True, allColorSets=True) or []):
+                missing.append(mesh)
+        if not missing:
+            self.log(tab_key, "INFO", "VertexColor", "Aucun mesh sans VColor.")
             return
+        all_meshes = sorted({m for arr in self._active_mesh_sets(tab_key).values() for m in arr})
+        for mesh in all_meshes:
+            if cmds.objExists(mesh):
+                cmds.setAttr(mesh + ".visibility", 1 if mesh in missing else 0)
+        cmds.select(missing, r=True)
+        self.log(tab_key, "WARNING", "VertexColor", f"Isolation de {len(missing)} mesh(es) sans VColor.", missing[:20])
 
-        cmds.select(without_vc, replace=True)
-        cmds.isolateSelect("modelPanel4", state=True)
-        self.log("INFO", "VertexColor", f"Isolation activée pour {len(without_vc)} mesh(es) sans vertex colors.", without_vc)
+    def check_design_manual(self, tab_key: str) -> None:
+        state = cmds.checkBox(self.tab_ui[tab_key]["check_boxes"]["design"], q=True, value=True)
+        self._check_done(tab_key, "design", state)
+        if state:
+            self.log(tab_key, "INFO", "DesignKit", "Design kit validé manuellement.")
 
-    def run_all_checks(self) -> None:
-        self.log("INFO", "RunAll", "Lancement des checks High Poly...")
-        self.compare_ma_vs_fbx()
-        self.scan_namespaces()
-        self.check_placeholder_match()
-        self.run_topology_checks()
-        self.analyze_texture_sets(mode="materials")
-        self.check_vertex_colors()
-        self.log("INFO", "RunAll", "Checks High Poly terminés.")
+    def mark_design_reviewed(self, tab_key: str) -> None:
+        cmds.checkBox(self.tab_ui[tab_key]["check_boxes"]["design"], e=True, value=True)
+        self.check_design_manual(tab_key)
 
-    def build_report_payload(self) -> Dict:
-        return {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "asset_name": self._detect_asset_name(),
-            "file_paths": self.paths,
-            "checklist": self.check_states,
-            "summary": self._summary_dict(),
-            "notes": cmds.scrollField(self.ui["notes_field"], q=True, text=True),
-            "results": [
-                {
-                    "level": i.level,
-                    "category": i.category,
-                    "message": i.message,
-                    "objects": i.objects,
-                }
-                for i in self.result_items
-            ],
-        }
-
-    def _summary_dict(self) -> Dict[str, int]:
-        return {
-            "ok_checks": sum(1 for c in self.check_states.values() if c["status"] == "OK"),
-            "warning_count": sum(1 for i in self.result_items if i.level == "WARNING"),
-            "fail_count": sum(1 for i in self.result_items if i.level == "FAIL"),
-            "pending_checks": sum(1 for c in self.check_states.values() if c["status"] == "PENDING"),
-        }
-
-    def _detect_asset_name(self) -> str:
-        if self.paths.get("ma"):
-            return os.path.splitext(os.path.basename(self.paths["ma"]))[0]
-        scene = cmds.file(query=True, sceneName=True) or ""
-        if scene:
-            return os.path.splitext(os.path.basename(scene))[0]
-        return "UNKNOWN_ASSET"
-
-    def save_report(self) -> None:
-        payload = self.build_report_payload()
-        out = cmds.fileDialog2(
-            fileFilter="JSON (*.json);;Text (*.txt)",
-            dialogStyle=2,
-            fileMode=0,
-            caption="Save High Poly Review Report"
-        )
-        if not out:
-            return
-
-        path = out[0]
-        ext = os.path.splitext(path)[1].lower()
-        if ext == ".json":
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
+    def check_bake_presence(self, tab_key: str) -> None:
+        high = self.get_selected_root(tab_key, "bake_high_root")
+        low = self.get_selected_root(tab_key, "bake_low_root")
+        ok = bool(high and low)
+        if ok:
+            self.log(tab_key, "INFO", "BakeScene", "High et Low présents dans la Bake Scene.", [high, low])
         else:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(self._format_text_report(payload))
+            self.log(tab_key, "FAIL", "BakeScene", "High ou Low absent dans la Bake Scene.")
+        self._check_done(tab_key, "presence", ok)
 
-        self.log("INFO", "Report", f"Rapport sauvegardé: {path}")
+    def check_bake_alignment(self, tab_key: str) -> None:
+        high = self.get_selected_root(tab_key, "bake_high_root")
+        low = self.get_selected_root(tab_key, "bake_low_root")
+        if not high or not low:
+            self.log(tab_key, "FAIL", "BakeAlign", "Roots bake high/low manquants.")
+            self._check_done(tab_key, "align", False)
+            return
+        d = self._dist(self._bbox_center(high), self._bbox_center(low))
+        ok = d < 0.01
+        self.log(tab_key, "INFO" if ok else "WARNING", "BakeAlign", f"Distance centre high/low: {d:.5f}", [high, low])
+        self._check_done(tab_key, "align", ok)
 
-    def _format_text_report(self, payload: Dict) -> str:
-        lines = []
-        lines.append("=== High Poly Review Report ===")
-        lines.append(f"Date: {payload['timestamp']}")
-        lines.append(f"Asset: {payload['asset_name']}")
-        lines.append("")
+    def check_naming_bake(self, tab_key: str) -> None:
+        bad = []
+        for key in ["bake_high_root", "bake_low_root"]:
+            root = self.get_selected_root(tab_key, key)
+            if not root:
+                continue
+            suffix = "_high" if "high" in key else "_low"
+            for m in self._collect_mesh_transforms(root):
+                if not self._strip_ns(self._short(m)).lower().endswith(suffix):
+                    bad.append(m)
+        ok = len(bad) == 0
+        self.log(tab_key, "INFO" if ok else "FAIL", "Naming", "Naming bake conforme." if ok else f"Meshes mal nommés: {len(bad)}", bad[:20])
+        self._check_done(tab_key, "naming", ok)
 
-        lines.append("--- File Paths ---")
-        for key, value in payload["file_paths"].items():
-            lines.append(f"{key}: {value}")
-        lines.append("")
+    def check_naming_final(self, tab_key: str) -> None:
+        root = self.get_selected_root(tab_key, "final_root")
+        if not root:
+            self.log(tab_key, "FAIL", "Naming", "Final root non détecté.")
+            self._check_done(tab_key, "naming", False)
+            return
+        bad = [m for m in self._collect_mesh_transforms(root) if self._strip_ns(self._short(m)).lower().endswith("_low")]
+        ok = len(bad) == 0
+        self.log(tab_key, "INFO" if ok else "FAIL", "Naming", "Naming final sans _low OK." if ok else f"Meshes avec suffix _low: {len(bad)}", bad[:20])
+        self._check_done(tab_key, "naming", ok)
 
-        lines.append("--- Checklist ---")
-        for key, data in payload["checklist"].items():
-            lines.append(f"{key}: {data['status']} ({data['mode']})")
-        lines.append("")
+    def run_all_checks(self, tab_key: str) -> None:
+        for check_key, _, handler in self.tab_configs[tab_key].checks:
+            if check_key == "design":
+                continue
+            self._run_handler(tab_key, handler)
+        self.log(tab_key, "INFO", "RunAll", "Exécution de tous les checks terminée.")
 
-        lines.append("--- Summary ---")
-        for key, value in payload["summary"].items():
-            lines.append(f"{key}: {value}")
-        lines.append("")
-
-        lines.append("--- Notes ---")
-        lines.append(payload.get("notes", ""))
-        lines.append("")
-
-        lines.append("--- Results ---")
-        for item in payload["results"]:
-            lines.append(f"[{item['level']}] {item['category']}: {item['message']}")
-            if item["objects"]:
-                lines.append(f"  objects: {', '.join(item['objects'][:20])}")
-        lines.append("")
-
-        return "\n".join(lines)
-
-
-_TOOL_INSTANCE: Optional[HighPolyReviewTool] = None
-
-
-def show_outsource_review_tool() -> HighPolyReviewTool:
-    """Launch tool window and keep a live instance in module scope."""
-    global _TOOL_INSTANCE
-    _TOOL_INSTANCE = HighPolyReviewTool()
-    _TOOL_INSTANCE.build()
-    return _TOOL_INSTANCE
+    def save_report(self, tab_key: str) -> None:
+        root = self.tab_paths[tab_key].get("root") or cmds.workspace(q=True, rootDirectory=True)
+        out = os.path.join(root, f"outsource_review_{tab_key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+        payload = {
+            "tab": tab_key,
+            "time": datetime.now().isoformat(),
+            "checks": self.tab_check_states[tab_key],
+            "notes": cmds.scrollField(self.tab_ui[tab_key]["notes"], q=True, text=True),
+            "issues": [issue.__dict__ for issue in self.tab_issues[tab_key]],
+            "paths": self.tab_paths[tab_key],
+        }
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+        self.log(tab_key, "INFO", "Report", f"Report sauvegardé: {out}")
 
 
-def launch_highpoly_review_tool() -> HighPolyReviewTool:
-    """Backward-compatible launcher."""
-    return show_outsource_review_tool()
+_TOOL: Optional[OutsourceReviewTool] = None
+
+
+def show_outsource_review_tool() -> OutsourceReviewTool:
+    global _TOOL
+    _TOOL = OutsourceReviewTool()
+    _TOOL.build()
+    return _TOOL
+
+def launch_outsource_review_tool() -> Optional[OutsourceReviewTool]:
+    """Safe launcher used when running this file directly from Maya Script Editor."""
+    try:
+        return show_outsource_review_tool()
+    except Exception as exc:
+        try:
+            cmds.warning(f"[OutsourceReview] UI launch failed: {exc}")
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":
-    # Running the file directly inside Maya Script Editor now opens the window immediately.
-    show_outsource_review_tool()
+    launch_outsource_review_tool()
