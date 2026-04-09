@@ -12,7 +12,6 @@ Usage in Maya Script Editor (Python tab):
 from __future__ import annotations
 
 import json
-import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -91,18 +90,6 @@ class HighPolyReviewTool:
         self.texture_set_visibility: Dict[str, bool] = {}
         self.texture_set_label_to_key: Dict[str, str] = {}
         self.last_scanned_namespaces: List[str] = []
-        self.operation_target_defaults: Dict[str, Dict[str, bool]] = {
-            "scan_namespaces": {"high": True, "fbx": True, "placeholder": True},
-            "remove_namespaces": {"high": True, "fbx": True, "placeholder": True},
-            "placeholder_match": {"high": True, "fbx": False, "placeholder": True},
-            "topology": {"high": True, "fbx": False, "placeholder": False},
-            "texture_sets": {"high": True, "fbx": False, "placeholder": False},
-            "texture_sets_groups": {"high": True, "fbx": False, "placeholder": False},
-            "show_all_texture_sets": {"high": True, "fbx": False},
-            "vertex_colors": {"high": True, "fbx": False, "placeholder": False},
-            "display_vertex_color": {"high": True, "fbx": False},
-            "hide_vertex_color": {"high": True, "fbx": False},
-        }
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -220,8 +207,6 @@ class HighPolyReviewTool:
         cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
         cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
         cmds.setParent("..")
-        self._build_operation_target_toggles("scan_namespaces", include_fbx=True, include_placeholder=True)
-        self._build_operation_target_toggles("remove_namespaces", include_fbx=True, include_placeholder=True)
 
         cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
         self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
@@ -230,9 +215,7 @@ class HighPolyReviewTool:
         cmds.text(label="Tolerance %", align="right")
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
-        self._build_operation_target_toggles("placeholder_match", include_fbx=True, include_placeholder=True)
         self._build_check_row("check_topology", "Topologie", self.run_topology_checks)
-        self._build_operation_target_toggles("topology", include_fbx=True, include_placeholder=True)
 
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_texturesets"] = cmds.checkBox(label="", value=False, enable=False)
@@ -240,8 +223,6 @@ class HighPolyReviewTool:
         cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets(mode="combined"))
         cmds.button(label="Run Texture Sets (Groups Method)", height=26, command=lambda *_: self.analyze_texture_sets(mode="groups"))
         cmds.setParent("..")
-        self._build_operation_target_toggles("texture_sets", include_fbx=True, include_placeholder=True)
-        self._build_operation_target_toggles("texture_sets_groups", include_fbx=True, include_placeholder=True)
 
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         cmds.checkBox(label="", value=False, enable=False, visible=False)
@@ -249,7 +230,6 @@ class HighPolyReviewTool:
         cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
         cmds.separator(style="none")
         cmds.setParent("..")
-        self._build_operation_target_toggles("show_all_texture_sets", include_fbx=True, include_placeholder=False)
 
         cmds.rowLayout(
             numberOfColumns=5,
@@ -262,9 +242,6 @@ class HighPolyReviewTool:
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
         cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
         cmds.setParent("..")
-        self._build_operation_target_toggles("vertex_colors", include_fbx=True, include_placeholder=True)
-        self._build_operation_target_toggles("display_vertex_color", include_fbx=True, include_placeholder=False)
-        self._build_operation_target_toggles("hide_vertex_color", include_fbx=True, include_placeholder=False)
 
         cmds.text(label="Texture sets détectés (sélectionnez puis Hide/Show):", align="left")
         self.ui["texture_sets_list"] = cmds.textScrollList(
@@ -272,11 +249,10 @@ class HighPolyReviewTool:
             height=120,
             selectCommand=lambda *_: self.on_texture_set_selection_changed(),
         )
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         cmds.button(label="Hide Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(False, selected_only=True))
         cmds.button(label="Show Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
         cmds.button(label="Toggle Selected Sets", height=24, command=lambda *_: self.toggle_selected_texture_sets())
-        cmds.button(label="Isolate Selected Sets", height=24, command=lambda *_: self.isolate_selected_texture_sets())
         cmds.setParent("..")
 
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -298,28 +274,6 @@ class HighPolyReviewTool:
         cmds.text(label=label, align="left")
         cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
         cmds.setParent("..")
-
-    def _build_operation_target_toggles(self, op_key: str, include_fbx: bool = True, include_placeholder: bool = True) -> None:
-        defaults = self.operation_target_defaults.get(op_key, {})
-        targets = [("high", "High .ma")]
-        if include_fbx:
-            targets.append(("fbx", "High .fbx"))
-        if include_placeholder:
-            targets.append(("placeholder", "Placeholder"))
-
-        attaches = [(i, "both", 6 if i > 1 else 0) for i in range(1, 2 + len(targets))]
-        cmds.rowLayout(numberOfColumns=1 + len(targets), adjustableColumn=1, columnAttach=attaches)
-        cmds.text(label="Target:", align="left")
-        for target_key, label in targets:
-            ctrl = cmds.checkBox(label=label, value=defaults.get(target_key, False))
-            self.ui[f"target_{op_key}_{target_key}"] = ctrl
-        cmds.setParent("..")
-
-    def _is_operation_target_enabled(self, op_key: str, target_key: str) -> bool:
-        ctrl = self.ui.get(f"target_{op_key}_{target_key}")
-        if not ctrl:
-            return self.operation_target_defaults.get(op_key, {}).get(target_key, False)
-        return bool(cmds.checkBox(ctrl, query=True, value=True))
 
     def _build_global_action_section(self) -> None:
         cmds.frameLayout(label="3) Actions globales", collapsable=True, collapse=False, marginWidth=8)
@@ -659,30 +613,6 @@ class HighPolyReviewTool:
 
         return sorted(list(set(transforms)))
 
-    def _collect_operation_meshes(self, op_key: str) -> List[str]:
-        meshes: List[str] = []
-        if self._is_operation_target_enabled(op_key, "high"):
-            meshes.extend(self._collect_mesh_transforms(root=self.get_high_root()))
-        if self._is_operation_target_enabled(op_key, "placeholder"):
-            meshes.extend(self._collect_mesh_transforms(root=self.get_placeholder_root()))
-        if self._is_operation_target_enabled(op_key, "fbx"):
-            meshes.extend(self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"]))
-        return sorted(set(meshes))
-
-    def _node_matches_operation_targets(self, op_key: str, node: str) -> bool:
-        high_root = self.get_high_root()
-        placeholder_root = self.get_placeholder_root()
-        review_ns = self.context["fbx_namespace"]
-        normalized = node if node.startswith("|") else f"|{node}"
-
-        if self._is_operation_target_enabled(op_key, "high") and high_root and normalized.startswith(high_root):
-            return True
-        if self._is_operation_target_enabled(op_key, "placeholder") and placeholder_root and normalized.startswith(placeholder_root):
-            return True
-        if self._is_operation_target_enabled(op_key, "fbx") and self._node_is_in_namespace(node, review_ns):
-            return True
-        return False
-
     def _mesh_signature(self, mesh_transform: str) -> Tuple[int, int, int]:
         shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
         if not shape:
@@ -792,31 +722,6 @@ class HighPolyReviewTool:
     def _vector_distance(self, a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
         return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
-    def _pivot_world(self, transform: str) -> Tuple[float, float, float]:
-        piv = cmds.xform(transform, query=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0]
-        return float(piv[0]), float(piv[1]), float(piv[2])
-
-    def _world_matrix(self, transform: str) -> List[float]:
-        matrix = cmds.xform(transform, query=True, matrix=True, worldSpace=True) or [0.0] * 16
-        return [float(v) for v in matrix]
-
-    def _max_abs(self, values: List[float]) -> float:
-        return max([abs(v) for v in values], default=0.0)
-
-    def _vertex_spatial_delta(self, ma_mesh: str, fbx_mesh: str, vertex_count: int) -> Tuple[float, float]:
-        if vertex_count <= 0:
-            return 0.0, 0.0
-        step = max(1, int(vertex_count / 120))
-        sampled = list(range(0, vertex_count, step))
-        if sampled[-1] != vertex_count - 1:
-            sampled.append(vertex_count - 1)
-        distances: List[float] = []
-        for idx in sampled:
-            ma_pos = cmds.pointPosition(f"{ma_mesh}.vtx[{idx}]", world=True)
-            fbx_pos = cmds.pointPosition(f"{fbx_mesh}.vtx[{idx}]", world=True)
-            distances.append(self._vector_distance(tuple(ma_pos), tuple(fbx_pos)))
-        return (sum(distances) / float(len(distances))), max(distances)
-
     def _strip_suffix_ci(self, text: str, suffix: str) -> str:
         if text.lower().endswith(suffix.lower()):
             return text[: -len(suffix)]
@@ -871,36 +776,6 @@ class HighPolyReviewTool:
             if parent:
                 transforms.append(parent[0])
         return sorted(set(transforms))
-
-    def _namespace_matches_operation_target(self, op_key: str, namespace: str) -> bool:
-        if self._is_allowed_namespace(namespace):
-            return False
-        namespace_nodes = cmds.ls(namespace + ":*", long=True) or []
-        if not namespace_nodes:
-            return True
-        return any(self._node_matches_operation_targets(op_key, n) for n in namespace_nodes)
-
-    def _group_bucket_for_mesh(self, mesh: str) -> Tuple[str, str]:
-        high_root = self.get_high_root()
-        placeholder_root = self.get_placeholder_root()
-        mesh_segments = self._normalized_segments(mesh)
-        if high_root and cmds.objExists(high_root):
-            root_segments = self._normalized_segments(high_root)
-            if mesh_segments[: len(root_segments)] == root_segments and len(mesh_segments) > len(root_segments):
-                child = mesh_segments[len(root_segments)]
-                return (f"GRP::high::{child}", self._clean_texture_set_display_name(child, high_root))
-        if placeholder_root and cmds.objExists(placeholder_root):
-            root_segments = self._normalized_segments(placeholder_root)
-            if mesh_segments[: len(root_segments)] == root_segments and len(mesh_segments) > len(root_segments):
-                child = mesh_segments[len(root_segments)]
-                return (f"GRP::placeholder::{child}", self._strip_namespaces_from_name(child))
-        ns = self._namespace_from_node(mesh)
-        if ns and self._is_allowed_namespace(ns):
-            rel = self._normalized_relative_mesh_key(mesh)
-            top = rel.split("/")[0] if rel else self._strip_namespaces_from_name(self._short_name(mesh))
-            return (f"GRP::fbx::{top}", self._strip_namespaces_from_name(top))
-        fallback = self._strip_namespaces_from_name(self._short_name(mesh))
-        return (f"GRP::misc::{fallback}", fallback)
 
     def _extract_namespaces_from_path(self, node_path: str) -> Set[str]:
         found: Set[str] = set()
@@ -999,38 +874,6 @@ class HighPolyReviewTool:
         action = "affichés" if visible else "masqués"
         self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
 
-    def isolate_selected_texture_sets(self) -> None:
-        target_sets = self._selected_texture_set_names()
-        if not target_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour l'isolation.")
-            return
-        selected_objects: Set[str] = set()
-        for set_name in target_sets:
-            selected_objects.update(self.detected_texture_sets.get(set_name, {}).get("objects", []))
-        selected_objects = {o for o in selected_objects if cmds.objExists(o)}
-        if not selected_objects:
-            self.log("WARNING", "TextureSets", "Impossible d'isoler: objets introuvables pour la sélection courante.")
-            return
-
-        all_objects: Set[str] = set()
-        for set_data in self.detected_texture_sets.values():
-            all_objects.update(set_data.get("objects", []))
-        all_objects = {o for o in all_objects if cmds.objExists(o)}
-
-        for obj in all_objects:
-            try:
-                cmds.setAttr(obj + ".visibility", obj in selected_objects)
-            except RuntimeError:
-                continue
-
-        for set_name in self.detected_texture_sets:
-            set_objs = set(self.detected_texture_sets[set_name].get("objects", []))
-            self.texture_set_visibility[set_name] = bool(set_objs & selected_objects)
-
-        self._refresh_texture_sets_list_ui()
-        self._restore_texture_set_selection(target_sets)
-        self.log("INFO", "TextureSets", f"Isolate Selected Sets appliqué: {', '.join(target_sets)}", sorted(selected_objects)[:200])
-
     def toggle_selected_texture_sets(self) -> None:
         target_sets = self._selected_texture_set_names()
         if not target_sets:
@@ -1057,24 +900,7 @@ class HighPolyReviewTool:
         if not self.detected_texture_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set détecté. Lancez d'abord Run Texture Sets.")
             return
-        allowed_sets = []
-        for set_key, data in self.detected_texture_sets.items():
-            objects = data.get("objects", [])
-            if any(self._node_matches_operation_targets("show_all_texture_sets", obj) for obj in objects):
-                allowed_sets.append(set_key)
-        if not allowed_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set ne correspond aux targets configurés pour Show All.")
-            return
-        for set_name in allowed_sets:
-            for obj in self.detected_texture_sets[set_name].get("objects", []):
-                if cmds.objExists(obj):
-                    try:
-                        cmds.setAttr(obj + ".visibility", True)
-                    except RuntimeError:
-                        continue
-            self.texture_set_visibility[set_name] = True
-        self._refresh_texture_sets_list_ui()
-        self.log("INFO", "TextureSets", f"Show All Texture Sets appliqué sur {len(allowed_sets)} set(s).")
+        self.set_texture_set_visibility(True, selected_only=False)
 
     # ----------------------------- Actions -----------------------------
     def load_ma_scene(self) -> None:
@@ -1173,11 +999,7 @@ class HighPolyReviewTool:
         uv_mismatch: List[str] = []
         topo_mismatch: List[str] = []
         hierarchy_mismatch: List[str] = []
-        pivot_mismatch: List[str] = []
-        transform_mismatch: List[str] = []
         spatial_mismatch: List[str] = []
-        component_mismatch: List[str] = []
-        per_mesh_center_deltas: List[float] = []
 
         for key in sorted(ma_keys & fbx_keys):
             ma_data = ma_by_key[key]
@@ -1194,40 +1016,21 @@ class HighPolyReviewTool:
             if ma_data["parent_path"] != fbx_data["parent_path"]:
                 hierarchy_mismatch.append(key)
                 details.append(f"hierarchy MA({ma_data['parent_path']}) != FBX({fbx_data['parent_path']})")
-            ma_pivot = self._pivot_world(ma_data["path"])
-            fbx_pivot = self._pivot_world(fbx_data["path"])
-            pivot_delta = self._vector_distance(ma_pivot, fbx_pivot)
-            ma_dims = self._mesh_bbox_dims_world(ma_data["path"])
-            fbx_dims = self._mesh_bbox_dims_world(fbx_data["path"])
-            dim_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
-            pivot_tol = max(0.0005, dim_ref * 0.0025)
-            if pivot_delta > pivot_tol:
-                pivot_mismatch.append(key)
-                details.append(f"pivot mismatch pivotΔ={pivot_delta:.5f} (tol={pivot_tol:.5f})")
-
-            ma_matrix = self._world_matrix(ma_data["path"])
-            fbx_matrix = self._world_matrix(fbx_data["path"])
-            matrix_max_abs = self._max_abs([ma_matrix[i] - fbx_matrix[i] for i in range(16)])
-            matrix_tol = max(0.0005, dim_ref * 0.0025)
-            if matrix_max_abs > matrix_tol:
-                transform_mismatch.append(key)
-                details.append(f"transform mismatch matrixΔmax={matrix_max_abs:.5f} (tol={matrix_tol:.5f})")
-
             ma_center = self._mesh_center_world(ma_data["path"])
             fbx_center = self._mesh_center_world(fbx_data["path"])
+            ma_dims = self._mesh_bbox_dims_world(ma_data["path"])
+            fbx_dims = self._mesh_bbox_dims_world(fbx_data["path"])
             center_delta = self._vector_distance(ma_center, fbx_center)
-            per_mesh_center_deltas.append(center_delta)
-            center_tol = max(0.001, dim_ref * 0.005)
-            if center_delta > center_tol:
+            dim_delta = self._vector_distance(ma_dims, fbx_dims)
+            dim_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
+            center_tol = max(0.001, dim_ref * 0.01)
+            dim_tol = max(0.001, dim_ref * 0.01)
+            if center_delta > center_tol or dim_delta > dim_tol:
                 spatial_mismatch.append(key)
-                details.append(f"spatial mismatch centerΔ={center_delta:.5f} (tol={center_tol:.5f})")
-
-            avg_vtx_delta, max_vtx_delta = self._vertex_spatial_delta(ma_data["path"], fbx_data["path"], int(ma_data["v"]))
-            vtx_tol = max(0.001, dim_ref * 0.005)
-            if max_vtx_delta > vtx_tol:
-                component_mismatch.append(key)
                 details.append(
-                    f"component position mismatch avgVtxΔ={avg_vtx_delta:.5f}, maxVtxΔ={max_vtx_delta:.5f} (tol={vtx_tol:.5f})"
+                    "spatial "
+                    f"centerΔ={center_delta:.5f} (tol={center_tol:.5f}), "
+                    f"bboxΔ={dim_delta:.5f} (tol={dim_tol:.5f})"
                 )
             if details:
                 mismatch_items.append(f"{key} -> " + " | ".join(details))
@@ -1256,22 +1059,7 @@ class HighPolyReviewTool:
                     ),
                 )
 
-        exploded_hint = False
-        if per_mesh_center_deltas:
-            avg_center = sum(per_mesh_center_deltas) / float(len(per_mesh_center_deltas))
-            peak_center = max(per_mesh_center_deltas)
-            if peak_center > max(0.01, avg_center * 3.0):
-                exploded_hint = True
-                self.log(
-                    "WARNING",
-                    "Compare",
-                    (
-                        "Possible exploded/non-exploded mismatch: deltas de centres très hétérogènes "
-                        f"(avg={avg_center:.5f}, peak={peak_center:.5f})."
-                    ),
-                )
-
-        if not missing_in_fbx and not missing_in_ma and not mismatch_items and not global_bbox_warning and not exploded_hint:
+        if not missing_in_fbx and not missing_in_ma and not mismatch_items and not global_bbox_warning:
             self.log("INFO", "Compare", "MA et FBX cohérents: topologie, UVs, hiérarchie et positionnement spatial alignés.")
             self.set_check_status("ma_fbx_compared", "OK")
             return
@@ -1287,10 +1075,6 @@ class HighPolyReviewTool:
             self.log("FAIL", "Compare", f"Différences d'UV détectées (counts/sets/shells): {len(uv_mismatch)}", [ma_by_key[k]["path"] for k in uv_mismatch][:200])
         if hierarchy_mismatch:
             self.log("WARNING", "Compare", f"Différences de hiérarchie/path détectées: {len(hierarchy_mismatch)}", [ma_by_key[k]["path"] for k in hierarchy_mismatch][:200])
-        if pivot_mismatch:
-            self.log("FAIL", "Compare", f"Pivot mismatch détecté: {len(pivot_mismatch)}", [ma_by_key[k]["path"] for k in pivot_mismatch][:200])
-        if transform_mismatch:
-            self.log("FAIL", "Compare", f"Transform mismatch détecté: {len(transform_mismatch)}", [ma_by_key[k]["path"] for k in transform_mismatch][:200])
         if spatial_mismatch:
             self.log(
                 "FAIL",
@@ -1301,8 +1085,6 @@ class HighPolyReviewTool:
                 ),
                 [ma_by_key[k]["path"] for k in spatial_mismatch][:200],
             )
-        if component_mismatch:
-            self.log("FAIL", "Compare", f"Spatial/component position mismatch détecté: {len(component_mismatch)}", [ma_by_key[k]["path"] for k in component_mismatch][:200])
         for detail in mismatch_items[:30]:
             self.log("INFO", "CompareDetail", detail)
 
@@ -1310,7 +1092,6 @@ class HighPolyReviewTool:
 
     def scan_namespaces(self) -> None:
         user_ns = self._get_scan_namespaces()
-        user_ns = [ns for ns in user_ns if self._namespace_matches_operation_target("scan_namespaces", ns)]
         self.last_scanned_namespaces = user_ns[:]
 
         if not user_ns:
@@ -1331,7 +1112,6 @@ class HighPolyReviewTool:
 
     def remove_namespaces(self) -> None:
         removable = self.last_scanned_namespaces[:] or self._get_scan_namespaces()
-        removable = [ns for ns in removable if self._namespace_matches_operation_target("remove_namespaces", ns)]
         removable = [ns for ns in removable if not self._is_allowed_namespace(ns)]
         if not removable:
             self.log("INFO", "Namespace", "Aucun namespace à supprimer (fbxReview préservé).")
@@ -1365,85 +1145,51 @@ class HighPolyReviewTool:
         self.last_scanned_namespaces = self._get_scan_namespaces()
 
     def check_placeholder_match(self) -> None:
-        use_high = self._is_operation_target_enabled("placeholder_match", "high")
-        use_fbx = self._is_operation_target_enabled("placeholder_match", "fbx")
-        use_placeholder = self._is_operation_target_enabled("placeholder_match", "placeholder")
-
-        if not use_placeholder:
-            self.log("FAIL", "Placeholder", "Target Placeholder désactivé: impossible d'exécuter le match.")
-            self.set_check_status("placeholder_checked", "FAIL")
-            return
-        if not use_high and not use_fbx:
-            self.log("FAIL", "Placeholder", "Aucune source High activée (High .ma / High .fbx).")
-            self.set_check_status("placeholder_checked", "FAIL")
-            return
-
         placeholder = self.get_placeholder_root()
+        high = self.get_high_root()
+
         if not placeholder or not cmds.objExists(placeholder):
             self.log("FAIL", "Placeholder", "Placeholder root invalide/non détecté.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
-
-        high = self.get_high_root() if use_high else None
-        if not high and use_fbx:
-            fbx_meshes = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"])
-            if fbx_meshes:
-                high = self.context["fbx_namespace"] + ":"
-                self.log("WARNING", "Placeholder", "Mode FBX activé: comparaison basée sur l'ensemble des meshes fbxReview.")
-
-        if not high and use_high:
+        if not high or not cmds.objExists(high):
             self.log("FAIL", "Placeholder", "High root invalide/non détecté.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
         p_bb = cmds.exactWorldBoundingBox(placeholder)
-        h_bb = cmds.exactWorldBoundingBox(high if cmds.objExists(high) else self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"]))
+        h_bb = cmds.exactWorldBoundingBox(high)
         p_dim = (p_bb[3] - p_bb[0], p_bb[4] - p_bb[1], p_bb[5] - p_bb[2])
         h_dim = (h_bb[3] - h_bb[0], h_bb[4] - h_bb[1], h_bb[5] - h_bb[2])
 
         p_piv = cmds.xform(placeholder, q=True, ws=True, rotatePivot=True)
-        h_piv = cmds.xform(high, q=True, ws=True, rotatePivot=True) if cmds.objExists(high) else self._bbox_center(h_bb)
+        h_piv = cmds.xform(high, q=True, ws=True, rotatePivot=True)
 
         ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
-        axis_delta_percent = [abs(r - 1.0) * 100.0 if r != 0.0 else 0.0 for r in ratio]
-        global_deviation = math.sqrt(sum((d ** 2 for d in axis_delta_percent)) / 3.0)
-        local_peak = max(axis_delta_percent) if axis_delta_percent else 0.0
-        pivot_delta_vec = tuple(h_piv[i] - p_piv[i] for i in range(3))
-        pivot_delta_len = self._vector_distance(tuple(h_piv), tuple(p_piv))
 
         self.log("INFO", "Placeholder", f"Placeholder dims: {tuple(round(v, 4) for v in p_dim)}")
         self.log("INFO", "Placeholder", f"High dims: {tuple(round(v, 4) for v in h_dim)}")
-        self.log("INFO", "Placeholder", f"Scale ratio X/Y/Z: {tuple(round(v, 4) for v in ratio)}")
-        self.log("INFO", "Placeholder", f"Delta % X/Y/Z: {tuple(round(v, 2) for v in axis_delta_percent)}")
-        self.log("INFO", "Placeholder", f"Pivot delta: {tuple(round(v, 4) for v in pivot_delta_vec)}")
-        self.log("INFO", "Placeholder", f"Global proportion deviation: {global_deviation:.2f}% | Local peak deviation: {local_peak:.2f}%")
+        self.log("INFO", "Placeholder", f"Scale ratio High/Placeholder: {tuple(round(v, 4) for v in ratio)}")
+        self.log("INFO", "Placeholder", f"Pivot delta: {tuple(round(h_piv[i] - p_piv[i], 4) for i in range(3))}")
 
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance_percent = max(0.0, float(tolerance_percent))
-        self.log("INFO", "Placeholder", f"Écart détecté (global): {global_deviation:.2f}%")
+        tolerance = tolerance_percent / 100.0
+        ratio_deviation_percent = [abs(r - 1.0) * 100.0 for r in ratio if r != 0.0]
+        max_deviation = max(ratio_deviation_percent) if ratio_deviation_percent else 0.0
+
+        self.log("INFO", "Placeholder", f"Écart détecté: {max_deviation:.2f}%")
         self.log("INFO", "Placeholder", f"Seuil autorisé: {tolerance_percent:.2f}%")
-        pivot_tol = max(0.001, max(max(p_dim), max(h_dim), 1e-4) * 0.01)
-        axis_limit = tolerance_percent * 1.75
-        if global_deviation <= tolerance_percent and local_peak <= axis_limit and pivot_delta_len <= pivot_tol:
+        if all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0):
             self.log("INFO", "Placeholder", "Résultat: OK (proportions dans le seuil).")
             self.set_check_status("placeholder_checked", "OK")
         else:
-            self.log(
-                "WARNING",
-                "Placeholder",
-                (
-                    "Résultat: Fail (proportions hors seuil). "
-                    f"global={global_deviation:.2f}% (tol={tolerance_percent:.2f}%), "
-                    f"peak axis={local_peak:.2f}% (limite={axis_limit:.2f}%), "
-                    f"pivotΔ={pivot_delta_len:.5f} (tol={pivot_tol:.5f})"
-                ),
-                [placeholder, high] if high and cmds.objExists(high) else [placeholder],
-            )
-            self.set_check_status("placeholder_checked", "FAIL")
+            self.log("WARNING", "Placeholder", "Résultat: Fail (proportions hors seuil). Vérifier visuellement.", [placeholder, high])
+            self.set_check_status("placeholder_checked", "PENDING")
 
     def run_topology_checks(self) -> None:
         high_root = self.get_high_root()
-        meshes = self._collect_operation_meshes("topology")
+        meshes = self._collect_mesh_transforms(root=high_root)
         if not meshes:
             self.log("FAIL", "Topology", "Aucun mesh trouvé pour les checks topologie.")
             self.set_check_status("topology_checked", "FAIL")
@@ -1585,8 +1331,7 @@ class HighPolyReviewTool:
 
     def analyze_texture_sets(self, mode: str = "combined") -> None:
         high_root = self.get_high_root()
-        op_key = "texture_sets_groups" if (mode or "").lower().strip() in {"groups", "group"} else "texture_sets"
-        meshes = self._collect_operation_meshes(op_key)
+        meshes = self._collect_mesh_transforms(root=high_root)
         if not meshes:
             self.log("FAIL", "TextureSets", "Aucun mesh trouvé pour l'analyse texture sets.")
             self.set_check_status("texture_sets_analyzed", "FAIL")
@@ -1629,25 +1374,19 @@ class HighPolyReviewTool:
                     "objects": sorted(set(mat_meshes)),
                 }
 
-        if include_groups:
-            group_map: Dict[str, Dict[str, object]] = {}
-            for mesh in meshes:
-                key, display_name = self._group_bucket_for_mesh(mesh)
-                if key not in group_map:
-                    group_map[key] = {
-                        "name": display_name,
+        if include_groups and high_root and cmds.objExists(high_root):
+            direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
+            for child in direct_children:
+                child_meshes = self._collect_mesh_transforms(root=child)
+                if child_meshes:
+                    key = f"GRP::{self._short_name(child)}"
+                    display_name = self._clean_texture_set_display_name(self._short_name(child), high_root)
+                    detected[key] = {
+                        "name": self._strip_namespaces_from_name(self._short_name(child)),
                         "display_name": display_name,
                         "method": "group",
-                        "objects": [],
+                        "objects": sorted(set(child_meshes)),
                     }
-                group_map[key]["objects"].append(mesh)
-            for key, data in group_map.items():
-                detected[key] = {
-                    "name": data["name"],
-                    "display_name": data["display_name"],
-                    "method": "group",
-                    "objects": sorted(set(data["objects"])),
-                }
 
         total_quads = 0
         mesh_quad_cache: Dict[str, Tuple[int, int]] = {}
@@ -1698,7 +1437,8 @@ class HighPolyReviewTool:
             self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
 
     def check_vertex_colors(self) -> None:
-        meshes = self._collect_operation_meshes("vertex_colors")
+        high_root = self.get_high_root()
+        meshes = self._collect_mesh_transforms(root=high_root)
         if not meshes:
             self.log("FAIL", "VertexColor", "Aucun mesh trouvé pour le check vertex colors.")
             self.set_check_status("vertex_colors_checked", "FAIL")
@@ -1747,7 +1487,7 @@ class HighPolyReviewTool:
 
     def display_vertex_colors(self) -> None:
         selected = cmds.ls(selection=True, long=True, type="transform") or []
-        targets = selected if selected else self._collect_operation_meshes("display_vertex_color")
+        targets = selected if selected else self._collect_mesh_transforms(root=None)
         if not targets:
             self.log("WARNING", "VertexColor", "Aucun objet cible pour l'affichage des vertex colors.")
             return
@@ -1765,12 +1505,12 @@ class HighPolyReviewTool:
                     continue
 
         cmds.polyOptions(colorShadedDisplay=True)
-        scope = "sélection" if selected else "targets configurés"
+        scope = "sélection" if selected else "toute la scène (meshes détectés)"
         self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({scope}).", list(sorted(set(shown)))[:150])
 
     def hide_vertex_colors(self) -> None:
         selected = cmds.ls(selection=True, long=True, type="transform") or []
-        targets = selected if selected else self._collect_operation_meshes("hide_vertex_color")
+        targets = selected if selected else self._collect_mesh_transforms(root=None)
         if not targets:
             self.log("WARNING", "VertexColor", "Aucun objet cible pour masquer les vertex colors.")
             return
@@ -1787,7 +1527,7 @@ class HighPolyReviewTool:
                 except RuntimeError:
                     continue
 
-        scope = "sélection" if selected else "targets configurés"
+        scope = "sélection" if selected else "toute la scène (meshes détectés)"
         self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(set(hidden))} objet(s) ({scope}).", list(sorted(set(hidden)))[:150])
 
     def isolate_meshes_without_vertex_color(self) -> None:
