@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 
@@ -73,7 +73,6 @@ class HighPolyReviewTool:
             "design_kit_checked": {"status": "PENDING", "mode": "MANUAL"},
             "topology_checked": {"status": "PENDING", "mode": "AUTO"},
             "texture_sets_analyzed": {"status": "PENDING", "mode": "AUTO"},
-            "texture_sets_groups_analyzed": {"status": "PENDING", "mode": "AUTO"},
             "vertex_colors_checked": {"status": "PENDING", "mode": "AUTO"},
         }
 
@@ -84,9 +83,12 @@ class HighPolyReviewTool:
             "design_kit_checked": "check_design",
             "topology_checked": "check_topology",
             "texture_sets_analyzed": "check_texturesets",
-            "texture_sets_groups_analyzed": "check_texturesets_groups",
             "vertex_colors_checked": "check_vtx",
         }
+
+        self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
+        self.texture_set_visibility: Dict[str, bool] = {}
+        self.last_scanned_namespaces: List[str] = []
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -212,16 +214,27 @@ class HighPolyReviewTool:
         self.ui["check_texturesets"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Texture sets", align="left")
         cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets())
-        cmds.button(label="Run Texture Sets (Based on Groups)", height=26, command=lambda *_: self.analyze_texture_sets_by_groups())
+        cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
         cmds.setParent("..")
 
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_texturesets_groups"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Texture sets (based on groups)", align="left")
-        cmds.button(label="Run Group Mode", height=26, command=lambda *_: self.analyze_texture_sets_by_groups())
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui["check_vtx"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Vertex Colors", align="left")
+        cmds.button(label="Run Vertex Colors", height=26, command=lambda *_: self.check_vertex_colors())
+        cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
         cmds.setParent("..")
 
-        self._build_check_row("check_vtx", "Vertex Colors", self.check_vertex_colors)
+        cmds.text(label="Texture sets détectés (sélectionnez puis Hide/Show):", align="left")
+        self.ui["texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=120,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
+        )
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.button(label="Hide Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(False, selected_only=True))
+        cmds.button(label="Show Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
+        cmds.button(label="Toggle Selected Sets", height=24, command=lambda *_: self.toggle_selected_texture_sets())
+        cmds.setParent("..")
 
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui["check_design"] = cmds.checkBox(
@@ -592,6 +605,76 @@ class HighPolyReviewTool:
             cmds.polyEvaluate(shape, face=True),
         )
 
+    def _short_name(self, node: str) -> str:
+        return node.split("|")[-1]
+
+    def _strip_namespaces_from_name(self, name: str) -> str:
+        parts = name.split(":")
+        return parts[-1] if parts else name
+
+    def _normalized_segments(self, path: str) -> List[str]:
+        return [self._strip_namespaces_from_name(seg) for seg in path.split("|") if seg]
+
+    def _normalized_relative_mesh_key(self, mesh_transform: str, root: Optional[str] = None) -> str:
+        mesh_segments = self._normalized_segments(mesh_transform)
+        if root and cmds.objExists(root):
+            root_segments = self._normalized_segments(root)
+            if mesh_segments[: len(root_segments)] == root_segments:
+                mesh_segments = mesh_segments[len(root_segments):]
+        elif len(mesh_segments) > 1:
+            mesh_segments = mesh_segments[1:]
+        return "/".join(mesh_segments)
+
+    def _mesh_data_signature(self, mesh_transform: str, root: Optional[str] = None) -> Dict[str, object]:
+        shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
+        if not shape:
+            return {
+                "path": mesh_transform,
+                "key": self._normalized_relative_mesh_key(mesh_transform, root),
+                "v": 0,
+                "e": 0,
+                "f": 0,
+                "uv_total": 0,
+                "uv_sets": {},
+                "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
+            }
+
+        shape = shape[0]
+        uv_sets = cmds.polyUVSet(shape, query=True, allUVSets=True) or []
+        uv_info: Dict[str, Dict[str, int]] = {}
+        current_uv = cmds.polyUVSet(shape, query=True, currentUVSet=True) or []
+        original_uv = current_uv[0] if current_uv else None
+
+        for uv_set in uv_sets:
+            try:
+                cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+            except RuntimeError:
+                continue
+
+            uv_count = int(cmds.polyEvaluate(shape, uvcoord=True) or 0)
+            try:
+                shell_count = int(cmds.polyEvaluate(shape, uvShell=True) or 0)
+            except RuntimeError:
+                shell_count = 0
+            uv_info[uv_set] = {"count": uv_count, "shells": shell_count}
+
+        if original_uv:
+            try:
+                cmds.polyUVSet(shape, currentUVSet=True, uvSet=original_uv)
+            except RuntimeError:
+                pass
+
+        return {
+            "path": mesh_transform,
+            "key": self._normalized_relative_mesh_key(mesh_transform, root),
+            "v": int(cmds.polyEvaluate(shape, vertex=True) or 0),
+            "e": int(cmds.polyEvaluate(shape, edge=True) or 0),
+            "f": int(cmds.polyEvaluate(shape, face=True) or 0),
+            "uv_total": int(cmds.polyEvaluate(shape, uvcoord=True) or 0),
+            "uv_sets": uv_info,
+            "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
+        }
+
     def _namespace_from_node(self, node: str) -> str:
         short = node.split("|")[-1]
         if ":" not in short:
@@ -615,10 +698,112 @@ class HighPolyReviewTool:
                 transforms.append(parent[0])
         return sorted(set(transforms))
 
+    def _extract_namespaces_from_path(self, node_path: str) -> Set[str]:
+        found: Set[str] = set()
+        for segment in [s for s in node_path.split("|") if s]:
+            if ":" not in segment:
+                continue
+            ns_chain = segment.rsplit(":", 1)[0]
+            chain_parts = [p for p in ns_chain.split(":") if p]
+            for i in range(len(chain_parts)):
+                found.add(":".join(chain_parts[: i + 1]))
+        return found
+
+    def _is_allowed_namespace(self, namespace: str) -> bool:
+        allowed = self.context["fbx_namespace"]
+        return namespace == allowed or namespace.startswith(allowed + ":")
+
     def _get_scan_namespaces(self) -> List[str]:
+        all_nodes = cmds.ls(long=True) or []
+        dag_ns: Set[str] = set()
+        for node in all_nodes:
+            dag_ns.update(self._extract_namespaces_from_path(node))
+
         namespaces = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
-        blocked = {":", "UI", "shared", self.context["fbx_namespace"]}
-        return sorted([n for n in namespaces if n not in blocked])
+        dag_ns.update({n for n in namespaces if n and n not in {":", "UI", "shared"}})
+        filtered = [n for n in dag_ns if not self._is_allowed_namespace(n) and n not in {"UI", "shared", ":"}]
+        return sorted(filtered, key=lambda x: (x.count(":"), x))
+
+    def _refresh_texture_sets_list_ui(self) -> None:
+        if "texture_sets_list" not in self.ui:
+            return
+        cmds.textScrollList(self.ui["texture_sets_list"], edit=True, removeAll=True)
+        for set_name in sorted(self.detected_texture_sets.keys()):
+            data = self.detected_texture_sets[set_name]
+            method = data.get("method", "unknown")
+            count = len(data.get("objects", []))
+            visible = self.texture_set_visibility.get(set_name, True)
+            state = "Shown" if visible else "Hidden"
+            cmds.textScrollList(
+                self.ui["texture_sets_list"],
+                edit=True,
+                append=f"{set_name} | {method} | {count} obj(s) | {state}",
+            )
+
+    def _selected_texture_set_names(self) -> List[str]:
+        selected = cmds.textScrollList(self.ui["texture_sets_list"], query=True, selectItem=True) or []
+        names: List[str] = []
+        for label in selected:
+            set_name = label.split(" | ")[0]
+            if set_name in self.detected_texture_sets:
+                names.append(set_name)
+        return names
+
+    def on_texture_set_selection_changed(self) -> None:
+        selected_names = self._selected_texture_set_names()
+        objects: List[str] = []
+        for set_name in selected_names:
+            objects.extend(self.detected_texture_sets[set_name].get("objects", []))
+        objects = sorted(set([o for o in objects if cmds.objExists(o)]))
+        if objects:
+            cmds.select(objects, replace=True)
+
+    def set_texture_set_visibility(self, visible: bool, selected_only: bool = False) -> None:
+        target_sets = self._selected_texture_set_names() if selected_only else list(self.detected_texture_sets.keys())
+        if not target_sets:
+            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné.")
+            return
+        impacted_objects: List[str] = []
+        for set_name in target_sets:
+            objs = self.detected_texture_sets[set_name].get("objects", [])
+            for obj in objs:
+                if cmds.objExists(obj):
+                    try:
+                        cmds.setAttr(obj + ".visibility", visible)
+                        impacted_objects.append(obj)
+                    except RuntimeError:
+                        pass
+            self.texture_set_visibility[set_name] = visible
+        self._refresh_texture_sets_list_ui()
+        action = "affichés" if visible else "masqués"
+        self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
+
+    def toggle_selected_texture_sets(self) -> None:
+        target_sets = self._selected_texture_set_names()
+        if not target_sets:
+            self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour toggle.")
+            return
+        impacted_objects: List[str] = []
+        for set_name in target_sets:
+            current = self.texture_set_visibility.get(set_name, True)
+            new_state = not current
+            objs = self.detected_texture_sets[set_name].get("objects", [])
+            for obj in objs:
+                if cmds.objExists(obj):
+                    try:
+                        cmds.setAttr(obj + ".visibility", new_state)
+                        impacted_objects.append(obj)
+                    except RuntimeError:
+                        pass
+            self.texture_set_visibility[set_name] = new_state
+        self._refresh_texture_sets_list_ui()
+        self.log("INFO", "TextureSets", f"Toggle visibility appliqué à: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
+
+    def show_all_texture_sets(self) -> None:
+        if not self.detected_texture_sets:
+            self.log("WARNING", "TextureSets", "Aucun texture set détecté. Lancez d'abord Run Texture Sets.")
+            return
+        self.set_texture_set_visibility(True, selected_only=False)
 
     # ----------------------------- Actions -----------------------------
     def load_ma_scene(self) -> None:
@@ -704,29 +889,73 @@ class HighPolyReviewTool:
             self.set_check_status("ma_fbx_compared", "PENDING")
             return
 
-        ma_sigs = sorted([self._mesh_signature(m) for m in ma_meshes])
-        fbx_sigs = sorted([self._mesh_signature(m) for m in fbx_meshes])
-
         self.log("INFO", "Compare", f"MA meshes: {len(ma_meshes)} | FBX meshes: {len(fbx_meshes)}")
+        ma_by_key = {self._normalized_relative_mesh_key(m, high_root): self._mesh_data_signature(m, high_root) for m in ma_meshes}
+        fbx_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in fbx_meshes}
 
-        if ma_sigs == fbx_sigs and fbx_sigs:
-            self.log("INFO", "Compare", "Signatures topo globales cohérentes entre MA et FBX.")
+        ma_keys = set(ma_by_key.keys())
+        fbx_keys = set(fbx_by_key.keys())
+        missing_in_fbx = sorted(ma_keys - fbx_keys)
+        missing_in_ma = sorted(fbx_keys - ma_keys)
+
+        mismatch_items: List[str] = []
+        uv_mismatch: List[str] = []
+        topo_mismatch: List[str] = []
+        hierarchy_mismatch: List[str] = []
+
+        for key in sorted(ma_keys & fbx_keys):
+            ma_data = ma_by_key[key]
+            fbx_data = fbx_by_key[key]
+            details = []
+            if (ma_data["v"], ma_data["e"], ma_data["f"]) != (fbx_data["v"], fbx_data["e"], fbx_data["f"]):
+                topo_mismatch.append(key)
+                details.append(
+                    f"topo v/e/f MA({ma_data['v']}/{ma_data['e']}/{ma_data['f']}) != FBX({fbx_data['v']}/{fbx_data['e']}/{fbx_data['f']})"
+                )
+            if ma_data["uv_total"] != fbx_data["uv_total"] or ma_data["uv_sets"] != fbx_data["uv_sets"]:
+                uv_mismatch.append(key)
+                details.append(f"UV MA(total={ma_data['uv_total']}, sets={ma_data['uv_sets']}) != FBX(total={fbx_data['uv_total']}, sets={fbx_data['uv_sets']})")
+            if ma_data["parent_path"] != fbx_data["parent_path"]:
+                hierarchy_mismatch.append(key)
+                details.append(f"hierarchy MA({ma_data['parent_path']}) != FBX({fbx_data['parent_path']})")
+            if details:
+                mismatch_items.append(f"{key} -> " + " | ".join(details))
+
+        if not missing_in_fbx and not missing_in_ma and not mismatch_items:
+            self.log("INFO", "Compare", "MA et FBX cohérents: topologie, UVs, composants et hiérarchie alignés.")
             self.set_check_status("ma_fbx_compared", "OK")
-        else:
-            self.log("WARNING", "Compare", "Différences détectées entre MA et FBX (counts/signatures). Vérification visuelle requise.")
-            self.set_check_status("ma_fbx_compared", "PENDING")
+            return
+
+        self.log("WARNING", "Compare", "Mismatch MA vs FBX détecté. Détails ci-dessous pour orienter la review.")
+        if missing_in_fbx:
+            self.log("FAIL", "Compare", f"Objets présents dans MA mais absents du FBX: {len(missing_in_fbx)}", [ma_by_key[k]["path"] for k in missing_in_fbx][:200])
+        if missing_in_ma:
+            self.log("FAIL", "Compare", f"Objets présents dans FBX mais absents du MA: {len(missing_in_ma)}", [fbx_by_key[k]["path"] for k in missing_in_ma][:200])
+        if topo_mismatch:
+            self.log("FAIL", "Compare", f"Différences de topologie/composants détectées: {len(topo_mismatch)}", [ma_by_key[k]["path"] for k in topo_mismatch][:200])
+        if uv_mismatch:
+            self.log("FAIL", "Compare", f"Différences d'UV détectées (counts/sets/shells): {len(uv_mismatch)}", [ma_by_key[k]["path"] for k in uv_mismatch][:200])
+        if hierarchy_mismatch:
+            self.log("WARNING", "Compare", f"Différences de hiérarchie/path détectées: {len(hierarchy_mismatch)}", [ma_by_key[k]["path"] for k in hierarchy_mismatch][:200])
+        for detail in mismatch_items[:30]:
+            self.log("INFO", "CompareDetail", detail)
+
+        self.set_check_status("ma_fbx_compared", "FAIL")
 
     def scan_namespaces(self) -> None:
         user_ns = self._get_scan_namespaces()
+        self.last_scanned_namespaces = user_ns[:]
 
         if not user_ns:
             self.log("INFO", "Namespace", "Aucun namespace indésirable détecté (fbxReview ignoré volontairement).")
             self.set_check_status("no_namespaces", "OK")
             return
 
-        total_objs = []
+        total_objs: List[str] = []
         for ns in user_ns:
             objs = cmds.ls(ns + ":*", long=True) or []
+            if not objs:
+                objs = [n for n in (cmds.ls(long=True) or []) if any(seg.startswith(ns + ":") for seg in n.split("|") if seg)]
             total_objs.extend(objs)
             self.log("WARNING", "Namespace", f"Namespace détecté: {ns} ({len(objs)} objets)", objs[:50])
 
@@ -734,12 +963,14 @@ class HighPolyReviewTool:
         self.set_check_status("no_namespaces", "FAIL")
 
     def remove_namespaces(self) -> None:
-        removable = self._get_scan_namespaces()
+        removable = self.last_scanned_namespaces[:] or self._get_scan_namespaces()
+        removable = [ns for ns in removable if not self._is_allowed_namespace(ns)]
         if not removable:
             self.log("INFO", "Namespace", "Aucun namespace à supprimer (fbxReview préservé).")
             self.set_check_status("no_namespaces", "OK")
             return
 
+        impacted_before = {ns: (cmds.ls(ns + ":*", long=True) or []) for ns in removable}
         removed = []
         failed = []
         # remove deepest first to avoid parent/child namespace conflicts
@@ -751,7 +982,10 @@ class HighPolyReviewTool:
                 failed.append((ns, str(exc)))
 
         if removed:
-            self.log("INFO", "Namespace", f"Namespaces supprimés (merge vers root): {len(removed)}", removed)
+            impacted_objs = []
+            for ns in removed:
+                impacted_objs.extend(impacted_before.get(ns, []))
+            self.log("INFO", "Namespace", f"Namespaces supprimés (merge vers root): {', '.join(removed)}", impacted_objs[:200])
 
         if failed:
             for ns, err in failed:
@@ -760,6 +994,7 @@ class HighPolyReviewTool:
         else:
             self.log("INFO", "Namespace", "Suppression des namespaces indésirables terminée (fbxReview conservé).")
             self.set_check_status("no_namespaces", "OK")
+        self.last_scanned_namespaces = self._get_scan_namespaces()
 
     def check_placeholder_match(self) -> None:
         placeholder = self.get_placeholder_root()
@@ -887,8 +1122,6 @@ class HighPolyReviewTool:
                 if len(parents) > 1:
                     instances.append(m)
 
-        duplicate_short_names = [n for n in (cmds.ls(type="transform", long=True) or []) if "|" in n.split(":")[-1]]
-
         if ngon_faces:
             self.log("FAIL", "Topology", f"Faces avec plus de 4 côtés: {len(ngon_faces)}", ngon_faces[:200])
             fail_count += 1
@@ -915,14 +1148,6 @@ class HighPolyReviewTool:
             warn_count += 1
         if instances:
             self.log("WARNING", "Topology", f"Instances détectées: {len(set(instances))} mesh(es).", list(set(instances)))
-            warn_count += 1
-        if duplicate_short_names:
-            self.log(
-                "WARNING",
-                "Topology",
-                f"Noms dupliqués potentiels (paths DAG ambigus): {len(duplicate_short_names)} — plusieurs objets partagent le même nom court.",
-                duplicate_short_names[:100],
-            )
             warn_count += 1
 
         if high_root:
@@ -957,6 +1182,8 @@ class HighPolyReviewTool:
             self.set_check_status("texture_sets_analyzed", "FAIL")
             return
 
+        detected: Dict[str, Dict[str, object]] = {}
+
         mat_to_meshes: Dict[str, List[str]] = {}
         for m in meshes:
             shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
@@ -980,40 +1207,48 @@ class HighPolyReviewTool:
             for mat in mats_for_mesh:
                 mat_to_meshes.setdefault(mat, []).append(m)
 
-        materials = sorted(mat_to_meshes.keys())
-        self.log("INFO", "TextureSets", f"Texture sets potentiels (matériaux distincts): {len(materials)}")
-        for mat in materials:
-            self.log("INFO", "TextureSets", f"{mat}: {len(mat_to_meshes[mat])} mesh(es)", mat_to_meshes[mat][:150])
+        for mat, mat_meshes in mat_to_meshes.items():
+            detected[f"MAT::{mat}"] = {
+                "name": mat,
+                "method": "material",
+                "objects": sorted(set(mat_meshes)),
+            }
+
+        if high_root and cmds.objExists(high_root):
+            direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
+            for child in direct_children:
+                child_meshes = self._collect_mesh_transforms(root=child)
+                if child_meshes:
+                    key = f"GRP::{self._short_name(child)}"
+                    detected[key] = {
+                        "name": self._strip_namespaces_from_name(self._short_name(child)),
+                        "method": "group",
+                        "objects": sorted(set(child_meshes)),
+                    }
+
+        self.detected_texture_sets = detected
+        self.texture_set_visibility = {k: self.texture_set_visibility.get(k, True) for k in self.detected_texture_sets.keys()}
+        for set_key in self.detected_texture_sets:
+            self.texture_set_visibility.setdefault(set_key, True)
+        self._refresh_texture_sets_list_ui()
+
+        self.log("INFO", "TextureSets", f"Texture sets détectés (matériaux + groupes): {len(self.detected_texture_sets)}")
+        for set_key in sorted(self.detected_texture_sets.keys()):
+            data = self.detected_texture_sets[set_key]
+            objs = data.get("objects", [])
+            display_name = data.get("name", set_key)
+            method = data.get("method", "unknown")
+            self.log("INFO", "TextureSets", f"{display_name} | méthode={method} | {len(objs)} objet(s)", objs[:150])
 
         if "<NO_MATERIAL>" in mat_to_meshes or "<UNBOUND_SURFACESHADER>" in mat_to_meshes:
             self.log("WARNING", "TextureSets", "Des meshes sans matériau valide ont été détectés.")
             self.set_check_status("texture_sets_analyzed", "PENDING")
         else:
-            self.set_check_status("texture_sets_analyzed", "OK")
-        self.set_check_status("texture_sets_groups_analyzed", "PENDING")
-
-    def analyze_texture_sets_by_groups(self) -> None:
-        high_root = self.get_high_root()
-        if not high_root or not cmds.objExists(high_root):
-            self.log("FAIL", "TextureSetsGroups", "High root invalide/non détecté.")
-            self.set_check_status("texture_sets_groups_analyzed", "FAIL")
-            return
-
-        direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
-        candidate_groups = []
-        for child in direct_children:
-            child_meshes = cmds.listRelatives(child, allDescendents=True, fullPath=True, type="mesh") or []
-            if child_meshes:
-                candidate_groups.append(child)
-
-        self.log("INFO", "TextureSetsGroups", f"High root analysé : {high_root}")
-        if candidate_groups:
-            self.log("INFO", "TextureSetsGroups", "Sous-groupes directs détectés :", candidate_groups)
-            self.log("INFO", "TextureSetsGroups", f"Nombre de texture sets détectés (based on groups) : {len(candidate_groups)}")
-            self.set_check_status("texture_sets_groups_analyzed", "OK")
+            self.set_check_status("texture_sets_analyzed", "OK" if self.detected_texture_sets else "PENDING")
+        if not self.detected_texture_sets:
+            self.log("WARNING", "TextureSets", "Aucun texture set exploitable détecté via matériaux/groupes.")
         else:
-            self.log("WARNING", "TextureSetsGroups", "Aucun sous-groupe direct avec mesh détecté sous le High root.")
-            self.set_check_status("texture_sets_groups_analyzed", "PENDING")
+            self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
 
     def check_vertex_colors(self) -> None:
         high_root = self.get_high_root()
@@ -1025,6 +1260,7 @@ class HighPolyReviewTool:
 
         with_vc = []
         without_vc = []
+        partial_missing: Dict[str, int] = {}
 
         for m in meshes:
             shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
@@ -1034,18 +1270,57 @@ class HighPolyReviewTool:
             color_sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
             if color_sets:
                 with_vc.append(m)
+                face_count = int(cmds.polyEvaluate(shape, face=True) or 0)
+                missing_faces = 0
+                for face_idx in range(face_count):
+                    face_comp = f"{shape}.f[{face_idx}]"
+                    rgb = cmds.polyColorPerVertex(face_comp, query=True, rgb=True) or []
+                    if not rgb:
+                        missing_faces += 1
+                if missing_faces > 0:
+                    partial_missing[m] = missing_faces
             else:
                 without_vc.append(m)
 
         self.log("INFO", "VertexColor", f"Meshes avec vertex colors: {len(with_vc)}", with_vc[:150])
         self.log("INFO", "VertexColor", f"Meshes sans vertex colors: {len(without_vc)}", without_vc[:150])
 
+        if partial_missing:
+            self.log("FAIL", "VertexColor", f"Faces sans vertex color détectées sur {len(partial_missing)} mesh(es).")
+            for mesh, count in sorted(partial_missing.items())[:50]:
+                self.log("INFO", "VertexColorDetail", f"{mesh}: {count} face(s) sans vertex color", [mesh])
+
         if without_vc:
-            self.log("WARNING", "VertexColor", "Certains meshes n'ont pas de vertex color set.", without_vc)
-            self.set_check_status("vertex_colors_checked", "PENDING")
+            self.log("FAIL", "VertexColor", "Certains meshes n'ont pas de vertex color set.", without_vc)
+
+        if without_vc or partial_missing:
+            self.set_check_status("vertex_colors_checked", "FAIL")
         else:
             self.log("INFO", "VertexColor", "Tous les meshes analysés possèdent au moins un color set.")
             self.set_check_status("vertex_colors_checked", "OK")
+
+    def display_vertex_colors(self) -> None:
+        selected = cmds.ls(selection=True, long=True, type="transform") or []
+        targets = selected if selected else self._collect_mesh_transforms(root=None)
+        if not targets:
+            self.log("WARNING", "VertexColor", "Aucun objet cible pour l'affichage des vertex colors.")
+            return
+
+        shown = []
+        for tr in targets:
+            shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+            if not shapes:
+                continue
+            for shape in shapes:
+                try:
+                    cmds.setAttr(shape + ".displayColors", 1)
+                    shown.append(tr)
+                except RuntimeError:
+                    continue
+
+        cmds.polyOptions(colorShadedDisplay=True)
+        scope = "sélection" if selected else "toute la scène (meshes détectés)"
+        self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({scope}).", list(sorted(set(shown)))[:150])
 
     def isolate_meshes_without_vertex_color(self) -> None:
         high_root = self.get_high_root()
@@ -1075,7 +1350,6 @@ class HighPolyReviewTool:
         self.check_placeholder_match()
         self.run_topology_checks()
         self.analyze_texture_sets()
-        self.analyze_texture_sets_by_groups()
         self.check_vertex_colors()
         self.log("INFO", "RunAll", "Checks High Poly terminés.")
 
