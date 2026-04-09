@@ -93,6 +93,7 @@ class HighPolyReviewTool:
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
         self.texture_set_visibility: Dict[str, bool] = {}
         self.texture_set_label_to_key: Dict[str, str] = {}
+        self.texture_set_section_headers: Set[str] = set()
         self.last_scanned_namespaces: List[str] = []
         self.scope_keys = ["placeholder", "high_fbx", "high_ma", "all_mesh", "all_incl_mat"]
         self.scope_labels = {
@@ -127,7 +128,9 @@ class HighPolyReviewTool:
 
         self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_file_section()
-        self._build_checklist_section()
+        self._build_scope_section()
+        self._build_technical_checks_section()
+        self._build_texture_sets_section()
         self._build_global_action_section()
         self._build_results_section()
         self._build_notes_section()
@@ -157,7 +160,7 @@ class HighPolyReviewTool:
         self.refresh_checklist_ui()
 
     def _build_file_section(self) -> None:
-        cmds.frameLayout(label="1) Importation / Fichiers", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="1) Fichiers / Détection / Références", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
 
         self.ui["root_field"] = cmds.textFieldButtonGrp(
@@ -207,12 +210,11 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_checklist_section(self) -> None:
-        cmds.frameLayout(label="2) Checks", collapsable=True, collapse=False, marginWidth=8)
+    def _build_technical_checks_section(self) -> None:
+        cmds.frameLayout(label="3) Checks techniques", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
 
-        self._build_check_row("check_ma_fbx", "MA vs FBX", self.compare_ma_vs_fbx)
-        self._build_scope_section()
+        self._build_check_row("check_ma_fbx", "Compare MA vs FBX", self.compare_ma_vs_fbx)
 
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
@@ -228,21 +230,8 @@ class HighPolyReviewTool:
         cmds.text(label="Tolerance %", align="right")
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
-        self._build_check_row("check_topology", "Topologie", self.run_topology_checks)
-
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        self.ui["check_texturesets"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Texture sets", align="left")
-        cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets(mode="materials"))
-        cmds.button(label="Run Texture Sets (Groups Method)", height=26, command=lambda *_: self.analyze_texture_sets(mode="groups"))
-        cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        cmds.checkBox(label="", value=False, enable=False, visible=False)
-        cmds.text(label="", align="left")
-        cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
-        cmds.separator(style="none")
-        cmds.setParent("..")
+        self._build_check_row("check_topology", "Topology", self.run_topology_checks)
+        self._build_check_row("check_texturesets", "Texture Sets", lambda: self.analyze_texture_sets(mode="materials"))
 
         cmds.rowLayout(
             numberOfColumns=5,
@@ -254,22 +243,6 @@ class HighPolyReviewTool:
         cmds.button(label="Run Vertex Colors", height=26, command=lambda *_: self.check_vertex_colors())
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
         cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
-        cmds.setParent("..")
-
-        cmds.text(label="Texture sets détectés (sélectionnez puis Hide/Show):", align="left")
-        self.ui["texture_sets_list"] = cmds.textScrollList(
-            allowMultiSelection=True,
-            height=120,
-            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
-        )
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        cmds.button(label="Hide Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(False, selected_only=True))
-        cmds.button(label="Show Selected Sets", height=24, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
-        cmds.button(label="Toggle Selected Sets", height=24, command=lambda *_: self.toggle_selected_texture_sets())
-        cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        cmds.button(label="Isolate Selected Sets", height=24, command=lambda *_: self.isolate_selected_texture_sets())
-        cmds.separator(style="none")
         cmds.setParent("..")
 
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -286,7 +259,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_scope_section(self) -> None:
-        cmds.frameLayout(label="Target Scope / Cibles", collapsable=True, collapse=False, marginWidth=8, marginHeight=6)
+        cmds.frameLayout(label="2) Scope / Cibles", collapsable=True, collapse=False, marginWidth=8, marginHeight=6)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.text(
             label="Choisissez une ou plusieurs cibles pour Placeholder / Topology / TextureSets / VertexColor.",
@@ -304,6 +277,39 @@ class HighPolyReviewTool:
         self.ui["scope_checks"]["all_incl_mat"] = cmds.checkBox(label=self.scope_labels["all_incl_mat"], value=False)
         cmds.setParent("..")
         cmds.setParent("..")
+
+    def _build_texture_sets_section(self) -> None:
+        cmds.frameLayout(label="4) Texture Sets / Contrôles visuels", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(label="Run Texture Sets", height=28, command=lambda *_: self.analyze_texture_sets(mode="materials"))
+        cmds.button(label="Run Texture Sets (Groups Method)", height=28, command=lambda *_: self.analyze_texture_sets(mode="groups"))
+        cmds.setParent("..")
+
+        cmds.text(
+            label="Liste des sets (sélection multiple possible) — séparée par source quand plusieurs scopes sont actifs.",
+            align="left",
+        )
+        self.ui["texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=180,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
+        )
+
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.button(label="Hide Selected Sets", height=26, command=lambda *_: self.set_texture_set_visibility(False, selected_only=True))
+        cmds.button(label="Show Selected Sets", height=26, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
+        cmds.button(label="Toggle Selected Sets", height=26, command=lambda *_: self.toggle_selected_texture_sets())
+        cmds.setParent("..")
+
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(label="Isolate Selected Sets", height=26, command=lambda *_: self.isolate_selected_texture_sets())
+        cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
+        cmds.setParent("..")
+
+        cmds.setParent("..")
+        cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_check_row(self, check_key_ui: str, label: str, command) -> None:
@@ -314,7 +320,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_global_action_section(self) -> None:
-        cmds.frameLayout(label="3) Actions globales", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="5) Actions globales", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
         cmds.button(label="Run All High Checks", height=30, command=lambda *_: self.run_all_checks())
@@ -332,7 +338,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_results_section(self) -> None:
-        cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="6) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self.ui["results_list"] = cmds.textScrollList(
             allowMultiSelection=False,
@@ -344,14 +350,14 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_notes_section(self) -> None:
-        cmds.frameLayout(label="5) Notes", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="7) Notes", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self.ui["notes_field"] = cmds.scrollField(wordWrap=True, height=130, text="")
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_summary_section(self) -> None:
-        cmds.frameLayout(label="6) Résumé global", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="8) Résumé global", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self.ui["summary_text"] = cmds.text(label="Pending checks", align="left", backgroundColor=(0.22, 0.22, 0.22))
         cmds.setParent("..")
@@ -1097,34 +1103,70 @@ class HighPolyReviewTool:
         filtered = [n for n in dag_ns if not self._is_allowed_namespace(n) and n not in {"UI", "shared", ":"}]
         return sorted(filtered, key=lambda x: (x.count(":"), x))
 
+    def _infer_set_sources(self, objects: List[str], per_scope_meshes: Dict[str, List[str]]) -> List[str]:
+        candidate_sources = ["high_ma", "high_fbx", "placeholder"]
+        obj_set = set(objects)
+        sources: List[str] = []
+        for source in candidate_sources:
+            meshes = set(per_scope_meshes.get(source, []))
+            if meshes and obj_set.intersection(meshes):
+                sources.append(source)
+        if not sources:
+            if obj_set.intersection(set(per_scope_meshes.get("all_mesh", []))):
+                return ["all_mesh"]
+            if obj_set.intersection(set(per_scope_meshes.get("all_incl_mat", []))):
+                return ["all_incl_mat"]
+            return ["unknown"]
+        return sources
+
     def _refresh_texture_sets_list_ui(self) -> None:
         if "texture_sets_list" not in self.ui:
             return
         previous_selection = self._selected_texture_set_names()
         self.texture_set_label_to_key = {}
+        self.texture_set_section_headers = set()
         cmds.textScrollList(self.ui["texture_sets_list"], edit=True, removeAll=True)
-        for set_name in sorted(self.detected_texture_sets.keys()):
-            data = self.detected_texture_sets[set_name]
-            method = data.get("method", "unknown")
-            count = len(data.get("objects", []))
-            display_name = data.get("display_name", data.get("name", set_name))
-            quad_count = int(data.get("quad_count", 0))
-            percent_of_total = float(data.get("percent_of_total", 0.0))
-            visible = self.texture_set_visibility.get(set_name, True)
-            state = "Shown" if visible else "Hidden"
-            label = f"{display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
-            self.texture_set_label_to_key[label] = set_name
-            cmds.textScrollList(
-                self.ui["texture_sets_list"],
-                edit=True,
-                append=label,
-            )
+
+        grouped_keys: Dict[str, List[str]] = {}
+        source_order = ["high_ma", "high_fbx", "placeholder", "all_mesh", "all_incl_mat", "mixed", "unknown"]
+        for set_key in sorted(self.detected_texture_sets.keys()):
+            data = self.detected_texture_sets[set_key]
+            sources = data.get("sources", []) or ["unknown"]
+            source_key = "mixed" if len(sources) > 1 else sources[0]
+            grouped_keys.setdefault(source_key, []).append(set_key)
+
+        for source in source_order:
+            set_keys = grouped_keys.get(source, [])
+            if not set_keys:
+                continue
+            header = f"━━ {self.scope_labels.get(source, source.replace('_', ' ').title())} ━━"
+            self.texture_set_section_headers.add(header)
+            cmds.textScrollList(self.ui["texture_sets_list"], edit=True, append=header)
+            for set_name in set_keys:
+                data = self.detected_texture_sets[set_name]
+                method = data.get("method", "unknown")
+                count = len(data.get("objects", []))
+                display_name = data.get("display_name", data.get("name", set_name))
+                quad_count = int(data.get("quad_count", 0))
+                percent_of_total = float(data.get("percent_of_total", 0.0))
+                visible = self.texture_set_visibility.get(set_name, True)
+                state = "Shown" if visible else "Hidden"
+                label = f"  {display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
+                unique_label = label
+                duplicate_index = 2
+                while unique_label in self.texture_set_label_to_key:
+                    unique_label = f"{label} [{duplicate_index}]"
+                    duplicate_index += 1
+                self.texture_set_label_to_key[unique_label] = set_name
+                cmds.textScrollList(self.ui["texture_sets_list"], edit=True, append=unique_label)
         self._restore_texture_set_selection(previous_selection)
 
     def _selected_texture_set_names(self) -> List[str]:
         selected = cmds.textScrollList(self.ui["texture_sets_list"], query=True, selectItem=True) or []
         names: List[str] = []
         for label in selected:
+            if label in self.texture_set_section_headers:
+                continue
             set_name = self.texture_set_label_to_key.get(label)
             if set_name in self.detected_texture_sets:
                 names.append(set_name)
@@ -1196,15 +1238,20 @@ class HighPolyReviewTool:
         if not target_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour isolation.")
             return
+        scene_transforms = cmds.ls(type="transform", long=True) or []
+        default_camera_transforms = set(cmds.listRelatives(cmds.ls(type="camera") or [], parent=True, fullPath=True) or [])
         all_sets = list(self.detected_texture_sets.keys())
         hidden_objects: List[str] = []
         shown_objects: List[str] = []
+        selected_objects: Set[str] = set()
         for set_name in all_sets:
             visible = set_name in target_sets
             objs = self.detected_texture_sets[set_name].get("objects", [])
             for obj in objs:
                 if not cmds.objExists(obj):
                     continue
+                if visible:
+                    selected_objects.add(obj)
                 try:
                     cmds.setAttr(obj + ".visibility", visible)
                     if visible:
@@ -1214,12 +1261,29 @@ class HighPolyReviewTool:
                 except RuntimeError:
                     continue
             self.texture_set_visibility[set_name] = visible
+
+        keep_visible: Set[str] = set()
+        for obj in selected_objects:
+            keep_visible.update(self._path_ancestors(obj))
+        for tr in scene_transforms:
+            if tr in default_camera_transforms:
+                continue
+            target_visibility = tr in keep_visible
+            try:
+                if cmds.getAttr(tr + ".visibility", settable=True):
+                    cmds.setAttr(tr + ".visibility", target_visibility)
+            except RuntimeError:
+                continue
+
         self._refresh_texture_sets_list_ui()
         self._restore_texture_set_selection(target_sets)
         self.log(
             "INFO",
             "TextureSets",
-            f"Isolate Selected Sets appliqué ({len(target_sets)} set(s) visibles, scope source: {self._scope_label(self.last_texture_scope or self._get_selected_scope_keys())}).",
+            (
+                f"Isolate Selected Sets appliqué à l'échelle scène "
+                f"({len(target_sets)} set(s) visibles, scope source: {self._scope_label(self.last_texture_scope or self._get_selected_scope_keys())})."
+            ),
             list(sorted(set(shown_objects + hidden_objects)))[:200],
         )
 
@@ -1227,6 +1291,12 @@ class HighPolyReviewTool:
         if not self.detected_texture_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set détecté. Lancez d'abord Run Texture Sets.")
             return
+        for tr in cmds.ls(type="transform", long=True) or []:
+            try:
+                if cmds.getAttr(tr + ".visibility", settable=True):
+                    cmds.setAttr(tr + ".visibility", True)
+            except RuntimeError:
+                continue
         self.set_texture_set_visibility(True, selected_only=False)
 
     # ----------------------------- Actions -----------------------------
@@ -1748,6 +1818,7 @@ class HighPolyReviewTool:
         resolution = self.resolve_scope_targets()
         scope_keys = resolution["scope_keys"]
         meshes = resolution["meshes"]
+        per_scope_meshes = resolution["per_scope_meshes"]
         texture_scope_roots = self._resolve_texture_scope_roots(resolution)
         analysis_roots = texture_scope_roots["included_roots"]
         primary_root = texture_scope_roots["primary_root"]
@@ -1857,6 +1928,7 @@ class HighPolyReviewTool:
             data["quad_count"] = int(set_quads)
             data["percent_of_total"] = percentage
             data["objects"] = unique_meshes
+            data["sources"] = self._infer_set_sources(unique_meshes, per_scope_meshes)
 
         self.detected_texture_sets = detected
         self.last_texture_scope = scope_keys[:]
