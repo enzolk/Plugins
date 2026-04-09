@@ -88,7 +88,6 @@ class HighPolyReviewTool:
 
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
         self.texture_set_visibility: Dict[str, bool] = {}
-        self.texture_set_label_to_key: Dict[str, str] = {}
         self.last_scanned_namespaces: List[str] = []
 
     # --------------------------- UI BUILD ---------------------------
@@ -208,27 +207,14 @@ class HighPolyReviewTool:
         cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
         cmds.setParent("..")
 
-        cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
-        self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Placeholder match", align="left")
-        cmds.button(label="Run Placeholder match", height=26, command=lambda *_: self.check_placeholder_match())
-        cmds.text(label="Tolerance %", align="right")
-        self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
-        cmds.setParent("..")
+        self._build_check_row("check_placeholder", "Placeholder match", self.check_placeholder_match)
         self._build_check_row("check_topology", "Topologie", self.run_topology_checks)
 
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_texturesets"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Texture sets", align="left")
-        cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets(mode="combined"))
-        cmds.button(label="Run Texture Sets (Groups Method)", height=26, command=lambda *_: self.analyze_texture_sets(mode="groups"))
-        cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        cmds.checkBox(label="", value=False, enable=False, visible=False)
-        cmds.text(label="", align="left")
+        cmds.button(label="Run Texture Sets", height=26, command=lambda *_: self.analyze_texture_sets())
         cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
-        cmds.separator(style="none")
         cmds.setParent("..")
 
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
@@ -236,7 +222,6 @@ class HighPolyReviewTool:
         cmds.text(label="Vertex Colors", align="left")
         cmds.button(label="Run Vertex Colors", height=26, command=lambda *_: self.check_vertex_colors())
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
-        cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
         cmds.setParent("..")
 
         cmds.text(label="Texture sets détectés (sélectionnez puis Hide/Show):", align="left")
@@ -690,66 +675,6 @@ class HighPolyReviewTool:
             "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
         }
 
-    def _mesh_center_world(self, mesh_transform: str) -> Tuple[float, float, float]:
-        bb = cmds.exactWorldBoundingBox(mesh_transform)
-        return (
-            (bb[0] + bb[3]) * 0.5,
-            (bb[1] + bb[4]) * 0.5,
-            (bb[2] + bb[5]) * 0.5,
-        )
-
-    def _mesh_bbox_dims_world(self, mesh_transform: str) -> Tuple[float, float, float]:
-        bb = cmds.exactWorldBoundingBox(mesh_transform)
-        return (bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
-
-    def _world_union_bbox(self, nodes: List[str]) -> Optional[Tuple[float, float, float, float, float, float]]:
-        existing = [n for n in nodes if cmds.objExists(n)]
-        if not existing:
-            return None
-        bb = cmds.exactWorldBoundingBox(existing)
-        return (bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
-
-    def _bbox_dims(self, bbox: Tuple[float, float, float, float, float, float]) -> Tuple[float, float, float]:
-        return (bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2])
-
-    def _bbox_center(self, bbox: Tuple[float, float, float, float, float, float]) -> Tuple[float, float, float]:
-        return ((bbox[0] + bbox[3]) * 0.5, (bbox[1] + bbox[4]) * 0.5, (bbox[2] + bbox[5]) * 0.5)
-
-    def _vector_distance(self, a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
-        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
-
-    def _strip_suffix_ci(self, text: str, suffix: str) -> str:
-        if text.lower().endswith(suffix.lower()):
-            return text[: -len(suffix)]
-        return text
-
-    def _clean_texture_set_display_name(self, raw_name: str, high_root: Optional[str]) -> str:
-        cleaned = self._strip_namespaces_from_name(raw_name)
-        cleaned = self._strip_suffix_ci(cleaned, "_high").strip("_")
-        if high_root and cmds.objExists(high_root):
-            root_name = self._strip_namespaces_from_name(self._short_name(high_root))
-            root_base = self._strip_suffix_ci(root_name, "_high").strip("_")
-            root_base_ci = root_base.lower()
-            cleaned_ci = cleaned.lower()
-            if cleaned_ci.startswith(root_base_ci + "_"):
-                cleaned = cleaned[len(root_base) + 1 :]
-            elif cleaned_ci == root_base_ci:
-                cleaned = root_base
-        return cleaned.strip("_- ") or self._strip_namespaces_from_name(raw_name)
-
-    def _mesh_quad_and_face_count(self, mesh_transform: str) -> Tuple[int, int]:
-        face_count = int(cmds.polyEvaluate(mesh_transform, face=True) or 0)
-        quad_count = 0
-        for face_idx in range(face_count):
-            face_info = cmds.polyInfo(f"{mesh_transform}.f[{face_idx}]", faceToVertex=True) or []
-            if not face_info:
-                continue
-            tokens = [tok for tok in face_info[0].replace(":", " ").split() if tok.isdigit()]
-            vertex_count = max(0, len(tokens) - 1)
-            if vertex_count == 4:
-                quad_count += 1
-        return quad_count, face_count
-
     def _namespace_from_node(self, node: str) -> str:
         short = node.split("|")[-1]
         if ":" not in short:
@@ -802,42 +727,27 @@ class HighPolyReviewTool:
     def _refresh_texture_sets_list_ui(self) -> None:
         if "texture_sets_list" not in self.ui:
             return
-        previous_selection = self._selected_texture_set_names()
-        self.texture_set_label_to_key = {}
         cmds.textScrollList(self.ui["texture_sets_list"], edit=True, removeAll=True)
         for set_name in sorted(self.detected_texture_sets.keys()):
             data = self.detected_texture_sets[set_name]
             method = data.get("method", "unknown")
             count = len(data.get("objects", []))
-            display_name = data.get("display_name", data.get("name", set_name))
-            quad_count = int(data.get("quad_count", 0))
-            percent_of_total = float(data.get("percent_of_total", 0.0))
             visible = self.texture_set_visibility.get(set_name, True)
             state = "Shown" if visible else "Hidden"
-            label = f"{display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
-            self.texture_set_label_to_key[label] = set_name
             cmds.textScrollList(
                 self.ui["texture_sets_list"],
                 edit=True,
-                append=label,
+                append=f"{set_name} | {method} | {count} obj(s) | {state}",
             )
-        self._restore_texture_set_selection(previous_selection)
 
     def _selected_texture_set_names(self) -> List[str]:
         selected = cmds.textScrollList(self.ui["texture_sets_list"], query=True, selectItem=True) or []
         names: List[str] = []
         for label in selected:
-            set_name = self.texture_set_label_to_key.get(label)
+            set_name = label.split(" | ")[0]
             if set_name in self.detected_texture_sets:
                 names.append(set_name)
         return names
-
-    def _restore_texture_set_selection(self, set_names: List[str]) -> None:
-        if not set_names:
-            return
-        labels_to_select = [label for label, set_name in self.texture_set_label_to_key.items() if set_name in set_names]
-        if labels_to_select:
-            cmds.textScrollList(self.ui["texture_sets_list"], edit=True, selectItem=labels_to_select)
 
     def on_texture_set_selection_changed(self) -> None:
         selected_names = self._selected_texture_set_names()
@@ -865,8 +775,6 @@ class HighPolyReviewTool:
                         pass
             self.texture_set_visibility[set_name] = visible
         self._refresh_texture_sets_list_ui()
-        if selected_only:
-            self._restore_texture_set_selection(target_sets)
         action = "affichés" if visible else "masqués"
         self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
 
@@ -889,7 +797,6 @@ class HighPolyReviewTool:
                         pass
             self.texture_set_visibility[set_name] = new_state
         self._refresh_texture_sets_list_ui()
-        self._restore_texture_set_selection(target_sets)
         self.log("INFO", "TextureSets", f"Toggle visibility appliqué à: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
 
     def show_all_texture_sets(self) -> None:
@@ -995,7 +902,6 @@ class HighPolyReviewTool:
         uv_mismatch: List[str] = []
         topo_mismatch: List[str] = []
         hierarchy_mismatch: List[str] = []
-        spatial_mismatch: List[str] = []
 
         for key in sorted(ma_keys & fbx_keys):
             ma_data = ma_by_key[key]
@@ -1012,51 +918,11 @@ class HighPolyReviewTool:
             if ma_data["parent_path"] != fbx_data["parent_path"]:
                 hierarchy_mismatch.append(key)
                 details.append(f"hierarchy MA({ma_data['parent_path']}) != FBX({fbx_data['parent_path']})")
-            ma_center = self._mesh_center_world(ma_data["path"])
-            fbx_center = self._mesh_center_world(fbx_data["path"])
-            ma_dims = self._mesh_bbox_dims_world(ma_data["path"])
-            fbx_dims = self._mesh_bbox_dims_world(fbx_data["path"])
-            center_delta = self._vector_distance(ma_center, fbx_center)
-            dim_delta = self._vector_distance(ma_dims, fbx_dims)
-            dim_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
-            center_tol = max(0.001, dim_ref * 0.01)
-            dim_tol = max(0.001, dim_ref * 0.01)
-            if center_delta > center_tol or dim_delta > dim_tol:
-                spatial_mismatch.append(key)
-                details.append(
-                    "spatial "
-                    f"centerΔ={center_delta:.5f} (tol={center_tol:.5f}), "
-                    f"bboxΔ={dim_delta:.5f} (tol={dim_tol:.5f})"
-                )
             if details:
                 mismatch_items.append(f"{key} -> " + " | ".join(details))
 
-        ma_union = self._world_union_bbox([ma_by_key[k]["path"] for k in ma_keys]) if ma_keys else None
-        fbx_union = self._world_union_bbox([fbx_by_key[k]["path"] for k in fbx_keys]) if fbx_keys else None
-        global_bbox_warning = False
-        if ma_union and fbx_union:
-            ma_dims = self._bbox_dims(ma_union)
-            fbx_dims = self._bbox_dims(fbx_union)
-            ma_center = self._bbox_center(ma_union)
-            fbx_center = self._bbox_center(fbx_union)
-            global_dim_delta = self._vector_distance(ma_dims, fbx_dims)
-            global_center_delta = self._vector_distance(ma_center, fbx_center)
-            global_ref = max(max(ma_dims), max(fbx_dims), 1e-4)
-            global_tol = max(0.001, global_ref * 0.02)
-            if global_dim_delta > global_tol or global_center_delta > global_tol:
-                global_bbox_warning = True
-                self.log(
-                    "WARNING",
-                    "Compare",
-                    (
-                        "Différence spatiale globale MA vs FBX détectée "
-                        f"(bboxΔ={global_dim_delta:.5f}, centerΔ={global_center_delta:.5f}, tol={global_tol:.5f}). "
-                        "Possible asset exploded vs non exploded."
-                    ),
-                )
-
-        if not missing_in_fbx and not missing_in_ma and not mismatch_items and not global_bbox_warning:
-            self.log("INFO", "Compare", "MA et FBX cohérents: topologie, UVs, hiérarchie et positionnement spatial alignés.")
+        if not missing_in_fbx and not missing_in_ma and not mismatch_items:
+            self.log("INFO", "Compare", "MA et FBX cohérents: topologie, UVs, composants et hiérarchie alignés.")
             self.set_check_status("ma_fbx_compared", "OK")
             return
 
@@ -1071,16 +937,6 @@ class HighPolyReviewTool:
             self.log("FAIL", "Compare", f"Différences d'UV détectées (counts/sets/shells): {len(uv_mismatch)}", [ma_by_key[k]["path"] for k in uv_mismatch][:200])
         if hierarchy_mismatch:
             self.log("WARNING", "Compare", f"Différences de hiérarchie/path détectées: {len(hierarchy_mismatch)}", [ma_by_key[k]["path"] for k in hierarchy_mismatch][:200])
-        if spatial_mismatch:
-            self.log(
-                "FAIL",
-                "Compare",
-                (
-                    f"Différences de positionnement spatial détectées: {len(spatial_mismatch)}. "
-                    "Possible asset exploded vs non exploded."
-                ),
-                [ma_by_key[k]["path"] for k in spatial_mismatch][:200],
-            )
         for detail in mismatch_items[:30]:
             self.log("INFO", "CompareDetail", detail)
 
@@ -1168,19 +1024,12 @@ class HighPolyReviewTool:
         self.log("INFO", "Placeholder", f"Scale ratio High/Placeholder: {tuple(round(v, 4) for v in ratio)}")
         self.log("INFO", "Placeholder", f"Pivot delta: {tuple(round(h_piv[i] - p_piv[i], 4) for i in range(3))}")
 
-        tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
-        tolerance_percent = max(0.0, float(tolerance_percent))
-        tolerance = tolerance_percent / 100.0
-        ratio_deviation_percent = [abs(r - 1.0) * 100.0 for r in ratio if r != 0.0]
-        max_deviation = max(ratio_deviation_percent) if ratio_deviation_percent else 0.0
-
-        self.log("INFO", "Placeholder", f"Écart détecté: {max_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Seuil autorisé: {tolerance_percent:.2f}%")
+        tolerance = 0.05
         if all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0):
-            self.log("INFO", "Placeholder", "Résultat: OK (proportions dans le seuil).")
+            self.log("INFO", "Placeholder", "Dimensions globales proches du placeholder (tolérance 5%).")
             self.set_check_status("placeholder_checked", "OK")
         else:
-            self.log("WARNING", "Placeholder", "Résultat: Fail (proportions hors seuil). Vérifier visuellement.", [placeholder, high])
+            self.log("WARNING", "Placeholder", "Écart de proportions détecté (au-delà de 5%). Vérifier visuellement.", [placeholder, high])
             self.set_check_status("placeholder_checked", "PENDING")
 
     def run_topology_checks(self) -> None:
@@ -1325,7 +1174,7 @@ class HighPolyReviewTool:
         else:
             self.set_check_status("topology_checked", "FAIL")
 
-    def analyze_texture_sets(self, mode: str = "combined") -> None:
+    def analyze_texture_sets(self) -> None:
         high_root = self.get_high_root()
         meshes = self._collect_mesh_transforms(root=high_root)
         if not meshes:
@@ -1334,70 +1183,48 @@ class HighPolyReviewTool:
             return
 
         detected: Dict[str, Dict[str, object]] = {}
-        mode = (mode or "combined").lower().strip()
-        include_material = mode in {"combined", "material", "materials"}
-        include_groups = mode in {"combined", "groups", "group"}
 
         mat_to_meshes: Dict[str, List[str]] = {}
-        if include_material:
-            for m in meshes:
-                shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
-                if not shapes:
-                    continue
-                shape = shapes[0]
+        for m in meshes:
+            shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
+            if not shapes:
+                continue
+            shape = shapes[0]
 
-                sgs = cmds.listConnections(shape, type="shadingEngine") or []
-                if not sgs:
-                    mat_to_meshes.setdefault("<NO_MATERIAL>", []).append(m)
-                    continue
+            sgs = cmds.listConnections(shape, type="shadingEngine") or []
+            if not sgs:
+                mat_to_meshes.setdefault("<NO_MATERIAL>", []).append(m)
+                continue
 
-                mats_for_mesh = set()
-                for sg in sgs:
-                    mats = cmds.listConnections(sg + ".surfaceShader") or []
-                    if mats:
-                        mats_for_mesh.update(mats)
-                    else:
-                        mats_for_mesh.add("<UNBOUND_SURFACESHADER>")
+            mats_for_mesh = set()
+            for sg in sgs:
+                mats = cmds.listConnections(sg + ".surfaceShader") or []
+                if mats:
+                    mats_for_mesh.update(mats)
+                else:
+                    mats_for_mesh.add("<UNBOUND_SURFACESHADER>")
 
-                for mat in mats_for_mesh:
-                    mat_to_meshes.setdefault(mat, []).append(m)
+            for mat in mats_for_mesh:
+                mat_to_meshes.setdefault(mat, []).append(m)
 
-            for mat, mat_meshes in mat_to_meshes.items():
-                detected[f"MAT::{mat}"] = {
-                    "name": mat,
-                    "display_name": self._strip_namespaces_from_name(mat),
-                    "method": "material",
-                    "objects": sorted(set(mat_meshes)),
-                }
+        for mat, mat_meshes in mat_to_meshes.items():
+            detected[f"MAT::{mat}"] = {
+                "name": mat,
+                "method": "material",
+                "objects": sorted(set(mat_meshes)),
+            }
 
-        if include_groups and high_root and cmds.objExists(high_root):
+        if high_root and cmds.objExists(high_root):
             direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
             for child in direct_children:
                 child_meshes = self._collect_mesh_transforms(root=child)
                 if child_meshes:
                     key = f"GRP::{self._short_name(child)}"
-                    display_name = self._clean_texture_set_display_name(self._short_name(child), high_root)
                     detected[key] = {
                         "name": self._strip_namespaces_from_name(self._short_name(child)),
-                        "display_name": display_name,
                         "method": "group",
                         "objects": sorted(set(child_meshes)),
                     }
-
-        total_quads = 0
-        mesh_quad_cache: Dict[str, Tuple[int, int]] = {}
-        for mesh in meshes:
-            quad_count, _ = self._mesh_quad_and_face_count(mesh)
-            mesh_quad_cache[mesh] = (quad_count, 0)
-            total_quads += quad_count
-
-        for set_key, data in detected.items():
-            unique_meshes = sorted(set(data.get("objects", [])))
-            set_quads = sum(mesh_quad_cache.get(mesh, (0, 0))[0] for mesh in unique_meshes)
-            percentage = (float(set_quads) / float(total_quads) * 100.0) if total_quads else 0.0
-            data["quad_count"] = int(set_quads)
-            data["percent_of_total"] = percentage
-            data["objects"] = unique_meshes
 
         self.detected_texture_sets = detected
         self.texture_set_visibility = {k: self.texture_set_visibility.get(k, True) for k in self.detected_texture_sets.keys()}
@@ -1405,22 +1232,13 @@ class HighPolyReviewTool:
             self.texture_set_visibility.setdefault(set_key, True)
         self._refresh_texture_sets_list_ui()
 
-        mode_label = {"combined": "matériaux + groupes", "groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
-        self.log("INFO", "TextureSets", f"Texture sets détectés ({mode_label}): {len(self.detected_texture_sets)}")
-        self.log("INFO", "TextureSets", f"Total High root: {total_quads} quads")
+        self.log("INFO", "TextureSets", f"Texture sets détectés (matériaux + groupes): {len(self.detected_texture_sets)}")
         for set_key in sorted(self.detected_texture_sets.keys()):
             data = self.detected_texture_sets[set_key]
             objs = data.get("objects", [])
-            display_name = data.get("display_name", data.get("name", set_key))
+            display_name = data.get("name", set_key)
             method = data.get("method", "unknown")
-            quad_count = int(data.get("quad_count", 0))
-            percent = float(data.get("percent_of_total", 0.0))
-            self.log(
-                "INFO",
-                "TextureSets",
-                f"{display_name} | méthode={method} | {quad_count} quads | {percent:.1f}% du High | {len(objs)} objet(s)",
-                objs[:150],
-            )
+            self.log("INFO", "TextureSets", f"{display_name} | méthode={method} | {len(objs)} objet(s)", objs[:150])
 
         if "<NO_MATERIAL>" in mat_to_meshes or "<UNBOUND_SURFACESHADER>" in mat_to_meshes:
             self.log("WARNING", "TextureSets", "Des meshes sans matériau valide ont été détectés.")
@@ -1503,28 +1321,6 @@ class HighPolyReviewTool:
         cmds.polyOptions(colorShadedDisplay=True)
         scope = "sélection" if selected else "toute la scène (meshes détectés)"
         self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) ({scope}).", list(sorted(set(shown)))[:150])
-
-    def hide_vertex_colors(self) -> None:
-        selected = cmds.ls(selection=True, long=True, type="transform") or []
-        targets = selected if selected else self._collect_mesh_transforms(root=None)
-        if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet cible pour masquer les vertex colors.")
-            return
-
-        hidden = []
-        for tr in targets:
-            shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            if not shapes:
-                continue
-            for shape in shapes:
-                try:
-                    cmds.setAttr(shape + ".displayColors", 0)
-                    hidden.append(tr)
-                except RuntimeError:
-                    continue
-
-        scope = "sélection" if selected else "toute la scène (meshes détectés)"
-        self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(set(hidden))} objet(s) ({scope}).", list(sorted(set(hidden)))[:150])
 
     def isolate_meshes_without_vertex_color(self) -> None:
         high_root = self.get_high_root()
