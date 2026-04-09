@@ -285,19 +285,23 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_scope_section(self) -> None:
-        cmds.frameLayout(label="Target Scope (scoped operations)", collapsable=True, collapse=False, marginWidth=6)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
-        cmds.text(label="Choisissez une ou plusieurs cibles pour Placeholder/Topology/TextureSets/VertexColor.", align="left")
+        cmds.frameLayout(label="Target Scope / Cibles", collapsable=True, collapse=False, marginWidth=8, marginHeight=6)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.text(
+            label="Choisissez une ou plusieurs cibles pour Placeholder / Topology / TextureSets / VertexColor.",
+            align="left",
+        )
         self.ui["scope_checks"] = {}
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.separator(style="none", height=2)
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 10), (3, "both", 10)])
         self.ui["scope_checks"]["placeholder"] = cmds.checkBox(label=self.scope_labels["placeholder"], value=False)
         self.ui["scope_checks"]["high_fbx"] = cmds.checkBox(label=self.scope_labels["high_fbx"], value=True)
         self.ui["scope_checks"]["high_ma"] = cmds.checkBox(label=self.scope_labels["high_ma"], value=True)
         cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 10)])
         self.ui["scope_checks"]["all_mesh"] = cmds.checkBox(label=self.scope_labels["all_mesh"], value=False)
         self.ui["scope_checks"]["all_incl_mat"] = cmds.checkBox(label=self.scope_labels["all_incl_mat"], value=False)
-        cmds.separator(style="none")
+        cmds.setParent("..")
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -841,6 +845,52 @@ class HighPolyReviewTool:
     def _scope_label(self, scope_keys: List[str]) -> str:
         return ", ".join([self.scope_labels.get(k, k) for k in scope_keys])
 
+    def _fmt_vec(self, values: Tuple[float, float, float], precision: int = 4) -> str:
+        rounded = tuple(round(v, precision) for v in values)
+        return f"({rounded[0]}, {rounded[1]}, {rounded[2]})"
+
+    def _fmt_size_percent(self, ratio: float) -> str:
+        return f"{ratio * 100.0:.2f}% de la taille placeholder"
+
+    def _placeholder_axis_deviation(self, ratio: float) -> float:
+        return (abs(ratio - 1.0) * 100.0) if ratio != 0.0 else 100.0
+
+    def _compute_root_children_texture_sets(
+        self,
+        high_root: Optional[str],
+        scope_meshes: List[str],
+    ) -> Tuple[Dict[str, Dict[str, object]], List[str]]:
+        sets: Dict[str, Dict[str, object]] = {}
+        log_lines: List[str] = []
+        if not high_root or not cmds.objExists(high_root):
+            log_lines.append("Méthode groupes: High root manquant (analyse du 1er niveau impossible).")
+            return sets, log_lines
+
+        scope_set = set(scope_meshes)
+        direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
+        log_lines.append(f"Root analysé : {self._short_name(high_root)}")
+        log_lines.append("Éléments de premier niveau détectés :")
+
+        for child in direct_children:
+            child_meshes = [m for m in self._collect_mesh_transforms(root=child) if m in scope_set]
+            if not child_meshes:
+                continue
+            child_shapes = cmds.listRelatives(child, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+            child_kind = "mesh" if child_shapes else "group"
+            child_name = self._short_name(child)
+            log_lines.append(f"- {child_name} ({child_kind})")
+
+            key = f"GRP_CHILD::{child}"
+            display_name = self._clean_texture_set_display_name(child_name, high_root)
+            sets[key] = {
+                "name": self._strip_namespaces_from_name(child_name),
+                "display_name": display_name,
+                "method": "group_root_children",
+                "objects": sorted(set(child_meshes)),
+            }
+
+        return sets, log_lines
+
     def _extract_namespaces_from_path(self, node_path: str) -> Set[str]:
         found: Set[str] = set()
         for segment in [s for s in node_path.split("|") if s]:
@@ -1269,40 +1319,69 @@ class HighPolyReviewTool:
         h_bb = cmds.exactWorldBoundingBox(target_meshes)
         p_dim = (p_bb[3] - p_bb[0], p_bb[4] - p_bb[1], p_bb[5] - p_bb[2])
         h_dim = (h_bb[3] - h_bb[0], h_bb[4] - h_bb[1], h_bb[5] - h_bb[2])
-
-        p_piv = cmds.xform(placeholder, q=True, ws=True, rotatePivot=True)
+        p_piv = tuple(cmds.xform(placeholder, q=True, ws=True, rotatePivot=True))
         h_piv = self._bbox_center(h_bb)
+        pivot_delta = tuple(h_piv[i] - p_piv[i] for i in range(3))
 
         ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
-
-        self.log("INFO", "Placeholder", f"Placeholder dims: {tuple(round(v, 4) for v in p_dim)}")
-        self.log("INFO", "Placeholder", f"High dims: {tuple(round(v, 4) for v in h_dim)}")
-        self.log("INFO", "Placeholder", f"Scale ratio High/Placeholder: {tuple(round(v, 4) for v in ratio)}")
-        self.log("INFO", "Placeholder", f"Pivot delta: {tuple(round(h_piv[i] - p_piv[i], 4) for i in range(3))}")
 
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance_percent = max(0.0, float(tolerance_percent))
         tolerance = tolerance_percent / 100.0
         axis_names = ["X", "Y", "Z"]
-        axis_deviation_percent = [(abs(r - 1.0) * 100.0) if r != 0.0 else 100.0 for r in ratio]
+        axis_deviation_percent = [self._placeholder_axis_deviation(r) for r in ratio]
         max_deviation = max(axis_deviation_percent) if axis_deviation_percent else 0.0
         mean_deviation = (sum(axis_deviation_percent) / float(len(axis_deviation_percent))) if axis_deviation_percent else 0.0
         total_dims = max(sum(abs(v) for v in p_dim), 1e-6)
         weighted_deviation = sum(axis_deviation_percent[i] * (abs(p_dim[i]) / total_dims) for i in range(3))
+        max_pivot_delta = max(abs(v) for v in pivot_delta)
+        pivot_info_threshold = max(max(abs(v) for v in p_dim), 1e-6) * tolerance
+        pivot_ok = max_pivot_delta <= pivot_info_threshold
+        dimensions_ok = all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0)
 
+        self.log("INFO", "Placeholder", "----- Placeholder Match -----")
         self.log("INFO", "Placeholder", f"Scope utilisé: {self._scope_label(scope_keys)}")
+        self.log("INFO", "Placeholder", "Dimensions / proportions")
+        self.log("INFO", "Placeholder", f"Placeholder dims: {self._fmt_vec(p_dim)}")
+        self.log("INFO", "Placeholder", f"High dims: {self._fmt_vec(h_dim)}")
         for idx, axis in enumerate(axis_names):
+            self.log(
+                "INFO",
+                "Placeholder",
+                f"Ratio axe {axis}: {ratio[idx]:.4f} ({self._fmt_size_percent(ratio[idx])})",
+            )
             self.log("INFO", "Placeholder", f"Écart axe {axis}: {axis_deviation_percent[idx]:.2f}%")
         self.log("INFO", "Placeholder", f"Écart maximal: {max_deviation:.2f}%")
         self.log("INFO", "Placeholder", f"Écart moyen: {mean_deviation:.2f}%")
         self.log("INFO", "Placeholder", f"Écart pondéré (dimensions): {weighted_deviation:.2f}%")
         self.log("INFO", "Placeholder", f"Seuil autorisé: {tolerance_percent:.2f}%")
-        if all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0):
-            self.log("INFO", "Placeholder", "Résultat: OK (proportions dans le seuil).")
+        self.log("INFO", "Placeholder", "Critère principal (validation): Écart maximal par axe <= seuil.")
+        self.log("INFO", "Placeholder", f"Décision proportions: {'OK' if dimensions_ok else 'FAIL'}")
+
+        self.log("INFO", "Placeholder", "Pivot / position")
+        self.log("INFO", "Placeholder", f"Pivot placeholder: {self._fmt_vec(p_piv)}")
+        self.log("INFO", "Placeholder", f"Pivot high (centre bbox scope): {self._fmt_vec(h_piv)}")
+        self.log("INFO", "Placeholder", f"Pivot delta: {self._fmt_vec(pivot_delta)}")
+        self.log(
+            "INFO",
+            "Placeholder",
+            (
+                f"Décision pivot: {'OK' if pivot_ok else 'FAIL'} "
+                f"(informatif, seuil={pivot_info_threshold:.4f}, max delta={max_pivot_delta:.4f})"
+            ),
+        )
+
+        if dimensions_ok:
+            self.log("INFO", "Placeholder", "Résultat final: OK (proportions validées).")
             self.set_check_status("placeholder_checked", "OK")
         else:
-            self.log("WARNING", "Placeholder", "Résultat: Fail (proportions hors seuil). Vérifier l'axe en écart max.", [placeholder] + target_meshes[:150])
-            self.set_check_status("placeholder_checked", "PENDING")
+            worst_axis_idx = axis_deviation_percent.index(max_deviation) if axis_deviation_percent else 1
+            reason = (
+                f"Résultat final: FAIL | raison principale: l'axe {axis_names[worst_axis_idx]} "
+                f"dépasse le seuil ({max_deviation:.2f}% > {tolerance_percent:.2f}%)."
+            )
+            self.log("WARNING", "Placeholder", reason, [placeholder] + target_meshes[:150])
+            self.set_check_status("placeholder_checked", "FAIL")
 
     def run_topology_checks(self) -> None:
         scope_keys = self._get_selected_scope_keys()
@@ -1496,24 +1575,29 @@ class HighPolyReviewTool:
                     "objects": sorted(set(mat_meshes)),
                 }
 
+        group_method_log_lines: List[str] = []
         if include_groups:
-            direct_children = [m for m in meshes if cmds.listRelatives(m, parent=True, fullPath=True)]
-            grouped: Dict[str, List[str]] = {}
-            for mesh in direct_children:
-                parent = cmds.listRelatives(mesh, parent=True, fullPath=True) or []
-                if not parent:
-                    continue
-                grouped.setdefault(parent[0], []).append(mesh)
-            for child, child_meshes in grouped.items():
-                if child_meshes:
-                    key = f"GRP::{self._short_name(child)}"
-                    display_name = self._clean_texture_set_display_name(self._short_name(child), high_root)
-                    detected[key] = {
-                        "name": self._strip_namespaces_from_name(self._short_name(child)),
-                        "display_name": display_name,
-                        "method": "group",
-                        "objects": sorted(set(child_meshes)),
-                    }
+            if mode in {"groups", "group"}:
+                group_sets, group_method_log_lines = self._compute_root_children_texture_sets(high_root, meshes)
+                detected.update(group_sets)
+            else:
+                direct_children = [m for m in meshes if cmds.listRelatives(m, parent=True, fullPath=True)]
+                grouped: Dict[str, List[str]] = {}
+                for mesh in direct_children:
+                    parent = cmds.listRelatives(mesh, parent=True, fullPath=True) or []
+                    if not parent:
+                        continue
+                    grouped.setdefault(parent[0], []).append(mesh)
+                for child, child_meshes in grouped.items():
+                    if child_meshes:
+                        key = f"GRP::{self._short_name(child)}"
+                        display_name = self._clean_texture_set_display_name(self._short_name(child), high_root)
+                        detected[key] = {
+                            "name": self._strip_namespaces_from_name(self._short_name(child)),
+                            "display_name": display_name,
+                            "method": "group",
+                            "objects": sorted(set(child_meshes)),
+                        }
 
         total_quads = 0
         mesh_quad_cache: Dict[str, Tuple[int, int]] = {}
@@ -1539,6 +1623,17 @@ class HighPolyReviewTool:
 
         mode_label = {"combined": "matériaux + groupes", "groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
         self.log("INFO", "TextureSets", f"Scope utilisé: {self._scope_label(scope_keys)}")
+        if group_method_log_lines:
+            for line in group_method_log_lines:
+                self.log("INFO", "TextureSets", line)
+        if mode in {"groups", "group"}:
+            cleaned_names = [
+                data.get("display_name", data.get("name", set_key))
+                for set_key, data in sorted(self.detected_texture_sets.items())
+            ]
+            self.log("INFO", "TextureSets", f"Nombre de texture sets détectés (1er niveau): {len(cleaned_names)}")
+            if cleaned_names:
+                self.log("INFO", "TextureSets", f"Texture sets lisibles: {', '.join(cleaned_names)}")
         self.log("INFO", "TextureSets", f"Texture sets détectés ({mode_label}): {len(self.detected_texture_sets)}")
         self.log("INFO", "TextureSets", f"Total High root: {total_quads} quads")
         for set_key in sorted(self.detected_texture_sets.keys()):
