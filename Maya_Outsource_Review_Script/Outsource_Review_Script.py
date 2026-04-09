@@ -829,6 +829,76 @@ class HighPolyReviewTool:
         ns = self._namespace_from_node(node)
         return ns == namespace or ns.startswith(namespace + ":")
 
+    def _path_ancestors(self, node: str) -> List[str]:
+        parts = [p for p in node.split("|") if p]
+        ancestors: List[str] = []
+        for i in range(len(parts)):
+            ancestors.append("|" + "|".join(parts[: i + 1]))
+        return ancestors
+
+    def _find_namespace_root_for_node(self, node: str, namespace: str) -> Optional[str]:
+        for ancestor in self._path_ancestors(node):
+            short = self._short_name(ancestor)
+            if short == namespace or short.startswith(namespace + ":"):
+                return ancestor
+        return None
+
+    def _roots_from_scope_meshes(self, scope_key: str, scope_meshes: List[str]) -> List[str]:
+        roots: List[str] = []
+        namespace = ""
+        if scope_key == "high_fbx":
+            namespace = self.context["fbx_namespace"]
+        elif scope_key == "high_ma":
+            namespace = self.context["ma_namespace"]
+
+        if scope_key == "placeholder":
+            placeholder_root = self.get_placeholder_root()
+            if placeholder_root and cmds.objExists(placeholder_root):
+                return [placeholder_root]
+
+        for mesh in scope_meshes:
+            if not cmds.objExists(mesh):
+                continue
+            root = self._find_namespace_root_for_node(mesh, namespace) if namespace else None
+            if not root:
+                ancestors = self._path_ancestors(mesh)
+                root = ancestors[0] if ancestors else None
+            if root and cmds.objExists(root):
+                roots.append(root)
+        return sorted(set(roots))
+
+    def _resolve_texture_scope_roots(self, resolution: Dict[str, Any]) -> Dict[str, Any]:
+        scope_keys = resolution.get("scope_keys", [])
+        per_scope = resolution.get("per_scope_meshes", {})
+        all_scope_keys = ["placeholder", "high_fbx", "high_ma"]
+
+        roots_per_scope: Dict[str, List[str]] = {}
+        for key in all_scope_keys:
+            meshes_for_key = per_scope.get(key, [])
+            if not meshes_for_key:
+                key_resolution = self.resolve_scope_targets(scope_keys=[key])
+                meshes_for_key = key_resolution.get("per_scope_meshes", {}).get(key, [])
+            roots_per_scope[key] = self._roots_from_scope_meshes(key, meshes_for_key)
+
+        included_roots: List[str] = []
+        for key in scope_keys:
+            included_roots.extend(roots_per_scope.get(key, []))
+        included_roots = sorted(set(included_roots))
+
+        excluded_roots: Dict[str, List[str]] = {}
+        for key in all_scope_keys:
+            if key in scope_keys:
+                continue
+            excluded_roots[key] = roots_per_scope.get(key, [])
+
+        primary_root = included_roots[0] if included_roots else None
+        return {
+            "roots_per_scope": roots_per_scope,
+            "included_roots": included_roots,
+            "excluded_roots": excluded_roots,
+            "primary_root": primary_root,
+        }
+
     def _collect_mesh_transforms_in_namespace(
         self,
         namespace: str,
@@ -952,37 +1022,39 @@ class HighPolyReviewTool:
 
     def _compute_root_children_texture_sets(
         self,
-        high_root: Optional[str],
+        analysis_roots: List[str],
         scope_meshes: List[str],
     ) -> Tuple[Dict[str, Dict[str, object]], List[str]]:
         sets: Dict[str, Dict[str, object]] = {}
         log_lines: List[str] = []
-        if not high_root or not cmds.objExists(high_root):
-            log_lines.append("Méthode groupes: High root manquant (analyse du 1er niveau impossible).")
+        valid_roots = [r for r in analysis_roots if r and cmds.objExists(r)]
+        if not valid_roots:
+            log_lines.append("Méthode groupes: aucun root valide résolu pour le scope actif.")
             return sets, log_lines
 
         scope_set = set(scope_meshes)
-        direct_children = cmds.listRelatives(high_root, children=True, fullPath=True, type="transform") or []
-        log_lines.append(f"Root analysé : {self._short_name(high_root)}")
-        log_lines.append("Éléments de premier niveau détectés :")
+        for analysis_root in valid_roots:
+            direct_children = cmds.listRelatives(analysis_root, children=True, fullPath=True, type="transform") or []
+            log_lines.append(f"Root analysé : {self._short_name(analysis_root)}")
+            log_lines.append("Éléments de premier niveau détectés :")
 
-        for child in direct_children:
-            child_meshes = [m for m in self._collect_mesh_transforms(root=child) if m in scope_set]
-            if not child_meshes:
-                continue
-            child_shapes = cmds.listRelatives(child, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            child_kind = "mesh" if child_shapes else "group"
-            child_name = self._short_name(child)
-            log_lines.append(f"- {child_name} ({child_kind})")
+            for child in direct_children:
+                child_meshes = [m for m in self._collect_mesh_transforms(root=child) if m in scope_set]
+                if not child_meshes:
+                    continue
+                child_shapes = cmds.listRelatives(child, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+                child_kind = "mesh" if child_shapes else "group"
+                child_name = self._short_name(child)
+                log_lines.append(f"- {child_name} ({child_kind})")
 
-            key = f"GRP_CHILD::{child}"
-            display_name = self._clean_texture_set_display_name(child_name, high_root)
-            sets[key] = {
-                "name": self._strip_namespaces_from_name(child_name),
-                "display_name": display_name,
-                "method": "group_root_children",
-                "objects": sorted(set(child_meshes)),
-            }
+                key = f"GRP_CHILD::{analysis_root}::{child}"
+                display_name = self._clean_texture_set_display_name(child_name, analysis_root)
+                sets[key] = {
+                    "name": self._strip_namespaces_from_name(child_name),
+                    "display_name": display_name,
+                    "method": "group_root_children",
+                    "objects": sorted(set(child_meshes)),
+                }
 
         return sets, log_lines
 
@@ -1645,16 +1717,37 @@ class HighPolyReviewTool:
         resolution = self.resolve_scope_targets()
         scope_keys = resolution["scope_keys"]
         meshes = resolution["meshes"]
+        texture_scope_roots = self._resolve_texture_scope_roots(resolution)
+        analysis_roots = texture_scope_roots["included_roots"]
+        primary_root = texture_scope_roots["primary_root"]
         self._log_scope_resolution("TextureSets", resolution)
         if not scope_keys:
             self.log("FAIL", "TextureSets", "Aucun scope sélectionné. Merci de cocher au moins une cible.")
             self.set_check_status("texture_sets_analyzed", "FAIL")
             return
-        high_root = self.get_high_root()
         if not meshes:
             self.log("FAIL", "TextureSets", "Aucun objet trouvé pour le scope sélectionné.")
             self.set_check_status("texture_sets_analyzed", "FAIL")
             return
+        self.log("INFO", "TextureSets", "Root(s) résolus pour Texture Sets :")
+        if analysis_roots:
+            for root in analysis_roots:
+                self.log("INFO", "TextureSets", f"- {self._short_name(root)}")
+        else:
+            self.log("WARNING", "TextureSets", "- Aucun root explicite résolu pour le scope actif.")
+
+        excluded_roots = texture_scope_roots.get("excluded_roots", {})
+        excluded_lines: List[str] = []
+        for key in ["placeholder", "high_fbx", "high_ma"]:
+            for root in excluded_roots.get(key, []):
+                reason = "hors scope"
+                if key == "placeholder":
+                    reason = "placeholder / hors scope"
+                excluded_lines.append(f"- {self._short_name(root)} ({reason})")
+        if excluded_lines:
+            self.log("INFO", "TextureSets", "Root(s) exclus :")
+            for line in excluded_lines:
+                self.log("INFO", "TextureSets", line)
 
         detected: Dict[str, Dict[str, object]] = {}
         mode = (mode or "combined").lower().strip()
@@ -1698,7 +1791,7 @@ class HighPolyReviewTool:
         group_method_log_lines: List[str] = []
         if include_groups:
             if mode in {"groups", "group"}:
-                group_sets, group_method_log_lines = self._compute_root_children_texture_sets(high_root, meshes)
+                group_sets, group_method_log_lines = self._compute_root_children_texture_sets(analysis_roots, meshes)
                 detected.update(group_sets)
             else:
                 direct_children = [m for m in meshes if cmds.listRelatives(m, parent=True, fullPath=True)]
@@ -1711,7 +1804,7 @@ class HighPolyReviewTool:
                 for child, child_meshes in grouped.items():
                     if child_meshes:
                         key = f"GRP::{self._short_name(child)}"
-                        display_name = self._clean_texture_set_display_name(self._short_name(child), high_root)
+                        display_name = self._clean_texture_set_display_name(self._short_name(child), primary_root)
                         detected[key] = {
                             "name": self._strip_namespaces_from_name(self._short_name(child)),
                             "display_name": display_name,
