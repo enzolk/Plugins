@@ -51,11 +51,23 @@ class HighPolyReviewTool:
             "root": "",
             "ma": "",
             "fbx": "",
+            "bake_ma": "",
+            "low_fbx": "",
+            "high_ma": "",
+            "high_fbx": "",
+            "final_asset_ma": "",
+            "final_asset_fbx": "",
         }
 
         self.detected_files: Dict[str, List[str]] = {
             "ma": [],
             "fbx": [],
+            "bake_ma": [],
+            "low_fbx": [],
+            "high_ma": [],
+            "high_fbx": [],
+            "final_asset_ma": [],
+            "final_asset_fbx": [],
         }
 
         self.detected_roots: Dict[str, List[str]] = {
@@ -66,6 +78,10 @@ class HighPolyReviewTool:
         self.context = {
             "fbx_namespace": "High_FBX_File",
             "ma_namespace": "High_Ma_File",
+            "low_fbx_namespace": "Low_FBX_File",
+            "bake_ma_namespace": "Bake_MA_File",
+            "final_asset_ma_namespace": "FinalAsset_MA_File",
+            "final_asset_fbx_namespace": "FinalAsset_FBX_File",
             "fbx_nodes": [],
             "fbx_meshes": [],
             "ma_nodes": [],
@@ -175,20 +191,52 @@ class HighPolyReviewTool:
 
         cmds.separator(style="in")
 
-        cmds.text(label="MA Found", align="left")
-        self.ui["ma_status"] = cmds.text(label="Aucun .ma détecté", align="left")
+        cmds.text(label="High MA Found", align="left")
+        self.ui["high_ma_status"] = cmds.text(label="Aucun fichier High MA détecté", align="left")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["ma_menu"])
+        self.ui["high_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_ma_menu"])
         cmds.button(label="Load MA (Reference)", height=28, command=lambda *_: self.load_ma_scene())
         cmds.setParent("..")
 
-        cmds.text(label="FBX Found", align="left")
-        self.ui["fbx_status"] = cmds.text(label="Aucun .fbx détecté", align="left")
+        cmds.text(label="High FBX Found", align="left")
+        self.ui["high_fbx_status"] = cmds.text(label="Aucun fichier High FBX détecté", align="left")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["fbx_menu"])
+        self.ui["high_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_fbx"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_fbx_menu"])
         cmds.button(label="Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene())
+        cmds.setParent("..")
+
+        cmds.text(label="Low FBX Found", align="left")
+        self.ui["low_fbx_status"] = cmds.text(label="Aucun fichier Low FBX détecté", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["low_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("low_fbx"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["low_fbx_menu"])
+        cmds.button(label="Reference Low FBX", height=28, command=lambda *_: self.load_low_fbx_scene())
+        cmds.setParent("..")
+
+        cmds.text(label="Bake Scene Found", align="left")
+        self.ui["bake_ma_status"] = cmds.text(label="Aucun fichier Bake Scene détecté", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["bake_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("bake_ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu"])
+        cmds.button(label="Load Bake MA (Reference)", height=28, command=lambda *_: self.load_bake_ma_scene())
+        cmds.setParent("..")
+
+        cmds.text(label="Final Asset MA Found", align="left")
+        self.ui["final_asset_ma_status"] = cmds.text(label="Aucun fichier Final Asset MA détecté", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["final_asset_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_asset_ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["final_asset_ma_menu"])
+        cmds.button(label="Load Final MA (Reference)", height=28, command=lambda *_: self.load_final_asset_ma_scene())
+        cmds.setParent("..")
+
+        cmds.text(label="Final Asset FBX Found", align="left")
+        self.ui["final_asset_fbx_status"] = cmds.text(label="Aucun fichier Final Asset FBX détecté", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["final_asset_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_asset_fbx"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["final_asset_fbx_menu"])
+        cmds.button(label="Reference Final FBX", height=28, command=lambda *_: self.load_final_asset_fbx_scene())
         cmds.setParent("..")
 
         cmds.separator(style="in")
@@ -490,33 +538,41 @@ class HighPolyReviewTool:
         cmds.optionMenu(menu, edit=True, select=1)
 
     def refresh_detected_file_labels(self) -> None:
-        ma_count = len(self.detected_files["ma"])
-        fbx_count = len(self.detected_files["fbx"])
+        status_map = [
+            ("high_ma", "high_ma_status", "High MA"),
+            ("high_fbx", "high_fbx_status", "High FBX"),
+            ("low_fbx", "low_fbx_status", "Low FBX"),
+            ("bake_ma", "bake_ma_status", "Bake Scene"),
+            ("final_asset_ma", "final_asset_ma_status", "Final Asset MA"),
+            ("final_asset_fbx", "final_asset_fbx_status", "Final Asset FBX"),
+        ]
 
-        ma_text = "Aucun .ma détecté"
-        if ma_count == 1:
-            ma_text = f"1 fichier détecté: {os.path.basename(self.detected_files['ma'][0])}"
-        elif ma_count > 1:
-            ma_text = f"{ma_count} fichiers .ma détectés. Sélectionnez le bon fichier."
-
-        fbx_text = "Aucun .fbx détecté"
-        if fbx_count == 1:
-            fbx_text = f"1 fichier détecté: {os.path.basename(self.detected_files['fbx'][0])}"
-        elif fbx_count > 1:
-            fbx_text = f"{fbx_count} fichiers .fbx détectés. Sélectionnez le bon fichier."
-
-        cmds.text(self.ui["ma_status"], e=True, label=ma_text)
-        cmds.text(self.ui["fbx_status"], e=True, label=fbx_text)
+        for file_key, status_widget, label in status_map:
+            file_count = len(self.detected_files[file_key])
+            text = f"Aucun fichier {label} détecté"
+            if file_count == 1:
+                text = f"1 fichier détecté: {os.path.basename(self.detected_files[file_key][0])}"
+            elif file_count > 1:
+                text = f"{file_count} fichiers détectés. Sélectionnez le bon fichier."
+            cmds.text(self.ui[status_widget], e=True, label=text)
 
     def on_detected_file_selected(self, file_key: str) -> None:
         files = self.detected_files[file_key]
         if not files:
             self.paths[file_key] = ""
+            if file_key == "high_ma":
+                self.paths["ma"] = ""
+            elif file_key == "high_fbx":
+                self.paths["fbx"] = ""
             return
 
         index = cmds.optionMenu(self.ui[f"{file_key}_menu"], q=True, select=True) - 1
         index = max(0, min(index, len(files) - 1))
         self.paths[file_key] = files[index]
+        if file_key == "high_ma":
+            self.paths["ma"] = self.paths[file_key]
+        elif file_key == "high_fbx":
+            self.paths["fbx"] = self.paths[file_key]
         self.log("INFO", "Scan", f"{file_key.upper()} sélectionné: {self.paths[file_key]}")
 
     def scan_delivery_folder(self) -> None:
@@ -529,37 +585,61 @@ class HighPolyReviewTool:
             return
 
         self._set_root_folder(root)
-        found_ma: List[str] = []
-        found_fbx: List[str] = []
+        found_files: Dict[str, List[str]] = {
+            "bake_ma": [],
+            "low_fbx": [],
+            "high_fbx": [],
+            "high_ma": [],
+            "final_asset_ma": [],
+            "final_asset_fbx": [],
+        }
 
         for dirpath, _, filenames in os.walk(root):
             for filename in filenames:
                 name_lower = filename.lower()
                 full_path = os.path.join(dirpath, filename)
-                if name_lower.endswith("_high.ma"):
-                    found_ma.append(full_path)
+                if name_lower.endswith("_bake.ma"):
+                    found_files["bake_ma"].append(full_path)
+                elif name_lower.endswith("_low.fbx"):
+                    found_files["low_fbx"].append(full_path)
                 elif name_lower.endswith("_high.fbx"):
-                    found_fbx.append(full_path)
+                    found_files["high_fbx"].append(full_path)
+                elif name_lower.endswith("_high.ma"):
+                    found_files["high_ma"].append(full_path)
+                elif name_lower.endswith(".ma") and not name_lower.endswith(("_low.ma", "_high.ma", "_bake.ma")):
+                    found_files["final_asset_ma"].append(full_path)
+                elif name_lower.endswith(".fbx") and not name_lower.endswith(("_low.fbx", "_high.fbx", "_bake.fbx")):
+                    found_files["final_asset_fbx"].append(full_path)
 
-        found_ma.sort()
-        found_fbx.sort()
+        for key in found_files:
+            found_files[key].sort()
 
-        self.detected_files["ma"] = found_ma
-        self.detected_files["fbx"] = found_fbx
+        for key, files in found_files.items():
+            self.detected_files[key] = files
+        self.detected_files["ma"] = found_files["high_ma"][:]
+        self.detected_files["fbx"] = found_files["high_fbx"][:]
 
-        self._populate_file_option_menu("ma")
-        self._populate_file_option_menu("fbx")
+        for file_key in ["high_ma", "high_fbx", "low_fbx", "bake_ma", "final_asset_ma", "final_asset_fbx"]:
+            self._populate_file_option_menu(file_key)
+        self.paths["ma"] = self.paths.get("high_ma", "")
+        self.paths["fbx"] = self.paths.get("high_fbx", "")
         self.refresh_detected_file_labels()
 
-        if not found_ma:
-            self.log("WARNING", "Scan", "Aucun fichier *_HIGH.ma ou *_high.ma trouvé.")
-        else:
-            self.log("INFO", "Scan", f"{len(found_ma)} fichier(s) .ma High détecté(s).")
-
-        if not found_fbx:
-            self.log("WARNING", "Scan", "Aucun fichier *_HIGH.fbx ou *_high.fbx trouvé.")
-        else:
-            self.log("INFO", "Scan", f"{len(found_fbx)} fichier(s) .fbx High détecté(s).")
+        scan_logs = [
+            ("high_ma", "Aucun fichier High MA (*_HIGH.ma) trouvé."),
+            ("high_fbx", "Aucun fichier High FBX (*_HIGH.fbx) trouvé."),
+            ("low_fbx", "Aucun fichier Low FBX (*_LOW.fbx) trouvé."),
+            ("bake_ma", "Aucun fichier Bake Scene (*_BAKE.ma) trouvé."),
+            ("final_asset_ma", "Aucun fichier Final Asset MA (.ma sans suffix _low/_high/_bake) trouvé."),
+            ("final_asset_fbx", "Aucun fichier Final Asset FBX (.fbx sans suffix _low/_high/_bake) trouvé."),
+        ]
+        for file_key, warning_msg in scan_logs:
+            count = len(found_files[file_key])
+            if not count:
+                self.log("WARNING", "Scan", warning_msg)
+            else:
+                label = file_key.replace("_", " ").title()
+                self.log("INFO", "Scan", f"{count} fichier(s) {label} détecté(s).")
 
     def _populate_root_option_menu(self, root_key: str) -> None:
         menu = self.ui[f"{root_key}_root_menu"]
@@ -1338,6 +1418,44 @@ class HighPolyReviewTool:
         self.set_texture_set_visibility(True, selected_only=False)
 
     # ----------------------------- Actions -----------------------------
+    def _reference_ma_file(self, file_key: str, namespace_key: str, category_label: str) -> None:
+        path = self.paths.get(file_key, "")
+        if not path:
+            self.log("FAIL", "File", f"Aucun fichier {category_label} sélectionné (scan requis).")
+            return
+        if not os.path.isfile(path):
+            self.log("FAIL", "File", f"Fichier {category_label} introuvable: {path}")
+            return
+
+        namespace = self.context[namespace_key]
+        if cmds.namespace(exists=namespace):
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError as exc:
+                self.log("WARNING", "File", f"Namespace {namespace} déjà présent (merge impossible): {exc}")
+
+        cmds.file(path, reference=True, type="mayaAscii", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        self.log("INFO", "File", f"{category_label} référencé sous namespace '{namespace}'.")
+
+    def _reference_fbx_file(self, file_key: str, namespace_key: str, category_label: str) -> None:
+        path = self.paths.get(file_key, "")
+        if not path:
+            self.log("FAIL", "File", f"Aucun fichier {category_label} sélectionné (scan requis).")
+            return
+        if not os.path.isfile(path):
+            self.log("FAIL", "File", f"Fichier {category_label} introuvable: {path}")
+            return
+
+        namespace = self.context[namespace_key]
+        if cmds.namespace(exists=namespace):
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError:
+                self.log("WARNING", "FBX", f"Namespace {namespace} déjà présent, merge impossible automatiquement.")
+
+        cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        self.log("INFO", "FBX", f"{category_label} référencé sous namespace '{namespace}'.")
+
     def load_ma_scene(self) -> None:
         path = self.paths.get("ma", "")
         if not path:
@@ -1391,6 +1509,18 @@ class HighPolyReviewTool:
 
         self.paths["fbx"] = path
         self.log("INFO", "FBX", f"FBX référencé sous namespace '{namespace}' ({len(self.context['fbx_meshes'])} meshes détectés).")
+
+    def load_low_fbx_scene(self) -> None:
+        self._reference_fbx_file("low_fbx", "low_fbx_namespace", "Low FBX")
+
+    def load_bake_ma_scene(self) -> None:
+        self._reference_ma_file("bake_ma", "bake_ma_namespace", "Bake MA")
+
+    def load_final_asset_ma_scene(self) -> None:
+        self._reference_ma_file("final_asset_ma", "final_asset_ma_namespace", "Final Asset MA")
+
+    def load_final_asset_fbx_scene(self) -> None:
+        self._reference_fbx_file("final_asset_fbx", "final_asset_fbx_namespace", "Final Asset FBX")
 
     def compare_ma_vs_fbx(self) -> None:
         review_ns = self.context["fbx_namespace"]
