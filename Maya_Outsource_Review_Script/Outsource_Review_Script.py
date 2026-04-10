@@ -29,7 +29,6 @@ ROOT_SUFFIXES = {
     "placeholder": "_placeholder",
     "low": "_low",
 }
-TECHNICAL_SUFFIXES = ("_high", "_low", "_placeholder", "_bake", "_final")
 PLACEHOLDER_TOKEN = "placeholder"
 HIGH_REVIEW_SCOPE_ORDER = ["high_ma", "high_fbx", "bake_high"]
 
@@ -82,9 +81,6 @@ class HighPolyReviewTool:
             "final_asset_ma": [],
             "final_asset_fbx": [],
         }
-        self.asset_groups: Dict[str, Dict[str, List[str]]] = {}
-        self.asset_group_order: List[str] = []
-        self.active_asset: Optional[str] = None
 
         self.context = {
             "fbx_namespace": "High_FBX_File",
@@ -248,13 +244,6 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
         cmds.separator(style="in")
-
-        cmds.text(label="Assets détectés", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        self.ui["asset_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_active_asset_changed())
-        cmds.menuItem(label="-- Auto --", parent=self.ui["asset_menu"])
-        self.ui["asset_summary"] = cmds.text(label="Aucun asset détecté", align="left")
-        cmds.setParent("..")
 
         cmds.text(label="Detected High Root", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
@@ -790,86 +779,6 @@ class HighPolyReviewTool:
         for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]:
             if f"{root_key}_root_menu" in self.ui:
                 self._populate_root_option_menu(root_key)
-        self.refresh_asset_groups()
-
-    def _normalize_asset_base_name(self, node: str) -> str:
-        short = self._strip_namespaces_from_name(self._short_name(node))
-        lowered = short.lower()
-        for suffix in TECHNICAL_SUFFIXES:
-            if lowered.endswith(suffix):
-                short = short[: -len(suffix)]
-                lowered = short.lower()
-        if short.startswith("[GRP]"):
-            short = short.replace("[GRP]", "", 1).strip()
-        tokens = [t for t in short.split("_") if t]
-        if tokens and tokens[0].lower() in {"sm", "sk", "s"}:
-            tokens = tokens[1:]
-        normalized = "_".join(tokens).strip("_")
-        return normalized or self._strip_namespaces_from_name(self._short_name(node))
-
-    def _root_to_asset_group_key(self, root_key: str) -> str:
-        mapping = {
-            "high": "high",
-            "placeholder": "placeholder",
-            "low": "low",
-            "bake_high": "bake_high",
-            "bake_low": "bake_low",
-            "final_asset_ma": "final_asset_ma",
-            "final_asset_fbx": "final_asset_fbx",
-        }
-        return mapping.get(root_key, root_key)
-
-    def refresh_asset_groups(self) -> None:
-        groups: Dict[str, Dict[str, List[str]]] = {}
-        for root_key, nodes in self.detected_roots.items():
-            group_key = self._root_to_asset_group_key(root_key)
-            for node in nodes:
-                if not node or not cmds.objExists(node):
-                    continue
-                asset_key = self._normalize_asset_base_name(node)
-                groups.setdefault(asset_key, {}).setdefault(group_key, []).append(node)
-
-        for asset_data in groups.values():
-            for key in list(asset_data.keys()):
-                asset_data[key] = sorted(set(asset_data[key]))
-
-        self.asset_groups = groups
-        self.asset_group_order = sorted(groups.keys(), key=lambda x: x.lower())
-        if self.active_asset not in self.asset_group_order:
-            self.active_asset = self.asset_group_order[0] if self.asset_group_order else None
-        self._refresh_asset_menu_ui()
-
-    def _refresh_asset_menu_ui(self) -> None:
-        menu = self.ui.get("asset_menu")
-        if not menu or not cmds.optionMenu(menu, exists=True):
-            return
-        self._clear_option_menu(menu)
-        if not self.asset_group_order:
-            cmds.menuItem(label="-- Aucun asset --", parent=menu)
-            cmds.text(self.ui["asset_summary"], e=True, label="Aucun asset détecté")
-            return
-        for asset in self.asset_group_order:
-            cmds.menuItem(label=asset, parent=menu)
-        selected_index = max(1, self.asset_group_order.index(self.active_asset) + 1) if self.active_asset else 1
-        cmds.optionMenu(menu, edit=True, select=selected_index)
-        cmds.text(self.ui["asset_summary"], e=True, label=f"Assets trouvés : {', '.join(self.asset_group_order)}")
-
-    def on_active_asset_changed(self) -> None:
-        if not self.asset_group_order:
-            self.active_asset = None
-            return
-        menu = self.ui.get("asset_menu")
-        index = cmds.optionMenu(menu, q=True, select=True) - 1 if menu and cmds.optionMenu(menu, exists=True) else 0
-        index = max(0, min(index, len(self.asset_group_order) - 1))
-        self.active_asset = self.asset_group_order[index]
-        self.log("INFO", "AssetGroup", f"Asset actif : {self.active_asset}")
-
-    def _filter_meshes_by_active_asset(self, meshes: List[str]) -> List[str]:
-        if not self.active_asset:
-            return meshes
-        key = self.active_asset.lower()
-        filtered = [m for m in meshes if key in self._normalize_asset_base_name(m).lower()]
-        return filtered
 
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
@@ -883,11 +792,6 @@ class HighPolyReviewTool:
 
     def get_detected_root(self, root_key: str) -> Optional[str]:
         candidates = self.detected_roots[root_key]
-        if self.active_asset:
-            groups = self.asset_groups.get(self.active_asset, {})
-            scoped = groups.get(self._root_to_asset_group_key(root_key), [])
-            if scoped:
-                candidates = scoped
         if not candidates:
             return None
         menu_name = self.ui.get(f"{root_key}_root_menu")
@@ -1041,11 +945,10 @@ class HighPolyReviewTool:
         if not candidates:
             self.log("WARNING", "RootDetect", f"{label} root non détecté.")
             return
-        base_name = self._normalize_asset_base_name(candidates[0])
         self.log(
             "INFO",
             "RootDetect",
-            f"{label} root détecté ({base_name}): {self._ellipsize_middle(candidates[0], max_length=MAX_UI_TEXT_LENGTH - 20)}",
+            f"{label} root détecté: {self._ellipsize_middle(candidates[0], max_length=MAX_UI_TEXT_LENGTH - 20)}",
             [candidates[0]],
         )
         if len(candidates) > 1:
@@ -1082,11 +985,6 @@ class HighPolyReviewTool:
                 self.log("WARNING", "RootDetect", f"Plusieurs Placeholder roots détectés ({len(placeholder_candidates)}). Sélection manuelle possible.")
         else:
             self.log("WARNING", "RootDetect", "Placeholder root non détecté.")
-        self.refresh_asset_groups()
-        if self.asset_group_order:
-            self.log("INFO", "AssetGroup", f"{len(self.asset_group_order)} asset(s) détecté(s): {', '.join(self.asset_group_order)}")
-            if self.active_asset:
-                self.log("INFO", "AssetGroup", f"Asset actif : {self.active_asset}")
 
     def get_high_root(self) -> Optional[str]:
         return self.get_detected_root("high")
@@ -1435,7 +1333,7 @@ class HighPolyReviewTool:
                     bake_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"])
                     meshes = [m for m in bake_meshes if self._matches_asset_kind(m, "high")]
                     roots_by_scope[key] = [self.context["bake_ma_namespace"]]
-            per_scope[key] = sorted(set(self._filter_meshes_by_active_asset(meshes)))
+            per_scope[key] = sorted(set(meshes))
         merged = sorted(set([m for meshes in per_scope.values() for m in meshes]))
         return {
             "scope_keys": normalized_scope_keys,
@@ -1920,7 +1818,7 @@ class HighPolyReviewTool:
         return False
 
     def compare_ma_vs_fbx(self) -> None:
-        self.log("INFO", "Compare", f"----- Run Compare MA vs FBX vs BakeScene (asset: {self.active_asset or 'ALL'}) -----")
+        self.log("INFO", "Compare", "----- Run Compare MA vs FBX vs BakeScene -----")
         per_scope: Dict[str, List[str]] = {}
         for key, label in self._high_scope_sequence():
             resolution = self.resolve_scope_targets(scope_keys=[key])
@@ -2587,8 +2485,6 @@ class HighPolyReviewTool:
         }
 
     def _detect_asset_name(self) -> str:
-        if self.active_asset:
-            return self.active_asset
         if self.paths.get("ma"):
             return os.path.splitext(os.path.basename(self.paths["ma"]))[0]
         scene = cmds.file(query=True, sceneName=True) or ""
