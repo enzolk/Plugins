@@ -85,6 +85,8 @@ class HighPolyReviewTool:
         self.asset_groups: Dict[str, Dict[str, List[str]]] = {}
         self.asset_group_order: List[str] = []
         self.active_asset: Optional[str] = None
+        self.asset_root_selection: Dict[str, Dict[str, str]] = {}
+        self.global_root_selection: Dict[str, str] = {}
 
         self.context = {
             "fbx_namespace": "High_FBX_File",
@@ -762,9 +764,29 @@ class HighPolyReviewTool:
                 label = file_key.replace("_", " ").title()
                 self.log("INFO", "Scan", f"{count} fichier(s) {label} détecté(s).")
 
+    def _get_root_candidates_for_asset(self, root_key: str, asset_key: Optional[str] = None) -> List[str]:
+        if asset_key:
+            groups = self.asset_groups.get(asset_key, {})
+            scoped = groups.get(self._root_to_asset_group_key(root_key), [])
+            if scoped:
+                return [n for n in scoped if cmds.objExists(n)]
+            return []
+        return [n for n in self.detected_roots[root_key] if cmds.objExists(n)]
+
+    def _get_stored_root_selection(self, root_key: str, asset_key: Optional[str] = None) -> Optional[str]:
+        if asset_key:
+            return self.asset_root_selection.get(asset_key, {}).get(root_key)
+        return self.global_root_selection.get(root_key)
+
+    def _store_root_selection(self, root_key: str, node: str, asset_key: Optional[str] = None) -> None:
+        if asset_key:
+            self.asset_root_selection.setdefault(asset_key, {})[root_key] = node
+            return
+        self.global_root_selection[root_key] = node
+
     def _populate_root_option_menu(self, root_key: str) -> None:
         menu = self.ui[f"{root_key}_root_menu"]
-        items = self.detected_roots[root_key]
+        items = self._get_root_candidates_for_asset(root_key, self.active_asset)
         self._clear_option_menu(menu)
 
         if not items:
@@ -784,13 +806,18 @@ class HighPolyReviewTool:
         for node in items:
             cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
 
-        cmds.optionMenu(menu, edit=True, select=1)
-
-    def refresh_root_ui(self) -> None:
+        selected_node = self._get_stored_root_selection(root_key, self.active_asset)
+        selected_index = 1
+        if selected_node in items:
+            selected_index = items.index(selected_node) + 1
+        cmds.optionMenu(menu, edit=True, select=selected_index)
+        self._store_root_selection(root_key, items[selected_index - 1], self.active_asset)
+    def refresh_root_ui(self, refresh_asset_groups: bool = True) -> None:
         for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]:
             if f"{root_key}_root_menu" in self.ui:
                 self._populate_root_option_menu(root_key)
-        self.refresh_asset_groups()
+        if refresh_asset_groups:
+            self.refresh_asset_groups()
 
     def _normalize_asset_base_name(self, node: str) -> str:
         short = self._strip_namespaces_from_name(self._short_name(node))
@@ -858,11 +885,37 @@ class HighPolyReviewTool:
         if not self.asset_group_order:
             self.active_asset = None
             return
+        old_asset = self.active_asset
+        old_selected = {
+            root_key: self.get_detected_root(root_key)
+            for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]
+        }
         menu = self.ui.get("asset_menu")
         index = cmds.optionMenu(menu, q=True, select=True) - 1 if menu and cmds.optionMenu(menu, exists=True) else 0
         index = max(0, min(index, len(self.asset_group_order) - 1))
         self.active_asset = self.asset_group_order[index]
-        self.log("INFO", "AssetGroup", f"Asset actif : {self.active_asset}")
+        self.log("INFO", "AssetGroup", f"Asset actif changé : {self.active_asset}")
+        self.refresh_root_ui(refresh_asset_groups=False)
+        for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]:
+            available = self._get_root_candidates_for_asset(root_key, self.active_asset)
+            pretty = ", ".join(self._short_name(n) for n in available) if available else "Aucun"
+            self.log("INFO", "AssetGroup", f"{root_key} root(s) disponibles pour {self.active_asset} : {pretty}")
+            new_selected = self.get_detected_root(root_key)
+            previous = old_selected.get(root_key)
+            if old_asset and previous and previous not in available:
+                self.log(
+                    "INFO",
+                    "AssetGroup",
+                    f"Root précédent ignoré ({root_key}) car appartenait à un autre asset : {self._short_name(previous)}",
+                    [previous],
+                )
+            if new_selected:
+                self.log(
+                    "INFO",
+                    "AssetGroup",
+                    f"Root sélectionné ({root_key}) : {self._short_name(new_selected)}",
+                    [new_selected],
+                )
 
     def _filter_meshes_by_active_asset(self, meshes: List[str]) -> List[str]:
         if not self.active_asset:
@@ -874,6 +927,7 @@ class HighPolyReviewTool:
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
         if root:
+            self._store_root_selection(root_key, root, self.active_asset)
             self.log(
                 "INFO",
                 "RootDetect",
@@ -882,12 +936,7 @@ class HighPolyReviewTool:
             )
 
     def get_detected_root(self, root_key: str) -> Optional[str]:
-        candidates = self.detected_roots[root_key]
-        if self.active_asset:
-            groups = self.asset_groups.get(self.active_asset, {})
-            scoped = groups.get(self._root_to_asset_group_key(root_key), [])
-            if scoped:
-                candidates = scoped
+        candidates = self._get_root_candidates_for_asset(root_key, self.active_asset)
         if not candidates:
             return None
         menu_name = self.ui.get(f"{root_key}_root_menu")
