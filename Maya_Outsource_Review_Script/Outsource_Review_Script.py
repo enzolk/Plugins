@@ -1715,6 +1715,20 @@ class HighPolyReviewTool:
             self.log("FAIL", "File", f"Fichier _BAKE.ma introuvable: {path}")
             return
 
+        fbx_namespace = self.context["fbx_namespace"]
+        if cmds.namespace(exists=fbx_namespace):
+            self.log("INFO", "Scene", "High.fbx détecté en scène")
+            self.log("INFO", "Scene", "Unload High.fbx avant chargement de Bake.ma")
+            unload_ok = self._unload_namespace_references(fbx_namespace)
+            if unload_ok:
+                self.log("INFO", "Scene", "Résultat final : OK")
+            else:
+                self.log("FAIL", "Scene", "Résultat final : FAIL")
+            self.context["fbx_nodes"] = []
+            self.context["fbx_meshes"] = []
+        else:
+            self.log("INFO", "Scene", "Aucun High.fbx chargé, unload inutile")
+
         namespace = self.context["bake_ma_namespace"]
         if cmds.namespace(exists=namespace):
             try:
@@ -1824,31 +1838,68 @@ class HighPolyReviewTool:
         return ok
 
     def compare_ma_vs_bake_high(self) -> None:
-        self.log("INFO", "Compare", "----- Step 09: Compare High.ma vs Bake Scene High -----")
-        unload_ok = self._unload_namespace_references(self.context["fbx_namespace"])
-        if unload_ok:
-            self.log("INFO", "Scene", "High.fbx unloaded before Bake comparison")
-        else:
-            self.log("WARNING", "Scene", "Échec partiel lors du unload de High.fbx avant Bake comparison.")
+        self.log("INFO", "CompareBake", "----- Step 09: Compare High.ma vs Bake Scene High -----")
+        ma_namespace = self.context["ma_namespace"]
+        bake_namespace = self.context["bake_ma_namespace"]
 
-        self.load_bake_ma_scene()
-        self.log("INFO", "Compare", f"Source A : High.ma ({self._basename_from_path(self.paths.get('high_ma', ''))})")
-        self.log("INFO", "Compare", f"Source B : Bake Scene ({self._basename_from_path(self.paths.get('bake_ma', ''))})")
+        ma_meshes_all, _ = self._collect_mesh_transforms_in_namespace(ma_namespace, exclude_placeholder_named=True)
+        bake_meshes_all, _ = self._collect_mesh_transforms_in_namespace(bake_namespace, exclude_placeholder_named=True)
+        ma_meshes = [m for m in ma_meshes_all if self._matches_asset_kind(m, "high")]
+        bake_meshes = [m for m in bake_meshes_all if self._matches_asset_kind(m, "high")]
 
-        ma_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        bake_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"], exclude_placeholder_named=True)
-        ma_roots = self._find_root_candidates("high", namespace=self.context["ma_namespace"])
-        bake_roots = self._find_root_candidates("high", namespace=self.context["bake_ma_namespace"])
-        self.log("INFO", "Compare", f"Roots analysés dans High.ma : {self._preview_list(ma_roots)}")
-        self.log("INFO", "Compare", f"Roots analysés dans Bake Scene : {self._preview_list(bake_roots)}")
-        self.log("INFO", "Compare", f"Meshes analysés : {min(len(ma_meshes), len(bake_meshes))}")
-
-        if not ma_meshes or not bake_meshes:
-            self.log("FAIL", "Compare", "Résultat : compare impossible (au moins une source sans mesh).")
+        if not cmds.namespace(exists=ma_namespace) or not ma_meshes:
+            self.log("FAIL", "CompareBake", "Compare impossible : High.ma non chargé")
+            self.set_check_status("ma_bake_compared", "FAIL")
+            return
+        if not cmds.namespace(exists=bake_namespace) or not bake_meshes:
+            self.log("FAIL", "CompareBake", "Compare impossible : Bake.ma non chargé")
             self.set_check_status("ma_bake_compared", "FAIL")
             return
 
-        ok = self._compare_mesh_sets(ma_meshes, bake_meshes, "High.ma", "Bake Scene")
+        self.log("INFO", "CompareBake", f"Source A : {self._basename_from_path(self.paths.get('high_ma', ''))}")
+        self.log("INFO", "CompareBake", f"Source B : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
+
+        ma_roots = self._find_root_candidates("high", namespace=self.context["ma_namespace"])
+        bake_roots = self._find_root_candidates("high", namespace=self.context["bake_ma_namespace"])
+        self.log("INFO", "CompareBake", f"Roots analysés dans High.ma : {self._preview_list(ma_roots)}")
+        self.log("INFO", "CompareBake", f"Roots analysés dans Bake.ma : {self._preview_list(bake_roots)}")
+        self.log("INFO", "CompareBake", f"Meshes analysés High.ma / Bake High : {len(ma_meshes)} / {len(bake_meshes)}")
+
+        ma_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in ma_meshes}
+        bake_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in bake_meshes}
+        ma_keys = set(ma_by_key.keys())
+        bake_keys = set(bake_by_key.keys())
+
+        missing_in_bake = sorted(ma_keys - bake_keys)
+        missing_in_ma = sorted(bake_keys - ma_keys)
+        topo_mismatch = []
+        uv_mismatch = []
+        for key in sorted(ma_keys & bake_keys):
+            ma_data = ma_by_key[key]
+            bake_data = bake_by_key[key]
+            if (ma_data["v"], ma_data["e"], ma_data["f"]) != (bake_data["v"], bake_data["e"], bake_data["f"]):
+                topo_mismatch.append(key)
+            if ma_data["uv_total"] != bake_data["uv_total"] or ma_data["uv_sets"] != bake_data["uv_sets"]:
+                uv_mismatch.append(key)
+
+        presence_ok = not missing_in_bake and not missing_in_ma
+        topo_ok = not topo_mismatch
+        uv_ok = not uv_mismatch
+        self.log("INFO" if presence_ok else "FAIL", "CompareBake", f"Mesh presence match : {'OK' if presence_ok else 'FAIL'}")
+        self.log("INFO" if topo_ok else "FAIL", "CompareBake", f"Topology match : {'OK' if topo_ok else 'FAIL'}")
+        self.log("INFO" if uv_ok else "FAIL", "CompareBake", f"UV match : {'OK' if uv_ok else 'FAIL'}")
+
+        if missing_in_bake:
+            self.log("FAIL", "CompareBake", f"Présents dans High.ma mais absents de Bake High: {len(missing_in_bake)}", [ma_by_key[k]["path"] for k in missing_in_bake][:150])
+        if missing_in_ma:
+            self.log("FAIL", "CompareBake", f"Présents dans Bake High mais absents de High.ma: {len(missing_in_ma)}", [bake_by_key[k]["path"] for k in missing_in_ma][:150])
+        if topo_mismatch:
+            self.log("FAIL", "CompareBake", f"Topologie différente: {len(topo_mismatch)}", [ma_by_key[k]["path"] for k in topo_mismatch][:150])
+        if uv_mismatch:
+            self.log("FAIL", "CompareBake", f"UV différentes: {len(uv_mismatch)}", [ma_by_key[k]["path"] for k in uv_mismatch][:150])
+
+        ok = presence_ok and topo_ok and uv_ok
+        self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("ma_bake_compared", "OK" if ok else "FAIL")
 
     def scan_namespaces(self) -> None:
