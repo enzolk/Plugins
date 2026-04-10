@@ -162,8 +162,7 @@ class HighPolyReviewTool:
 
         self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_file_section()
-        self._build_general_checks_section()
-        self._build_review_tabs_section()
+        self._build_guided_high_review_section()
         self._build_results_section()
         self._build_notes_section()
         self._build_summary_section()
@@ -192,7 +191,7 @@ class HighPolyReviewTool:
         self.refresh_checklist_ui()
 
     def _build_file_section(self) -> None:
-        cmds.frameLayout(label="1) Fichiers / Détection / Références", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="1) Root Folder", collapsable=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
 
         self.ui["root_field"] = cmds.textFieldButtonGrp(
@@ -204,58 +203,7 @@ class HighPolyReviewTool:
         cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder())
 
         cmds.separator(style="in")
-
-        cmds.text(label="High MA Found", align="left")
-        self.ui["high_ma_status"] = cmds.text(label="Aucun fichier High MA détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["high_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_ma_menu"])
-        cmds.button(label="Load MA (Reference)", height=28, command=lambda *_: self.load_ma_scene())
-        cmds.setParent("..")
-
-        cmds.text(label="High FBX Found", align="left")
-        self.ui["high_fbx_status"] = cmds.text(label="Aucun fichier High FBX détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["high_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_fbx_menu"])
-        cmds.button(label="Reference FBX", height=28, command=lambda *_: self.load_fbx_into_scene())
-        cmds.setParent("..")
-
-        cmds.text(label="Low FBX Found", align="left")
-        self.ui["low_fbx_status"] = cmds.text(label="Aucun fichier Low FBX détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["low_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("low_fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["low_fbx_menu"])
-        cmds.button(label="Reference Low FBX", height=28, command=lambda *_: self.load_low_fbx_scene())
-        cmds.setParent("..")
-
-        cmds.text(label="Bake Scene Found", align="left")
-        self.ui["bake_ma_status"] = cmds.text(label="Aucun fichier Bake Scene détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["bake_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("bake_ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu"])
-        cmds.button(label="Load Bake MA (Reference)", height=28, command=lambda *_: self.load_bake_ma_scene())
-        cmds.setParent("..")
-
-        cmds.text(label="Final Asset MA Found", align="left")
-        self.ui["final_asset_ma_status"] = cmds.text(label="Aucun fichier Final Asset MA détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["final_asset_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_asset_ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["final_asset_ma_menu"])
-        cmds.button(label="Load Final MA (Reference)", height=28, command=lambda *_: self.load_final_asset_ma_scene())
-        cmds.setParent("..")
-
-        cmds.text(label="Final Asset FBX Found", align="left")
-        self.ui["final_asset_fbx_status"] = cmds.text(label="Aucun fichier Final Asset FBX détecté", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["final_asset_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_asset_fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["final_asset_fbx_menu"])
-        cmds.button(label="Reference Final FBX", height=28, command=lambda *_: self.load_final_asset_fbx_scene())
-        cmds.setParent("..")
-
-        cmds.separator(style="in")
-
-        cmds.frameLayout(label="Detected Assets", collapsable=False, marginWidth=6)
+        cmds.frameLayout(label="Detected Assets (from scan)", collapsable=False, marginWidth=6)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 6)])
         cmds.text(label="Active Asset", align="left")
@@ -284,64 +232,46 @@ class HighPolyReviewTool:
         cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("placeholder"))
         cmds.setParent("..")
 
-        cmds.text(label="Detected Low Root", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["low_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("low"))
-        cmds.menuItem(label="Low root non détecté", parent=self.ui["low_root_menu"])
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("low"))
-        cmds.setParent("..")
-
-        cmds.text(label="Detected Bake High Root", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["bake_high_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("bake_high"))
-        cmds.menuItem(label="Bake High root non détecté", parent=self.ui["bake_high_root_menu"])
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("bake_high"))
-        cmds.setParent("..")
-
-        cmds.text(label="Detected Bake Low Root", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["bake_low_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("bake_low"))
-        cmds.menuItem(label="Bake Low root non détecté", parent=self.ui["bake_low_root_menu"])
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("bake_low"))
-        cmds.setParent("..")
-
-        cmds.text(label="Detected Final Asset MA Root", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["final_asset_ma_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("final_asset_ma"))
-        cmds.menuItem(label="Final Asset MA root non détecté", parent=self.ui["final_asset_ma_root_menu"])
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("final_asset_ma"))
-        cmds.setParent("..")
-
-        cmds.text(label="Detected Final Asset FBX Root", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        self.ui["final_asset_fbx_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("final_asset_fbx"))
-        cmds.menuItem(label="Final Asset FBX root non détecté", parent=self.ui["final_asset_fbx_root_menu"])
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("final_asset_fbx"))
-        cmds.setParent("..")
-
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_technical_checks_section(self) -> None:
-        cmds.frameLayout(label="Checks techniques (High)", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Compare MA / FBX / BakeScene", align="left")
-        cmds.button(label="Run Compare MA vs FBX vs BakeScene", height=26, command=lambda *_: self.compare_ma_vs_fbx())
+        cmds.text(label="Guided review of the High.ma delivery.", align="left")
+        cmds.separator(style="in")
+        cmds.text(label="Step 01 — Load High.ma", align="left")
+        self.ui["high_ma_status"] = cmds.text(label="Detected High.ma: not scanned", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        self.ui["high_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_ma_menu"])
+        cmds.button(label="Load / Reference High.ma", height=26, command=lambda *_: self.load_ma_scene())
         cmds.setParent("..")
-
+        cmds.separator(style="in")
+        cmds.text(label="Step 02 — Placeholder Match", align="left")
         cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
         self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Placeholder match", align="left")
-        cmds.button(label="Run Placeholder match", height=26, command=lambda *_: self.check_placeholder_match())
+        cmds.text(label="Verify that each high matches its placeholder", align="left")
+        cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match(scope_keys=["placeholder", "high_ma"], source_label="High Review"))
         cmds.text(label="Tolerance %", align="right")
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
+        cmds.separator(style="in")
+        cmds.text(label="Step 03 — Design Kit Review (manual)", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["check_design"] = cmds.checkBox(
+            label="",
+            value=False,
+            changeCommand=lambda *_: self.on_manual_design_toggle(),
+        )
+        cmds.text(label="Visually verify high(s) against the design kit.", align="left")
+        cmds.button(label="Mark Step as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
+        cmds.setParent("..")
+        cmds.separator(style="in")
+        cmds.text(label="Step 04 — Topology Check", align="left")
         self._build_check_row("check_topology", "Topology", self.run_topology_checks)
-        self._build_check_row("check_texturesets", "Texture Sets", lambda: self.analyze_texture_sets(mode="materials"))
-
+        cmds.separator(style="in")
+        cmds.text(label="Step 05 — Vertex Colors", align="left")
         cmds.rowLayout(
             numberOfColumns=5,
             adjustableColumn=2,
@@ -353,107 +283,38 @@ class HighPolyReviewTool:
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
         cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
         cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_design"] = cmds.checkBox(
-            label="",
-            value=False,
-            changeCommand=lambda *_: self.on_manual_design_toggle(),
-        )
-        cmds.text(label="Design kit review (manuel)", align="left")
-        cmds.button(label="Mark as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
-        cmds.setParent("..")
-
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_texture_sets_section(self) -> None:
-        cmds.frameLayout(label="Texture Sets / Contrôles visuels (High)", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        cmds.button(label="Run Texture Sets", height=28, command=lambda *_: self.analyze_texture_sets(mode="materials"))
-        cmds.button(label="Run Texture Sets (Groups Method)", height=28, command=lambda *_: self.analyze_texture_sets(mode="groups"))
-        cmds.setParent("..")
-
-        cmds.text(
-            label="Liste des sets (sélection multiple possible) — séparée par source (High .ma / High .fbx / High _bake.ma).",
-            align="left",
-        )
-        self.ui["texture_sets_list"] = cmds.textScrollList(
-            allowMultiSelection=True,
-            height=180,
-            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
-        )
-
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        cmds.button(label="Hide Selected Sets", height=26, command=lambda *_: self.set_texture_set_visibility(False, selected_only=True))
-        cmds.button(label="Show Selected Sets", height=26, command=lambda *_: self.set_texture_set_visibility(True, selected_only=True))
-        cmds.button(label="Toggle Selected Sets", height=26, command=lambda *_: self.toggle_selected_texture_sets())
-        cmds.setParent("..")
-
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        cmds.button(label="Isolate Selected Sets", height=26, command=lambda *_: self.isolate_selected_texture_sets())
-        cmds.button(label="Show All Texture Sets", height=26, command=lambda *_: self.show_all_texture_sets())
-        cmds.setParent("..")
-
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_general_checks_section(self) -> None:
-        cmds.frameLayout(label="2) General Checks", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.text(label="Manual note: confirm Color ID readability for future bake.", align="left")
+        cmds.separator(style="in")
+        cmds.text(label="Step 06 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Pas de namespaces (global scène)", align="left")
+        cmds.text(label="Only tool namespaces should remain", align="left")
         cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
-        cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
+        cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_namespaces())
         cmds.setParent("..")
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_review_tabs_section(self) -> None:
-        cmds.frameLayout(label="3) Review Tabs", collapsable=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True)
-        self.ui["review_tabs"] = cmds.tabLayout(innerMarginWidth=8, innerMarginHeight=8)
-
-        self.ui["high_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_technical_checks_section()
-        self._build_texture_sets_section()
-        self._build_global_action_section()
-        cmds.setParent("..")
-
-        self.ui["low_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.button(label="Run All Low Checks", height=30, command=lambda *_: self.run_low_review_checks())
-        cmds.button(label="Run Topology (Low)", height=26, command=lambda *_: self.run_topology_checks(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review"))
-        cmds.button(label="Run UV01 Bake", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake"))
-        cmds.button(label="Run UV02 Texture", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture"))
-        cmds.button(label="Run Vertex Colors (Low)", height=26, command=lambda *_: self.check_vertex_colors(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review"))
-        cmds.button(label="Run Texture Sets (Low)", height=26, command=lambda *_: self.analyze_texture_sets(mode="materials", scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review"))
-        cmds.button(label="Run Placeholder Match (Low)", height=26, command=lambda *_: self.check_placeholder_match(scope_keys=["placeholder", "low_fbx", "bake_low"], source_label="Low Review"))
-        cmds.setParent("..")
-
-        self.ui["final_delivery_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.button(label="Run All Final Checks", height=30, command=lambda *_: self.run_final_review_checks())
-        cmds.button(label="Run Topology (Final)", height=26, command=lambda *_: self.run_topology_checks(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review"))
-        cmds.button(label="Run UV01 Bake", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake"))
-        cmds.button(label="Run UV02 Texture", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture"))
-        cmds.button(label="Run Vertex Colors (Final)", height=26, command=lambda *_: self.check_vertex_colors(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review"))
-        cmds.button(label="Run Texture Sets (Final)", height=26, command=lambda *_: self.analyze_texture_sets(mode="materials", scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review"))
-        cmds.button(label="Run Naming Final (no _low)", height=26, command=lambda *_: self.check_final_naming_no_low_suffix(scope_keys=["final_asset_ma", "final_asset_fbx"]))
-        cmds.setParent("..")
-
-        cmds.tabLayout(
-            self.ui["review_tabs"],
-            edit=True,
-            tabLabel=[
-                (self.ui["high_tab"], "High Review"),
-                (self.ui["low_tab"], "Low Review"),
-                (self.ui["final_delivery_tab"], "Final Review"),
-            ],
+        cmds.separator(style="in")
+        cmds.text(label="Step 07 — Materials / Texture Sets", align="left")
+        self._build_check_row("check_texturesets", "Texture Sets", lambda: self.analyze_texture_sets(mode="materials"))
+        self.ui["texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=130,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
         )
+        cmds.separator(style="in")
+        cmds.text(label="Step 08 — Compare High.ma vs High.fbx", align="left")
+        self.ui["high_fbx_status"] = cmds.text(label="Detected High.fbx: not scanned", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["high_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_fbx"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_fbx_menu"])
+        cmds.button(label="Load / Reference High.fbx", height=26, command=lambda *_: self.load_fbx_into_scene())
+        self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.setParent("..")
+        cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_ma_vs_fbx())
         cmds.setParent("..")
         cmds.setParent("..")
+    def _build_guided_high_review_section(self) -> None:
+        self._build_technical_checks_section()
+        self._build_global_action_section()
 
     def _build_check_row(self, check_key_ui: str, label: str, command) -> None:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -463,13 +324,13 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_global_action_section(self) -> None:
-        cmds.frameLayout(label="Actions (High)", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
-        cmds.button(label="Run All High Checks", height=30, command=lambda *_: self.run_all_checks())
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        cmds.button(label="Run All High Steps", height=30, command=lambda *_: self.run_all_checks())
         cmds.button(label="Clear Results", height=30, command=lambda *_: self.clear_results())
-        cmds.button(label="Save Review Report", height=30, command=lambda *_: self.save_report())
         cmds.setParent("..")
+        cmds.button(label="Save Review Report", height=30, command=lambda *_: self.save_report())
 
         cmds.button(
             label="Isolate meshes without VColor",
@@ -634,10 +495,6 @@ class HighPolyReviewTool:
         status_map = [
             ("high_ma", "high_ma_status", "High MA"),
             ("high_fbx", "high_fbx_status", "High FBX"),
-            ("low_fbx", "low_fbx_status", "Low FBX"),
-            ("bake_ma", "bake_ma_status", "Bake Scene"),
-            ("final_asset_ma", "final_asset_ma_status", "Final Asset MA"),
-            ("final_asset_fbx", "final_asset_fbx_status", "Final Asset FBX"),
         ]
 
         for file_key, status_widget, label in status_map:
@@ -647,7 +504,8 @@ class HighPolyReviewTool:
                 text = f"1 fichier détecté: {os.path.basename(self.detected_files[file_key][0])}"
             elif file_count > 1:
                 text = f"{file_count} fichiers détectés. Sélectionnez le bon fichier."
-            cmds.text(self.ui[status_widget], e=True, label=text)
+            if status_widget in self.ui and cmds.text(self.ui[status_widget], exists=True):
+                cmds.text(self.ui[status_widget], e=True, label=text)
 
     def on_detected_file_selected(self, file_key: str) -> None:
         files = self.detected_files[file_key]
@@ -816,7 +674,8 @@ class HighPolyReviewTool:
         self.detected_files["fbx"] = found_files["high_fbx"][:]
 
         for file_key in ["high_ma", "high_fbx", "low_fbx", "bake_ma", "final_asset_ma", "final_asset_fbx"]:
-            self._populate_file_option_menu(file_key)
+            if f"{file_key}_menu" in self.ui:
+                self._populate_file_option_menu(file_key)
         self.paths["ma"] = self.paths.get("high_ma", "")
         self.paths["fbx"] = self.paths.get("high_fbx", "")
         self._detect_assets_from_scan()
@@ -825,10 +684,6 @@ class HighPolyReviewTool:
         scan_logs = [
             ("high_ma", "Aucun fichier High MA (*_HIGH.ma) trouvé."),
             ("high_fbx", "Aucun fichier High FBX (*_HIGH.fbx) trouvé."),
-            ("low_fbx", "Aucun fichier Low FBX (*_LOW.fbx) trouvé."),
-            ("bake_ma", "Aucun fichier Bake Scene (*_BAKE.ma) trouvé."),
-            ("final_asset_ma", "Aucun fichier Final Asset MA (.ma sans suffix _low/_high/_bake) trouvé."),
-            ("final_asset_fbx", "Aucun fichier Final Asset FBX (.fbx sans suffix _low/_high/_bake) trouvé."),
         ]
         for file_key, warning_msg in scan_logs:
             count = len(found_files[file_key])
@@ -1967,9 +1822,10 @@ class HighPolyReviewTool:
         return False
 
     def compare_ma_vs_fbx(self) -> None:
-        self.log("INFO", "Compare", "----- Run Compare MA vs FBX vs BakeScene -----")
+        self.log("INFO", "Compare", "----- Step 08: Compare High.ma vs High.fbx -----")
         per_scope: Dict[str, List[str]] = {}
-        for key, label in self._high_scope_sequence():
+        for key in ["high_ma", "high_fbx"]:
+            label = self.scope_labels.get(key, key)
             resolution = self.resolve_scope_targets(scope_keys=[key])
             meshes = resolution["per_scope_meshes"].get(key, [])
             per_scope[key] = meshes
@@ -1978,21 +1834,13 @@ class HighPolyReviewTool:
             if not meshes:
                 self.log("FAIL", "Compare", f"Aucun mesh trouvé pour {label}.")
 
-        missing_sources = [k for k, _ in self._high_scope_sequence() if not per_scope.get(k)]
-        if missing_sources:
+        if not per_scope.get("high_ma") or not per_scope.get("high_fbx"):
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        all_ok = True
-        pairs = [("high_ma", "high_fbx"), ("high_ma", "bake_high"), ("high_fbx", "bake_high")]
-        for left_key, right_key in pairs:
-            left_label = self.scope_labels.get(left_key, left_key)
-            right_label = self.scope_labels.get(right_key, right_key)
-            self.log("INFO", "Compare", f"━━ Compare: {left_label} vs {right_label} ━━")
-            ok = self._compare_mesh_sets(per_scope[left_key], per_scope[right_key], left_label, right_label)
-            all_ok = all_ok and ok
-
-        self.set_check_status("ma_fbx_compared", "OK" if all_ok else "FAIL")
+        self.log("INFO", "Compare", "━━ Compare: High MA vs High FBX ━━")
+        ok = self._compare_mesh_sets(per_scope["high_ma"], per_scope["high_fbx"], "High MA", "High FBX")
+        self.set_check_status("ma_fbx_compared", "OK" if ok else "FAIL")
 
     def scan_namespaces(self) -> None:
         user_ns = self._get_scan_namespaces()
@@ -2645,13 +2493,12 @@ class HighPolyReviewTool:
         self.log("INFO", "RunAll", "Checks Final Review terminés.")
 
     def run_all_checks(self) -> None:
-        self.log("INFO", "RunAll", "Lancement des checks High Poly...")
-        self.compare_ma_vs_fbx()
-        self.scan_namespaces()
-        self.check_placeholder_match()
+        self.log("INFO", "RunAll", "Lancement des steps High Review...")
+        self.check_placeholder_match(scope_keys=["placeholder", "high_ma"], source_label="High Review")
         self.run_topology_checks()
-        self.analyze_texture_sets(mode="materials")
         self.check_vertex_colors()
+        self.scan_namespaces()
+        self.analyze_texture_sets(mode="materials")
         self.log("INFO", "RunAll", "Checks High Poly terminés.")
 
     def build_report_payload(self) -> Dict:
