@@ -27,6 +27,7 @@ MAX_MENU_LABEL_LENGTH = 72
 ROOT_SUFFIXES = {
     "high": "_high",
     "placeholder": "_placeholder",
+    "low": "_low",
 }
 PLACEHOLDER_TOKEN = "placeholder"
 
@@ -73,6 +74,11 @@ class HighPolyReviewTool:
         self.detected_roots: Dict[str, List[str]] = {
             "high": [],
             "placeholder": [],
+            "low": [],
+            "bake_high": [],
+            "bake_low": [],
+            "final_asset_ma": [],
+            "final_asset_fbx": [],
         }
 
         self.context = {
@@ -255,6 +261,41 @@ class HighPolyReviewTool:
         cmds.menuItem(label="Placeholder root non détecté", parent=self.ui["placeholder_root_menu"])
         cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
         cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("placeholder"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Low Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["low_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("low"))
+        cmds.menuItem(label="Low root non détecté", parent=self.ui["low_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("low"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Bake High Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["bake_high_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("bake_high"))
+        cmds.menuItem(label="Bake High root non détecté", parent=self.ui["bake_high_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("bake_high"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Bake Low Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["bake_low_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("bake_low"))
+        cmds.menuItem(label="Bake Low root non détecté", parent=self.ui["bake_low_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("bake_low"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Final Asset MA Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["final_asset_ma_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("final_asset_ma"))
+        cmds.menuItem(label="Final Asset MA root non détecté", parent=self.ui["final_asset_ma_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("final_asset_ma"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Final Asset FBX Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["final_asset_fbx_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("final_asset_fbx"))
+        cmds.menuItem(label="Final Asset FBX root non détecté", parent=self.ui["final_asset_fbx_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("final_asset_fbx"))
         cmds.setParent("..")
 
         cmds.setParent("..")
@@ -647,7 +688,16 @@ class HighPolyReviewTool:
         self._clear_option_menu(menu)
 
         if not items:
-            label = "High root non détecté" if root_key == "high" else "Placeholder root non détecté"
+            label_map = {
+                "high": "High root non détecté",
+                "placeholder": "Placeholder root non détecté",
+                "low": "Low root non détecté",
+                "bake_high": "Bake High root non détecté",
+                "bake_low": "Bake Low root non détecté",
+                "final_asset_ma": "Final Asset MA root non détecté",
+                "final_asset_fbx": "Final Asset FBX root non détecté",
+            }
+            label = label_map.get(root_key, f"{root_key} root non détecté")
             cmds.menuItem(label=label, parent=menu)
             return
 
@@ -657,8 +707,9 @@ class HighPolyReviewTool:
         cmds.optionMenu(menu, edit=True, select=1)
 
     def refresh_root_ui(self) -> None:
-        self._populate_root_option_menu("high")
-        self._populate_root_option_menu("placeholder")
+        for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]:
+            if f"{root_key}_root_menu" in self.ui:
+                self._populate_root_option_menu(root_key)
 
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
@@ -674,9 +725,12 @@ class HighPolyReviewTool:
         candidates = self.detected_roots[root_key]
         if not candidates:
             return None
-
-        index = cmds.optionMenu(self.ui[f"{root_key}_root_menu"], q=True, select=True) - 1
-        index = max(0, min(index, len(candidates) - 1))
+        menu_name = self.ui.get(f"{root_key}_root_menu")
+        if menu_name and cmds.optionMenu(menu_name, exists=True):
+            index = cmds.optionMenu(menu_name, q=True, select=True) - 1
+            index = max(0, min(index, len(candidates) - 1))
+        else:
+            index = 0
         root = candidates[index]
         return root if cmds.objExists(root) else None
 
@@ -715,24 +769,121 @@ class HighPolyReviewTool:
         has_shape = 1 if (cmds.listRelatives(node, shapes=True, noIntermediate=True, fullPath=True) or []) else 0
         return (len(mesh_shapes), len(descendants) + has_shape, -depth)
 
-    def _find_root_candidates(self, suffix_key: str) -> List[str]:
-        suffix = ROOT_SUFFIXES[suffix_key]
-        transforms = cmds.ls(type="transform", long=True) or []
-        valid = []
-        for node in transforms:
-            short_name = node.split("|")[-1]
-            short_without_ns = self._strip_namespaces_from_name(short_name)
-            if suffix_key == "placeholder":
-                if short_without_ns.lower().endswith(suffix) or self._is_placeholder_node(node):
-                    valid.append(node)
-            elif suffix_key == "high":
-                if short_without_ns.lower().endswith(suffix) and not self._is_placeholder_node(node):
-                    valid.append(node)
-            elif short_without_ns.lower().endswith(suffix):
-                valid.append(node)
+    def _transform_namespace(self, node: str) -> str:
+        short = self._short_name(node)
+        if ":" not in short:
+            return ""
+        return short.split(":")[0]
 
-        valid = sorted(valid, key=lambda x: self._candidate_root_score(x), reverse=True)
-        return valid
+    def _list_mesh_transforms_in_namespace(self, namespace: str) -> List[str]:
+        shapes = cmds.ls(f"{namespace}:*", long=True, type="mesh") or []
+        transforms: List[str] = []
+        for shape in shapes:
+            if cmds.getAttr(shape + ".intermediateObject"):
+                continue
+            parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+            if parent:
+                transforms.append(parent[0])
+        return sorted(set(transforms))
+
+    def _matches_asset_kind(self, node: str, asset_kind: str) -> bool:
+        short_name = self._short_name(node)
+        short_without_ns = self._strip_namespaces_from_name(short_name).lower()
+        if asset_kind == "placeholder":
+            return (
+                short_without_ns.endswith(ROOT_SUFFIXES["placeholder"])
+                or self._is_placeholder_node(node)
+                or self._path_contains_placeholder_token(node)
+            )
+        if asset_kind == "high":
+            return self._path_matches_suffix(node, ROOT_SUFFIXES["high"]) and not self._path_contains_placeholder_token(node)
+        if asset_kind == "low":
+            return self._path_matches_suffix(node, ROOT_SUFFIXES["low"]) and not self._path_contains_placeholder_token(node)
+        if asset_kind == "final":
+            return not self._path_has_any_suffix(node, ("_high", "_low", "_placeholder", "_bake"))
+        return False
+
+    def _resolve_functional_root_from_mesh(self, mesh_transform: str, asset_kind: str) -> str:
+        current = mesh_transform
+        while True:
+            parent = cmds.listRelatives(current, parent=True, fullPath=True, type="transform") or []
+            if not parent:
+                return current
+            parent = parent[0]
+            if self._transform_namespace(parent) != self._transform_namespace(mesh_transform):
+                return current
+
+            parent_mesh_shapes = cmds.listRelatives(parent, allDescendents=True, fullPath=True, type="mesh") or []
+            parent_mesh_transforms: Set[str] = set()
+            for shape in parent_mesh_shapes:
+                if cmds.getAttr(shape + ".intermediateObject"):
+                    continue
+                parent_tr = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+                if parent_tr:
+                    parent_mesh_transforms.add(parent_tr[0])
+            if not parent_mesh_transforms:
+                return current
+
+            if all(self._matches_asset_kind(tr, asset_kind) for tr in parent_mesh_transforms):
+                current = parent
+                continue
+            return current
+
+    def _find_root_candidates(self, asset_kind: str, namespace: Optional[str] = None) -> List[str]:
+        if namespace:
+            mesh_transforms = self._list_mesh_transforms_in_namespace(namespace)
+        else:
+            shapes = cmds.ls(type="mesh", long=True) or []
+            mesh_transforms = []
+            for shape in shapes:
+                if cmds.getAttr(shape + ".intermediateObject"):
+                    continue
+                parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+                if parent:
+                    mesh_transforms.append(parent[0])
+            mesh_transforms = sorted(set(mesh_transforms))
+
+        matching_meshes = [m for m in mesh_transforms if self._matches_asset_kind(m, asset_kind)]
+        roots = [self._resolve_functional_root_from_mesh(mesh, asset_kind) for mesh in matching_meshes]
+        return sorted(set(roots), key=lambda x: self._candidate_root_score(x), reverse=True)
+
+    def _detect_and_store_roots_for_import(self, import_key: str) -> None:
+        if import_key == "high_ma":
+            namespace = self.context["ma_namespace"]
+            self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
+            self.detected_roots["placeholder"] = self._find_root_candidates("placeholder", namespace=namespace)
+        elif import_key == "high_fbx":
+            namespace = self.context["fbx_namespace"]
+            self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
+        elif import_key == "low_fbx":
+            namespace = self.context["low_fbx_namespace"]
+            self.detected_roots["low"] = self._find_root_candidates("low", namespace=namespace)
+        elif import_key == "bake_ma":
+            namespace = self.context["bake_ma_namespace"]
+            self.detected_roots["bake_high"] = self._find_root_candidates("high", namespace=namespace)
+            self.detected_roots["bake_low"] = self._find_root_candidates("low", namespace=namespace)
+        elif import_key == "final_asset_ma":
+            namespace = self.context["final_asset_ma_namespace"]
+            self.detected_roots["final_asset_ma"] = self._find_root_candidates("final", namespace=namespace)
+        elif import_key == "final_asset_fbx":
+            namespace = self.context["final_asset_fbx_namespace"]
+            self.detected_roots["final_asset_fbx"] = self._find_root_candidates("final", namespace=namespace)
+
+        self.refresh_root_ui()
+
+    def _log_root_detection(self, root_key: str, label: str) -> None:
+        candidates = self.detected_roots.get(root_key, [])
+        if not candidates:
+            self.log("WARNING", "RootDetect", f"{label} root non détecté.")
+            return
+        self.log(
+            "INFO",
+            "RootDetect",
+            f"{label} root détecté: {self._ellipsize_middle(candidates[0], max_length=MAX_UI_TEXT_LENGTH - 20)}",
+            [candidates[0]],
+        )
+        if len(candidates) > 1:
+            self.log("WARNING", "RootDetect", f"Plusieurs {label} roots détectés ({len(candidates)}). Sélection manuelle possible.")
 
     def auto_detect_scene_roots(self) -> None:
         high_candidates = self._find_root_candidates("high")
@@ -821,6 +972,22 @@ class HighPolyReviewTool:
             if self._contains_placeholder_token(self._strip_namespaces_from_name(segment)):
                 return True
             if self._contains_placeholder_token(segment):
+                return True
+        return False
+
+    def _path_matches_suffix(self, node: str, suffix: str) -> bool:
+        suffix = suffix.lower()
+        for segment in [seg for seg in node.split("|") if seg]:
+            normalized = self._strip_namespaces_from_name(segment).lower()
+            if normalized.endswith(suffix):
+                return True
+        return False
+
+    def _path_has_any_suffix(self, node: str, suffixes: Tuple[str, ...]) -> bool:
+        lowered_suffixes = tuple(s.lower() for s in suffixes)
+        for segment in [seg for seg in node.split("|") if seg]:
+            normalized = self._strip_namespaces_from_name(segment).lower()
+            if normalized.endswith(lowered_suffixes):
                 return True
         return False
 
@@ -1436,6 +1603,12 @@ class HighPolyReviewTool:
 
         cmds.file(path, reference=True, type="mayaAscii", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
         self.log("INFO", "File", f"{category_label} référencé sous namespace '{namespace}'.")
+        self._detect_and_store_roots_for_import(file_key)
+        if file_key == "bake_ma":
+            self._log_root_detection("bake_high", "Bake High")
+            self._log_root_detection("bake_low", "Bake Low")
+        elif file_key == "final_asset_ma":
+            self._log_root_detection("final_asset_ma", "Final Asset MA")
 
     def _reference_fbx_file(self, file_key: str, namespace_key: str, category_label: str) -> None:
         path = self.paths.get(file_key, "")
@@ -1455,6 +1628,11 @@ class HighPolyReviewTool:
 
         cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
         self.log("INFO", "FBX", f"{category_label} référencé sous namespace '{namespace}'.")
+        self._detect_and_store_roots_for_import(file_key)
+        if file_key == "low_fbx":
+            self._log_root_detection("low", "Low")
+        elif file_key == "final_asset_fbx":
+            self._log_root_detection("final_asset_fbx", "Final Asset FBX")
 
     def load_ma_scene(self) -> None:
         path = self.paths.get("ma", "")
@@ -1480,6 +1658,9 @@ class HighPolyReviewTool:
         self.context["ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
         self.paths["ma"] = path
         self.log("INFO", "File", f"MA référencé sous namespace '{namespace}' ({len(self.context['ma_meshes'])} meshes détectés).")
+        self._detect_and_store_roots_for_import("high_ma")
+        self._log_root_detection("high", "High")
+        self._log_root_detection("placeholder", "Placeholder")
         self.auto_detect_scene_roots()
 
     def load_fbx_into_scene(self) -> None:
@@ -1509,6 +1690,8 @@ class HighPolyReviewTool:
 
         self.paths["fbx"] = path
         self.log("INFO", "FBX", f"FBX référencé sous namespace '{namespace}' ({len(self.context['fbx_meshes'])} meshes détectés).")
+        self._detect_and_store_roots_for_import("high_fbx")
+        self._log_root_detection("high", "High")
 
     def load_low_fbx_scene(self) -> None:
         self._reference_fbx_file("low_fbx", "low_fbx_namespace", "Low FBX")
