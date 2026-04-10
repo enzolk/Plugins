@@ -417,15 +417,9 @@ class HighPolyReviewTool:
     def on_manual_design_toggle(self) -> None:
         checked = cmds.checkBox(self.ui["check_design"], q=True, value=True)
         self.set_check_status("design_kit_checked", "OK" if checked else "PENDING")
-        self.log("INFO", "DesignKit", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        roots = self._find_root_candidates('high', namespace=self.context['ma_namespace'])
-        self.log("INFO", "DesignKit", f"Roots high concernés : {self._preview_list(roots)}")
         if checked:
-            self.log("INFO", "DesignKit", "Vérification manuelle utilisateur : VALIDÉE")
-            self.log("INFO", "DesignKit", "Résultat final : OK")
-        else:
-            self.log("INFO", "DesignKit", "Vérification manuelle utilisateur : NON VALIDÉE")
-            self.log("INFO", "DesignKit", "Résultat final : PENDING")
+            self.log("INFO", "DesignKit", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
+            self.log("INFO", "DesignKit", "Résultat : Revue design kit marquée comme effectuée (manuel).")
 
     def mark_design_reviewed(self) -> None:
         self.log("INFO", "DesignKit", "Action: Mark Design Kit Reviewed")
@@ -1669,16 +1663,13 @@ class HighPolyReviewTool:
         self.context["ma_nodes"] = new_nodes
         self.context["ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
         self.paths["high_ma"] = path
-        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
-        self.detected_roots["placeholder"] = self._find_root_candidates("placeholder", namespace=namespace)
-        self.log("INFO", "Load", f"Fichier chargé : {self._basename_from_path(path)}")
-        self.log("INFO", "Load", "Type : High.ma")
+        self.log("INFO", "Load", f"High.ma référencé : {self._basename_from_path(path)}")
         self.log("INFO", "Load", f"Namespace utilisé : {namespace}")
         self.log("INFO", "Load", f"Meshes importés : {len(self.context['ma_meshes'])}")
-        self.log("INFO", "RootDetect", f"High roots détectés : {len(self.detected_roots['high'])}")
-        self.log("INFO", "RootDetect", f"High root(s) : {self._preview_list(self.detected_roots['high'])}")
-        self.log("INFO", "RootDetect", f"Placeholder roots détectés : {len(self.detected_roots['placeholder'])}")
-        self.log("INFO", "RootDetect", f"Placeholder root(s) : {self._preview_list(self.detected_roots['placeholder'])}")
+        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
+        self.detected_roots["placeholder"] = self._find_root_candidates("placeholder", namespace=namespace)
+        self._log_root_detection("high", "High")
+        self._log_root_detection("placeholder", "Placeholder")
 
     def load_fbx_into_scene(self) -> None:
         path = self.paths.get("high_fbx", "")
@@ -1706,13 +1697,11 @@ class HighPolyReviewTool:
         self.context["fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
 
         self.paths["high_fbx"] = path
-        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
-        self.log("INFO", "Load", f"Fichier chargé : {self._basename_from_path(path)}")
-        self.log("INFO", "Load", "Type : High.fbx")
+        self.log("INFO", "Load", f"High.fbx référencé : {self._basename_from_path(path)}")
         self.log("INFO", "Load", f"Namespace utilisé : {namespace}")
         self.log("INFO", "Load", f"Meshes importés : {len(self.context['fbx_meshes'])}")
-        self.log("INFO", "RootDetect", f"High roots détectés : {len(self.detected_roots['high'])}")
-        self.log("INFO", "RootDetect", f"High root(s) : {self._preview_list(self.detected_roots['high'])}")
+        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
+        self._log_root_detection("high", "High(FBX)")
 
     def load_low_fbx_scene(self) -> None:
         self.log("INFO", "Workflow", "Low review désactivée dans cette version High-only.")
@@ -1754,7 +1743,7 @@ class HighPolyReviewTool:
     def load_final_asset_fbx_scene(self) -> None:
         self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
 
-    def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> Dict[str, object]:
+    def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
         left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
         right_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in right_meshes}
         left_keys = set(left_by_key.keys())
@@ -1772,25 +1761,24 @@ class HighPolyReviewTool:
             if left_data["uv_total"] != right_data["uv_total"] or left_data["uv_sets"] != right_data["uv_sets"]:
                 uv_mismatch.append(key)
 
-        mesh_presence_ok = not missing_in_right and not missing_in_left
-        topology_ok = not topo_mismatch
-        uv_ok = not uv_mismatch
-        ok = mesh_presence_ok and topology_ok and uv_ok
-        return {
-            "ok": ok,
-            "mesh_presence_ok": mesh_presence_ok,
-            "topology_ok": topology_ok,
-            "uv_ok": uv_ok,
-            "missing_in_right": [left_by_key[k]["path"] for k in missing_in_right],
-            "missing_in_left": [right_by_key[k]["path"] for k in missing_in_left],
-            "topo_mismatch": [left_by_key[k]["path"] for k in topo_mismatch],
-            "uv_mismatch": [left_by_key[k]["path"] for k in uv_mismatch],
-            "left_label": left_label,
-            "right_label": right_label,
-        }
+        if not missing_in_right and not missing_in_left and not topo_mismatch and not uv_mismatch:
+            self.log("INFO", "Compare", f"Résultat : OK ({left_label} et {right_label} cohérents).")
+            return True
+
+        mismatch_count = len(missing_in_right) + len(missing_in_left) + len(topo_mismatch) + len(uv_mismatch)
+        self.log("WARNING", "Compare", f"Résultat : mismatch détecté ({mismatch_count} catégorie(s) en écart).")
+        if missing_in_right:
+            self.log("FAIL", "Compare", f"Présents dans {left_label} mais absents de {right_label}: {len(missing_in_right)}", [left_by_key[k]["path"] for k in missing_in_right][:150])
+        if missing_in_left:
+            self.log("FAIL", "Compare", f"Présents dans {right_label} mais absents de {left_label}: {len(missing_in_left)}", [right_by_key[k]["path"] for k in missing_in_left][:150])
+        if topo_mismatch:
+            self.log("FAIL", "Compare", f"Topologie différente: {len(topo_mismatch)}", [left_by_key[k]["path"] for k in topo_mismatch][:150])
+        if uv_mismatch:
+            self.log("FAIL", "Compare", f"UV différentes: {len(uv_mismatch)}", [left_by_key[k]["path"] for k in uv_mismatch][:150])
+        return False
 
     def compare_ma_vs_fbx(self) -> None:
-        self.log("INFO", "Compare", "Step 08 — Compare High.ma vs High.fbx")
+        self.log("INFO", "Compare", "----- Step 08: Compare High.ma vs High.fbx -----")
         self.log("INFO", "Compare", f"Source A : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "Compare", f"Source B : {self._basename_from_path(self.paths.get('high_fbx', ''))}")
         ma_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
@@ -1802,38 +1790,11 @@ class HighPolyReviewTool:
         self.log("INFO", "Compare", f"Meshes analysés MA/FBX : {len(ma_meshes)}/{len(fbx_meshes)}")
 
         if not ma_meshes or not fbx_meshes:
-            self.log("FAIL", "Compare", "Mesh presence match : FAIL (au moins une source sans mesh)")
-            self.log("INFO", "Compare", "Topology match : SKIP")
-            self.log("INFO", "Compare", "UV match : SKIP")
-            self.log("FAIL", "Compare", "Résultat final : FAIL")
+            self.log("FAIL", "Compare", "Résultat : compare impossible (au moins une source sans mesh).")
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        compare_data = self._compare_mesh_sets(ma_meshes, fbx_meshes, "High MA", "High FBX")
-        mesh_presence_ok = bool(compare_data["mesh_presence_ok"])
-        topology_ok = bool(compare_data["topology_ok"])
-        uv_ok = bool(compare_data["uv_ok"])
-        self.log("INFO" if mesh_presence_ok else "FAIL", "Compare", f"Mesh presence match : {'OK' if mesh_presence_ok else 'FAIL'}")
-        if not mesh_presence_ok:
-            missing_right = compare_data["missing_in_right"]
-            missing_left = compare_data["missing_in_left"]
-            if missing_right:
-                self.log("FAIL", "Compare", f"Présents dans High MA mais absents de High FBX : {self._preview_list(missing_right)}", missing_right[:150])
-            if missing_left:
-                self.log("FAIL", "Compare", f"Présents dans High FBX mais absents de High MA : {self._preview_list(missing_left)}", missing_left[:150])
-
-        self.log("INFO" if topology_ok else "FAIL", "Compare", f"Topology match : {'OK' if topology_ok else 'FAIL'}")
-        if not topology_ok:
-            topo_items = compare_data["topo_mismatch"]
-            self.log("FAIL", "Compare", f"Topologie différente : {len(topo_items)} mesh(es) | preview: {self._preview_list(topo_items)}", topo_items[:150])
-
-        self.log("INFO" if uv_ok else "FAIL", "Compare", f"UV match : {'OK' if uv_ok else 'FAIL'}")
-        if not uv_ok:
-            uv_items = compare_data["uv_mismatch"]
-            self.log("FAIL", "Compare", f"UV différentes : {len(uv_items)} mesh(es) | preview: {self._preview_list(uv_items)}", uv_items[:150])
-
-        ok = bool(compare_data["ok"])
-        self.log("INFO" if ok else "FAIL", "Compare", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        ok = self._compare_mesh_sets(ma_meshes, fbx_meshes, "High MA", "High FBX")
         self.set_check_status("ma_fbx_compared", "OK" if ok else "FAIL")
 
     def _unload_namespace_references(self, namespace: str) -> bool:
@@ -1883,7 +1844,7 @@ class HighPolyReviewTool:
         self.log("INFO", "Compare", f"Meshes analysés : {min(len(ma_meshes), len(bake_meshes))}")
 
         if not ma_meshes or not bake_meshes:
-            self.log("FAIL", "Compare", "Résultat final : FAIL (compare impossible, au moins une source sans mesh)")
+            self.log("FAIL", "Compare", "Résultat : compare impossible (au moins une source sans mesh).")
             self.set_check_status("ma_bake_compared", "FAIL")
             return
 
@@ -1893,14 +1854,11 @@ class HighPolyReviewTool:
     def scan_namespaces(self) -> None:
         user_ns = self._get_scan_namespaces()
         self.last_scanned_namespaces = user_ns[:]
-        allowed = [self.context.get("ma_namespace", ""), self.context.get("fbx_namespace", ""), self.context.get("bake_ma_namespace", "")]
-        allowed = [ns for ns in allowed if ns]
         self.log("INFO", "Namespace", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "Namespace", f"Namespaces utilisateur détectés : {len(user_ns)}")
-        self.log("INFO", "Namespace", f"Namespaces tool autorisés ignorés : {self._preview_list(allowed, max_items=6)}")
 
         if not user_ns:
-            self.log("INFO", "Namespace", "Résultat final : OK")
+            self.log("INFO", "Namespace", "Résultat : OK (aucun namespace indésirable).")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -1910,19 +1868,18 @@ class HighPolyReviewTool:
             if not objs:
                 objs = [n for n in (cmds.ls(long=True) or []) if any(seg.startswith(ns + ":") for seg in n.split("|") if seg)]
             total_objs.extend(objs)
-            self.log("WARNING", "Namespace", f"Namespace détecté : {ns} ({len(objs)} objets)", objs[:50])
+            self.log("WARNING", "Namespace", f"Namespace détecté: {ns} ({len(objs)} objets)", objs[:50])
 
-        self.log("FAIL", "Namespace", f"Résultat final : FAIL ({len(user_ns)} namespace(s) utilisateur détecté(s))", total_objs[:200])
+        self.log("FAIL", "Namespace", f"Résultat : FAIL ({len(user_ns)} namespace(s) utilisateur détecté(s)).", total_objs[:200])
         self.set_check_status("no_namespaces", "FAIL")
 
     def remove_namespaces(self) -> None:
         removable = self.last_scanned_namespaces[:] or self._get_scan_namespaces()
         removable = [ns for ns in removable if not self._is_allowed_namespace(ns)]
-        self.log("INFO", "Namespace", "Action : Remove invalid namespaces")
         self.log("INFO", "Namespace", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "Namespace", f"Namespaces à supprimer : {len(removable)}")
         if not removable:
-            self.log("INFO", "Namespace", "Résultat final : OK")
+            self.log("INFO", "Namespace", "Résultat : OK (rien à supprimer).")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -1941,32 +1898,28 @@ class HighPolyReviewTool:
             impacted_objs = []
             for ns in removed:
                 impacted_objs.extend(impacted_before.get(ns, []))
-            self.log("INFO", "Namespace", f"Namespaces supprimés : {', '.join(removed)}", impacted_objs[:200])
+            self.log("INFO", "Namespace", f"Namespaces supprimés (merge vers root): {', '.join(removed)}", impacted_objs[:200])
 
         if failed:
             for ns, err in failed:
                 self.log("WARNING", "Namespace", f"Suppression impossible pour {ns}: {err}")
-            self.log("FAIL", "Namespace", f"Résultat final : FAIL ({len(failed)} namespace non supprimé)")
+            self.log("FAIL", "Namespace", f"Résultat : FAIL ({len(failed)} namespace(s) non supprimé(s)).")
             self.set_check_status("no_namespaces", "FAIL")
         else:
-            self.log("INFO", "Namespace", "Résultat final : OK")
+            self.log("INFO", "Namespace", "Résultat : OK (suppression terminée).")
             self.set_check_status("no_namespaces", "OK")
         self.last_scanned_namespaces = self._get_scan_namespaces()
 
     def check_placeholder_match(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
         file_label = self._basename_from_path(self.paths.get("high_ma", ""))
-        high_roots = self._find_root_candidates("high", namespace=self.context["ma_namespace"])
-        placeholder_roots = self._find_root_candidates("placeholder", namespace=self.context["ma_namespace"])
-        self.log("INFO", "Placeholder", f"Fichier analysé : {file_label}")
-        self.log("INFO", "Placeholder", f"Roots high analysés : {self._preview_list(high_roots)}")
-        self.log("INFO", "Placeholder", f"Roots placeholder analysés : {self._preview_list(placeholder_roots)}")
+        self.log("INFO", "Placeholder", f"Analyse du fichier High.ma : {file_label}")
         high_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
         placeholder_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"])
         placeholder_meshes = [m for m in placeholder_meshes if self._is_placeholder_node(m) or self._path_contains_placeholder_token(m)]
+        self.log("INFO", "Placeholder", f"Meshes High/Placeholder analysés : {len(high_meshes)}/{len(placeholder_meshes)}")
         if not high_meshes or not placeholder_meshes:
-            self.log("FAIL", "Placeholder", "Bounding box match : FAIL (high ou placeholder non détectés)")
-            self.log("FAIL", "Placeholder", "Résultat final : FAIL")
+            self.log("FAIL", "Placeholder", "High/Placeholder non détectés dans High.ma.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
@@ -1979,8 +1932,7 @@ class HighPolyReviewTool:
         placeholder_by = {_pair_token(p): p for p in placeholder_meshes}
         common = sorted(set(high_by.keys()) & set(placeholder_by.keys()))
         if not common:
-            self.log("FAIL", "Placeholder", "Bounding box match : FAIL (matching High/Placeholder impossible)")
-            self.log("FAIL", "Placeholder", "Résultat final : FAIL")
+            self.log("FAIL", "Placeholder", "Matching High/Placeholder impossible (tokens incompatibles).")
             self.set_check_status("placeholder_checked", "FAIL")
             return
         self.log("INFO", "Placeholder", f"Paires analysées : {len(common)}")
@@ -2004,15 +1956,12 @@ class HighPolyReviewTool:
                 self.log("FAIL", "Placeholder", f"FAIL {self._short_name(high)} vs {self._short_name(placeholder)} | ratio={self._fmt_vec(ratio)}", [high, placeholder])
                 failed = True
 
-        self.log("INFO", "Placeholder", f"Bounding box match : {ok_count} OK / {len(failed_pairs)} FAIL")
-        self.log("INFO", "Placeholder", f"Tolérance utilisée : {tolerance_percent:.2f}%")
+        self.log("INFO", "Placeholder", f"Résultat : {ok_count} OK / {len(failed_pairs)} FAIL")
         for pair in failed_pairs[:20]:
             self.log("INFO", "PlaceholderDetail", pair)
         if failed:
-            self.log("FAIL", "Placeholder", "Résultat final : FAIL")
             self.set_check_status("placeholder_checked", "FAIL")
         else:
-            self.log("INFO", "Placeholder", "Résultat final : OK")
             self.set_check_status("placeholder_checked", "OK")
 
     def run_topology_checks(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
@@ -2023,7 +1972,6 @@ class HighPolyReviewTool:
         self.log("INFO", "Topology", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "Topology", "Aucun mesh High.ma trouvé.")
-            self.log("FAIL", "Topology", "Résultat final : FAIL")
             self.set_check_status("topology_checked", "FAIL")
             return
 
@@ -2048,21 +1996,18 @@ class HighPolyReviewTool:
                 if len(tokens) > 5:
                     ngon_faces.append(f"{m}.f[{face_idx}]")
 
-        if ngon_faces:
-            self.log("FAIL", "Topology", f"N-gons : {len(ngon_faces)} face(s) détectée(s)", ngon_faces[:120])
-        else:
-            self.log("INFO", "Topology", "N-gons : OK")
         if non_manifold_items:
-            self.log("FAIL", "Topology", f"Non-manifold : {len(non_manifold_items)} mesh(es) détecté(s)", non_manifold_items[:120])
-        else:
-            self.log("INFO", "Topology", "Non-manifold : OK")
+            self.log("FAIL", "Topology", f"Non-manifold détecté sur {len(non_manifold_items)} mesh(es).", non_manifold_items[:120])
         if lamina_items:
-            self.log("FAIL", "Topology", f"Lamina faces : {len(lamina_items)} mesh(es) détecté(s)", lamina_items[:120])
-        else:
-            self.log("INFO", "Topology", "Lamina faces : OK")
+            self.log("FAIL", "Topology", f"Lamina faces détectées sur {len(lamina_items)} mesh(es).", lamina_items[:120])
+        if ngon_faces:
+            self.log("FAIL", "Topology", f"N-gons détectés: {len(ngon_faces)} face(s).", ngon_faces[:120])
 
         ok = not non_manifold_items and not lamina_items and not ngon_faces
-        self.log("INFO" if ok else "FAIL", "Topology", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        if ok:
+            self.log("INFO", "Topology", "Résultat : OK")
+        else:
+            self.log("FAIL", "Topology", "Résultat : FAIL (voir détails ci-dessus).")
         self.set_check_status("topology_checked", "OK" if ok else "FAIL")
 
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
@@ -2073,7 +2018,6 @@ class HighPolyReviewTool:
         self.log("INFO", "Materials", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "Materials", "Aucun mesh High.ma trouvé.")
-            self.log("FAIL", "Materials", "Résultat final : FAIL")
             self.set_check_status("texture_sets_analyzed", "FAIL")
             return
 
@@ -2092,7 +2036,6 @@ class HighPolyReviewTool:
                 mat = mats[0] if mats else "<NO_MATERIAL>"
                 mat_faces[mat] = mat_faces.get(mat, 0) + 1
                 mat_objects.setdefault(mat, []).append(mesh)
-        invalid_meshes = sorted(set(mat_objects.get("<NO_MATERIAL>", [])))
 
         self.detected_texture_sets = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
@@ -2113,11 +2056,7 @@ class HighPolyReviewTool:
             self.log("INFO", "Materials", f"Détail tronqué : {len(sorted_mats) - 12} matériau(x) supplémentaire(s) non affiché(s).")
 
         self._refresh_texture_sets_list_ui()
-        ok = bool(self.detected_texture_sets) and not invalid_meshes
-        if invalid_meshes:
-            self.log("FAIL", "Materials", f"Meshes sans matériau valide : {len(invalid_meshes)}", invalid_meshes[:120])
-        self.log("INFO" if ok else "FAIL", "Materials", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("texture_sets_analyzed", "OK" if ok else "FAIL")
+        self.set_check_status("texture_sets_analyzed", "OK" if self.detected_texture_sets else "FAIL")
 
     def check_vertex_colors(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
@@ -2127,7 +2066,6 @@ class HighPolyReviewTool:
         self.log("INFO", "VertexColor", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "VertexColor", "Aucun mesh High.ma trouvé.")
-            self.log("FAIL", "VertexColor", "Résultat final : FAIL")
             self.set_check_status("vertex_colors_checked", "FAIL")
             return
 
@@ -2152,27 +2090,25 @@ class HighPolyReviewTool:
                 partial[m] = missing
 
         if no_color_set:
-            self.log("FAIL", "VertexColor", f"Color set présent sur chaque mesh : FAIL ({len(no_color_set)} mesh sans color set)", no_color_set[:100])
-        else:
-            self.log("INFO", "VertexColor", "Color set présent sur chaque mesh : OK")
+            self.log("FAIL", "VertexColor", f"Meshes sans color set: {len(no_color_set)}", no_color_set[:100])
         if partial:
-            self.log("FAIL", "VertexColor", f"Vertex color assignée sur toutes les faces : FAIL ({len(partial)} mesh partiellement peint)")
+            self.log("FAIL", "VertexColor", f"Meshes avec faces sans vertex color: {len(partial)}")
             for m, cnt in list(sorted(partial.items()))[:30]:
                 self.log("INFO", "VertexColorDetail", f"{self._short_name(m)}: {cnt} face(s) sans color", [m])
-        else:
-            self.log("INFO", "VertexColor", "Vertex color assignée sur toutes les faces : OK")
-        self.log("INFO", "VertexColor", "Vérification visuelle manuelle nécessaire : OUI")
 
         ok = not no_color_set and not partial
-        self.log("INFO" if ok else "FAIL", "VertexColor", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        if ok:
+            self.log("INFO", "VertexColor", f"Résultat : {len(meshes)} OK / 0 FAIL")
+        else:
+            fail_count = len(set(no_color_set) | set(partial.keys()))
+            self.log("FAIL", "VertexColor", f"Résultat : {len(meshes) - fail_count} OK / {fail_count} FAIL")
         self.set_check_status("vertex_colors_checked", "OK" if ok else "FAIL")
 
     def display_vertex_colors(self) -> None:
         targets, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        self.log("INFO", "VertexColor", "Display vertex colors")
-        self.log("INFO", "VertexColor", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
+        self.log("INFO", "VertexColor", f"Display: Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         if not targets:
-            self.log("FAIL", "VertexColor", "Résultat final : FAIL (aucun high mesh trouvé)")
+            self.log("WARNING", "VertexColor", "Aucun high mesh High.ma trouvé.")
             return
         for tr in targets:
             shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
@@ -2182,15 +2118,14 @@ class HighPolyReviewTool:
                 except RuntimeError:
                     pass
         cmds.polyOptions(colorShadedDisplay=True)
-        self.log("INFO", "VertexColor", f"Meshes affectés : {len(targets)}")
-        self.log("INFO", "VertexColor", "Résultat final : OK")
+        self.log("INFO", "VertexColor", f"Display: Meshes affectés : {len(targets)}")
+        self.log("INFO", "VertexColor", "Display: Résultat : OK")
 
     def hide_vertex_colors(self) -> None:
         targets, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        self.log("INFO", "VertexColor", "Hide vertex colors")
-        self.log("INFO", "VertexColor", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
+        self.log("INFO", "VertexColor", f"Hide: Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         if not targets:
-            self.log("FAIL", "VertexColor", "Résultat final : FAIL (aucun high mesh trouvé)")
+            self.log("WARNING", "VertexColor", "Aucun high mesh High.ma trouvé.")
             return
         for tr in targets:
             shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
@@ -2199,8 +2134,8 @@ class HighPolyReviewTool:
                     cmds.setAttr(shape + ".displayColors", 0)
                 except RuntimeError:
                     pass
-        self.log("INFO", "VertexColor", f"Meshes affectés : {len(targets)}")
-        self.log("INFO", "VertexColor", "Résultat final : OK")
+        self.log("INFO", "VertexColor", f"Hide: Meshes affectés : {len(targets)}")
+        self.log("INFO", "VertexColor", "Hide: Résultat : OK")
 
     def isolate_meshes_without_vertex_color(self) -> None:
         high_root = self.get_high_root()
@@ -2258,30 +2193,25 @@ class HighPolyReviewTool:
         self.log("INFO", "RunAll", "Final Review désactivée dans cette version High-only.")
 
     def run_all_checks(self) -> None:
-        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 08) -----")
+        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 09) -----")
         self.log("INFO", "RunAll", f"Source High.ma : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "RunAll", f"Source High.fbx : {self._basename_from_path(self.paths.get('high_fbx', ''))}")
+        self.log("INFO", "RunAll", f"Source Bake.ma : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
         if not (self.context.get("ma_meshes") or []):
             self.load_ma_scene()
-        self.log("INFO", "RunAll", "Step 01 Load High.ma : DONE")
 
         self.check_placeholder_match()
-        self.log("INFO", "RunAll", "Step 02 Placeholder Match : DONE")
-        self.log("INFO", "RunAll", "Step 03 Design Kit : MANUAL")
+        self.log("INFO", "DesignKit", "Step 03 manuel: vérifiez le design kit puis cliquez 'Mark Step as Reviewed'.")
         self.run_topology_checks()
-        self.log("INFO", "RunAll", "Step 04 Topology : DONE")
         self.check_vertex_colors()
-        self.log("INFO", "RunAll", "Step 05 Vertex Colors : DONE")
         self.scan_namespaces()
-        self.log("INFO", "RunAll", "Step 06 Namespaces : DONE")
         self.analyze_texture_sets(mode="materials")
-        self.log("INFO", "RunAll", "Step 07 Materials : DONE")
 
         if not (self.context.get("fbx_meshes") or []):
             self.load_fbx_into_scene()
         self.compare_ma_vs_fbx()
-        self.log("INFO", "RunAll", "Step 08 Compare MA vs FBX : DONE")
-        self.log("INFO", "RunAll", "Résultat final : terminé")
+        self.compare_ma_vs_bake_high()
+        self.log("INFO", "RunAll", "Résultat : Run All High Steps terminé.")
 
     def build_report_payload(self) -> Dict:
         return {
