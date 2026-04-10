@@ -376,6 +376,52 @@ class HighPolyReviewTool:
 
         cmds.setParent("..")
         cmds.setParent("..")
+
+    def _build_general_checks_section(self) -> None:
+        cmds.frameLayout(label="2) General Checks", collapsable=True, collapse=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Pas de namespaces (global scène)", align="left")
+        cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
+        cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _build_review_tabs_section(self) -> None:
+        cmds.frameLayout(label="3) Review Tabs", collapsable=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True)
+        self.ui["review_tabs"] = cmds.tabLayout(innerMarginWidth=8, innerMarginHeight=8)
+
+        self.ui["high_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_technical_checks_section()
+        self._build_texture_sets_section()
+        self._build_global_action_section()
+        cmds.setParent("..")
+
+        self.ui["low_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        cmds.text(label="Low review layout à venir.", align="left")
+        cmds.setParent("..")
+
+        self.ui["bake_scene_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        cmds.text(label="Bake Scene review layout à venir.", align="left")
+        cmds.setParent("..")
+
+        self.ui["final_delivery_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        cmds.text(label="Final Delivery review layout à venir.", align="left")
+        cmds.setParent("..")
+
+        cmds.tabLayout(
+            self.ui["review_tabs"],
+            edit=True,
+            tabLabel=[
+                (self.ui["high_tab"], "High"),
+                (self.ui["low_tab"], "Low"),
+                (self.ui["bake_scene_tab"], "Bake Scene"),
+                (self.ui["final_delivery_tab"], "Final Delivery"),
+            ],
+        )
+        cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_general_checks_section(self) -> None:
