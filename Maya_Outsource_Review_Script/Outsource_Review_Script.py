@@ -263,6 +263,41 @@ class HighPolyReviewTool:
         cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("placeholder"))
         cmds.setParent("..")
 
+        cmds.text(label="Detected Low Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["low_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("low"))
+        cmds.menuItem(label="Low root non détecté", parent=self.ui["low_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("low"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Bake High Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["bake_high_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("bake_high"))
+        cmds.menuItem(label="Bake High root non détecté", parent=self.ui["bake_high_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("bake_high"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Bake Low Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["bake_low_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("bake_low"))
+        cmds.menuItem(label="Bake Low root non détecté", parent=self.ui["bake_low_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("bake_low"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Final Asset MA Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["final_asset_ma_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("final_asset_ma"))
+        cmds.menuItem(label="Final Asset MA root non détecté", parent=self.ui["final_asset_ma_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("final_asset_ma"))
+        cmds.setParent("..")
+
+        cmds.text(label="Detected Final Asset FBX Root", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        self.ui["final_asset_fbx_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("final_asset_fbx"))
+        cmds.menuItem(label="Final Asset FBX root non détecté", parent=self.ui["final_asset_fbx_root_menu"])
+        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("final_asset_fbx"))
+        cmds.setParent("..")
+
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -653,7 +688,16 @@ class HighPolyReviewTool:
         self._clear_option_menu(menu)
 
         if not items:
-            label = "High root non détecté" if root_key == "high" else "Placeholder root non détecté"
+            label_map = {
+                "high": "High root non détecté",
+                "placeholder": "Placeholder root non détecté",
+                "low": "Low root non détecté",
+                "bake_high": "Bake High root non détecté",
+                "bake_low": "Bake Low root non détecté",
+                "final_asset_ma": "Final Asset MA root non détecté",
+                "final_asset_fbx": "Final Asset FBX root non détecté",
+            }
+            label = label_map.get(root_key, f"{root_key} root non détecté")
             cmds.menuItem(label=label, parent=menu)
             return
 
@@ -663,8 +707,9 @@ class HighPolyReviewTool:
         cmds.optionMenu(menu, edit=True, select=1)
 
     def refresh_root_ui(self) -> None:
-        self._populate_root_option_menu("high")
-        self._populate_root_option_menu("placeholder")
+        for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]:
+            if f"{root_key}_root_menu" in self.ui:
+                self._populate_root_option_menu(root_key)
 
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
