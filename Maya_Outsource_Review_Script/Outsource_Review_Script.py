@@ -28,12 +28,8 @@ MAX_MENU_LABEL_LENGTH = 72
 ROOT_SUFFIXES = {
     "high": "_high",
     "placeholder": "_placeholder",
-    "low": "_low",
 }
 PLACEHOLDER_TOKEN = "placeholder"
-HIGH_REVIEW_SCOPE_ORDER = ["high_ma", "high_fbx", "bake_high"]
-LOW_REVIEW_SCOPE_ORDER = ["low_fbx", "bake_low", "final_asset_ma"]
-FINAL_REVIEW_SCOPE_ORDER = ["final_asset_ma", "final_asset_fbx", "bake_low", "low_fbx"]
 
 
 @dataclass
@@ -54,44 +50,23 @@ class HighPolyReviewTool:
 
         self.paths = {
             "root": "",
-            "ma": "",
-            "fbx": "",
-            "bake_ma": "",
-            "low_fbx": "",
             "high_ma": "",
             "high_fbx": "",
-            "final_asset_ma": "",
-            "final_asset_fbx": "",
         }
 
         self.detected_files: Dict[str, List[str]] = {
-            "ma": [],
-            "fbx": [],
-            "bake_ma": [],
-            "low_fbx": [],
             "high_ma": [],
             "high_fbx": [],
-            "final_asset_ma": [],
-            "final_asset_fbx": [],
         }
 
         self.detected_roots: Dict[str, List[str]] = {
             "high": [],
             "placeholder": [],
-            "low": [],
-            "bake_high": [],
-            "bake_low": [],
-            "final_asset_ma": [],
-            "final_asset_fbx": [],
         }
 
         self.context = {
             "fbx_namespace": "High_FBX_File",
             "ma_namespace": "High_Ma_File",
-            "low_fbx_namespace": "Low_FBX_File",
-            "bake_ma_namespace": "Bake_MA_File",
-            "final_asset_ma_namespace": "FinalAsset_MA_File",
-            "final_asset_fbx_namespace": "FinalAsset_FBX_File",
             "fbx_nodes": [],
             "fbx_meshes": [],
             "ma_nodes": [],
@@ -126,17 +101,8 @@ class HighPolyReviewTool:
         self.detected_assets: List[str] = []
         self.asset_to_final_fbx: Dict[str, str] = {}
         self.active_asset: str = ""
-        self.scope_keys = ["placeholder", "high_ma", "high_fbx", "bake_high", "low_fbx", "bake_low", "final_asset_ma", "final_asset_fbx"]
-        self.scope_labels = {
-            "placeholder": "Placeholder",
-            "high_ma": "High MA",
-            "high_fbx": "High FBX",
-            "bake_high": "Bake High",
-            "low_fbx": "Low FBX",
-            "bake_low": "Bake Low",
-            "final_asset_ma": "Final Scene MA",
-            "final_asset_fbx": "Final FBX",
-        }
+        self.scope_keys = ["placeholder", "high_ma", "high_fbx"]
+        self.scope_labels = {"placeholder": "Placeholder", "high_ma": "High MA", "high_fbx": "High FBX"}
         self.last_texture_scope: List[str] = []
 
     # --------------------------- UI BUILD ---------------------------
@@ -202,36 +168,6 @@ class HighPolyReviewTool:
         )
         cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder())
 
-        cmds.separator(style="in")
-        cmds.frameLayout(label="Detected Assets (from scan)", collapsable=False, marginWidth=6)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        cmds.text(label="Active Asset", align="left")
-        self.ui["active_asset_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_active_asset_changed())
-        cmds.menuItem(label="-- Aucun asset détecté --", parent=self.ui["active_asset_menu"])
-        cmds.setParent("..")
-        self.ui["assets_detected_label"] = cmds.text(label="Available: -", align="left")
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-        cmds.separator(style="in")
-
-        cmds.text(label="Detected High Root", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
-        self.ui["high_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("high"))
-        cmds.menuItem(label="High root non détecté", parent=self.ui["high_root_menu"])
-        cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("high"))
-        cmds.setParent("..")
-
-        cmds.text(label="Detected Placeholder Root", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)])
-        self.ui["placeholder_root_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_root_selection_changed("placeholder"))
-        cmds.menuItem(label="Placeholder root non détecté", parent=self.ui["placeholder_root_menu"])
-        cmds.button(label="Auto Detect", height=24, command=lambda *_: self.auto_detect_scene_roots())
-        cmds.button(label="From Selection", height=24, command=lambda *_: self.set_root_from_selection("placeholder"))
-        cmds.setParent("..")
-
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -252,7 +188,7 @@ class HighPolyReviewTool:
         cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
         self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Verify that each high matches its placeholder", align="left")
-        cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match(scope_keys=["placeholder", "high_ma"], source_label="High Review"))
+        cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match())
         cmds.text(label="Tolerance %", align="right")
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
@@ -279,7 +215,7 @@ class HighPolyReviewTool:
         )
         self.ui["check_vtx"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Vertex Colors", align="left")
-        cmds.button(label="Run Vertex Colors", height=26, command=lambda *_: self.check_vertex_colors())
+        cmds.button(label="Run Vertex Color Check", height=26, command=lambda *_: self.check_vertex_colors())
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
         cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
         cmds.setParent("..")
@@ -294,7 +230,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.separator(style="in")
         cmds.text(label="Step 07 — Materials / Texture Sets", align="left")
-        self._build_check_row("check_texturesets", "Texture Sets", lambda: self.analyze_texture_sets(mode="materials"))
+        self._build_check_row("check_texturesets", "Analyze Materials", lambda: self.analyze_texture_sets(mode="materials"))
         self.ui["texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
@@ -511,21 +447,11 @@ class HighPolyReviewTool:
         files = self.detected_files[file_key]
         if not files:
             self.paths[file_key] = ""
-            if file_key == "high_ma":
-                self.paths["ma"] = ""
-            elif file_key == "high_fbx":
-                self.paths["fbx"] = ""
             return
 
         index = cmds.optionMenu(self.ui[f"{file_key}_menu"], q=True, select=True) - 1
         index = max(0, min(index, len(files) - 1))
         self.paths[file_key] = files[index]
-        if file_key == "high_ma":
-            self.paths["ma"] = self.paths[file_key]
-        elif file_key == "high_fbx":
-            self.paths["fbx"] = self.paths[file_key]
-        elif file_key == "final_asset_fbx":
-            self._sync_active_asset_from_final_fbx_path(self.paths[file_key])
         self.log("INFO", "Scan", f"{file_key.upper()} sélectionné: {self.paths[file_key]}")
 
     def _normalize_asset_token(self, value: str) -> str:
@@ -640,12 +566,8 @@ class HighPolyReviewTool:
 
         self._set_root_folder(root)
         found_files: Dict[str, List[str]] = {
-            "bake_ma": [],
-            "low_fbx": [],
             "high_fbx": [],
             "high_ma": [],
-            "final_asset_ma": [],
-            "final_asset_fbx": [],
         }
 
         for dirpath, _, filenames in os.walk(root):
@@ -653,32 +575,25 @@ class HighPolyReviewTool:
                 name_lower = filename.lower()
                 full_path = os.path.join(dirpath, filename)
                 if name_lower.endswith("_bake.ma"):
-                    found_files["bake_ma"].append(full_path)
+                    continue
                 elif name_lower.endswith("_low.fbx"):
-                    found_files["low_fbx"].append(full_path)
+                    continue
                 elif name_lower.endswith("_high.fbx"):
                     found_files["high_fbx"].append(full_path)
                 elif name_lower.endswith("_high.ma"):
                     found_files["high_ma"].append(full_path)
-                elif name_lower.endswith(".ma") and not name_lower.endswith(("_low.ma", "_high.ma", "_bake.ma")):
-                    found_files["final_asset_ma"].append(full_path)
-                elif name_lower.endswith(".fbx") and not name_lower.endswith(("_low.fbx", "_high.fbx", "_bake.fbx")):
-                    found_files["final_asset_fbx"].append(full_path)
 
         for key in found_files:
             found_files[key].sort()
 
         for key, files in found_files.items():
             self.detected_files[key] = files
-        self.detected_files["ma"] = found_files["high_ma"][:]
-        self.detected_files["fbx"] = found_files["high_fbx"][:]
 
-        for file_key in ["high_ma", "high_fbx", "low_fbx", "bake_ma", "final_asset_ma", "final_asset_fbx"]:
+        for file_key in ["high_ma", "high_fbx"]:
             if f"{file_key}_menu" in self.ui:
                 self._populate_file_option_menu(file_key)
-        self.paths["ma"] = self.paths.get("high_ma", "")
-        self.paths["fbx"] = self.paths.get("high_fbx", "")
-        self._detect_assets_from_scan()
+        self.paths["high_ma"] = self.paths.get("high_ma", "")
+        self.paths["high_fbx"] = self.paths.get("high_fbx", "")
         self.refresh_detected_file_labels()
 
         scan_logs = [
@@ -1718,7 +1633,7 @@ class HighPolyReviewTool:
             self._log_root_detection("final_asset_fbx", "Final Asset FBX")
 
     def load_ma_scene(self) -> None:
-        path = self.paths.get("ma", "")
+        path = self.paths.get("high_ma", "")
         if not path:
             self.log("FAIL", "File", "Aucun fichier .ma sélectionné (scan requis).")
             return
@@ -1739,15 +1654,15 @@ class HighPolyReviewTool:
         new_nodes = sorted(list(after - before))
         self.context["ma_nodes"] = new_nodes
         self.context["ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
-        self.paths["ma"] = path
-        self.log("INFO", "File", f"MA référencé sous namespace '{namespace}' ({len(self.context['ma_meshes'])} meshes détectés).")
-        self._detect_and_store_roots_for_import("high_ma")
+        self.paths["high_ma"] = path
+        self.log("INFO", "File", f"High.ma référencé sous namespace '{namespace}' ({len(self.context['ma_meshes'])} meshes détectés).")
+        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
+        self.detected_roots["placeholder"] = self._find_root_candidates("placeholder", namespace=namespace)
         self._log_root_detection("high", "High")
         self._log_root_detection("placeholder", "Placeholder")
-        self.auto_detect_scene_roots()
 
     def load_fbx_into_scene(self) -> None:
-        path = self.paths.get("fbx", "")
+        path = self.paths.get("high_fbx", "")
         if not path:
             self.log("FAIL", "File", "Aucun fichier .fbx sélectionné (scan requis).")
             return
@@ -1771,22 +1686,20 @@ class HighPolyReviewTool:
         self.context["fbx_nodes"] = new_nodes
         self.context["fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
 
-        self.paths["fbx"] = path
-        self.log("INFO", "FBX", f"FBX référencé sous namespace '{namespace}' ({len(self.context['fbx_meshes'])} meshes détectés).")
-        self._detect_and_store_roots_for_import("high_fbx")
-        self._log_root_detection("high", "High")
+        self.paths["high_fbx"] = path
+        self.log("INFO", "FBX", f"High.fbx référencé sous namespace '{namespace}' ({len(self.context['fbx_meshes'])} meshes détectés).")
 
     def load_low_fbx_scene(self) -> None:
-        self._reference_fbx_file("low_fbx", "low_fbx_namespace", "Low FBX")
+        self.log("INFO", "Workflow", "Low review désactivée dans cette version High-only.")
 
     def load_bake_ma_scene(self) -> None:
-        self._reference_ma_file("bake_ma", "bake_ma_namespace", "Bake MA")
+        self.log("INFO", "Workflow", "Bake review désactivée dans cette version High-only.")
 
     def load_final_asset_ma_scene(self) -> None:
-        self._reference_ma_file("final_asset_ma", "final_asset_ma_namespace", "Final Asset MA")
+        self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
 
     def load_final_asset_fbx_scene(self) -> None:
-        self._reference_fbx_file("final_asset_fbx", "final_asset_fbx_namespace", "Final Asset FBX")
+        self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
 
     def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
         left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
@@ -1823,23 +1736,16 @@ class HighPolyReviewTool:
 
     def compare_ma_vs_fbx(self) -> None:
         self.log("INFO", "Compare", "----- Step 08: Compare High.ma vs High.fbx -----")
-        per_scope: Dict[str, List[str]] = {}
-        for key in ["high_ma", "high_fbx"]:
-            label = self.scope_labels.get(key, key)
-            resolution = self.resolve_scope_targets(scope_keys=[key])
-            meshes = resolution["per_scope_meshes"].get(key, [])
-            per_scope[key] = meshes
-            self.log("INFO", "Compare", f"━━ Source: {label} ━━")
-            self.log("INFO", "Compare", f"Meshes détectés: {len(meshes)}")
-            if not meshes:
-                self.log("FAIL", "Compare", f"Aucun mesh trouvé pour {label}.")
+        ma_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
+        fbx_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"], exclude_placeholder_named=True)
+        self.log("INFO", "Compare", f"High.ma meshes: {len(ma_meshes)}")
+        self.log("INFO", "Compare", f"High.fbx meshes: {len(fbx_meshes)}")
 
-        if not per_scope.get("high_ma") or not per_scope.get("high_fbx"):
+        if not ma_meshes or not fbx_meshes:
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        self.log("INFO", "Compare", "━━ Compare: High MA vs High FBX ━━")
-        ok = self._compare_mesh_sets(per_scope["high_ma"], per_scope["high_fbx"], "High MA", "High FBX")
+        ok = self._compare_mesh_sets(ma_meshes, fbx_meshes, "High MA", "High FBX")
         self.set_check_status("ma_fbx_compared", "OK" if ok else "FAIL")
 
     def scan_namespaces(self) -> None:
@@ -1897,531 +1803,198 @@ class HighPolyReviewTool:
         self.last_scanned_namespaces = self._get_scan_namespaces()
 
     def check_placeholder_match(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
-        if scope_keys is None:
-            statuses: List[str] = []
-            self.log("INFO", "Placeholder", "----- Placeholder Match (ordre: MA -> FBX -> Bake) -----")
-            for key, label in self._high_scope_sequence():
-                self.log("INFO", "Placeholder", f"━━ Étape: {label} vs placeholder ━━")
-                self.check_placeholder_match(scope_keys=[key], source_label=label)
-                statuses.append(self.check_states["placeholder_checked"]["status"])
-            final = "OK" if all(s == "OK" for s in statuses) else "FAIL"
-            self.set_check_status("placeholder_checked", final)
-            return
-        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
-        scope_keys = resolution["scope_keys"]
-        self._log_scope_resolution("Placeholder", resolution)
-        placeholder = self.get_placeholder_root()
-        if not placeholder or not cmds.objExists(placeholder):
-            self.log("FAIL", "Placeholder", "Placeholder root invalide/non détecté.")
+        _ = (scope_keys, source_label)
+        high_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
+        placeholder_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"])
+        placeholder_meshes = [m for m in placeholder_meshes if self._is_placeholder_node(m) or self._path_contains_placeholder_token(m)]
+        if not high_meshes or not placeholder_meshes:
+            self.log("FAIL", "Placeholder", "High/Placeholder non détectés dans High.ma.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
-        per_scope = resolution["per_scope_meshes"]
-        target_scope_keys = [k for k in scope_keys if k != "placeholder"]
-        target_meshes = sorted(set([m for k in target_scope_keys for m in per_scope.get(k, [])]))
-        if not target_meshes:
-            self.log("FAIL", "Placeholder", f"Aucune cible High trouvée pour {source_label or self._scope_label(scope_keys)}.")
+        def _pair_token(node: str) -> str:
+            name = self._strip_namespaces_from_name(self._short_name(node)).lower()
+            name = name.replace("_high", "").replace("_placeholder", "")
+            return re.sub(r"[^a-z0-9]", "", name)
+
+        high_by = {_pair_token(h): h for h in high_meshes}
+        placeholder_by = {_pair_token(p): p for p in placeholder_meshes}
+        common = sorted(set(high_by.keys()) & set(placeholder_by.keys()))
+        if not common:
+            self.log("FAIL", "Placeholder", "Matching High/Placeholder impossible (tokens incompatibles).")
             self.set_check_status("placeholder_checked", "FAIL")
             return
-
-        p_bb = cmds.exactWorldBoundingBox(placeholder)
-        h_bb = cmds.exactWorldBoundingBox(target_meshes)
-        p_dim = (p_bb[3] - p_bb[0], p_bb[4] - p_bb[1], p_bb[5] - p_bb[2])
-        h_dim = (h_bb[3] - h_bb[0], h_bb[4] - h_bb[1], h_bb[5] - h_bb[2])
-        p_piv = tuple(cmds.xform(placeholder, q=True, ws=True, rotatePivot=True))
-        h_piv = self._bbox_center(h_bb)
-        pivot_delta = tuple(h_piv[i] - p_piv[i] for i in range(3))
-
-        ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
 
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
-        tolerance_percent = max(0.0, float(tolerance_percent))
-        tolerance = tolerance_percent / 100.0
-        axis_names = ["X", "Y", "Z"]
-        axis_deviation_percent = [self._placeholder_axis_deviation(r) for r in ratio]
-        max_deviation = max(axis_deviation_percent) if axis_deviation_percent else 0.0
-        mean_deviation = (sum(axis_deviation_percent) / float(len(axis_deviation_percent))) if axis_deviation_percent else 0.0
-        total_dims = max(sum(abs(v) for v in p_dim), 1e-6)
-        weighted_deviation = sum(axis_deviation_percent[i] * (abs(p_dim[i]) / total_dims) for i in range(3))
-        max_pivot_delta = max(abs(v) for v in pivot_delta)
-        pivot_info_threshold = max(max(abs(v) for v in p_dim), 1e-6) * tolerance
-        pivot_ok = max_pivot_delta <= pivot_info_threshold
-        dimensions_ok = all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0)
+        tolerance = max(0.0, float(tolerance_percent)) / 100.0
+        failed = False
+        for key in common:
+            high = high_by[key]
+            placeholder = placeholder_by[key]
+            h_dim = self._mesh_bbox_dims_world(high)
+            p_dim = self._mesh_bbox_dims_world(placeholder)
+            ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
+            ok = all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0)
+            if ok:
+                self.log("INFO", "Placeholder", f"OK {self._short_name(high)} vs {self._short_name(placeholder)} | ratio={self._fmt_vec(ratio)}")
+            else:
+                self.log("FAIL", "Placeholder", f"FAIL {self._short_name(high)} vs {self._short_name(placeholder)} | ratio={self._fmt_vec(ratio)}", [high, placeholder])
+                failed = True
 
-        self.log("INFO", "Placeholder", "----- Placeholder Match -----")
-        self.log("INFO", "Placeholder", f"Source analysée: {source_label or self._scope_label(scope_keys)}")
-        self.log("INFO", "Placeholder", "Dimensions / proportions")
-        self.log("INFO", "Placeholder", f"Placeholder dims: {self._fmt_vec(p_dim)}")
-        self.log("INFO", "Placeholder", f"High dims: {self._fmt_vec(h_dim)}")
-        for idx, axis in enumerate(axis_names):
-            self.log(
-                "INFO",
-                "Placeholder",
-                f"Ratio axe {axis}: {ratio[idx]:.4f} ({self._fmt_size_percent(ratio[idx])})",
-            )
-            self.log("INFO", "Placeholder", f"Écart axe {axis}: {axis_deviation_percent[idx]:.2f}%")
-        self.log("INFO", "Placeholder", f"Écart maximal: {max_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Écart moyen: {mean_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Écart pondéré (dimensions): {weighted_deviation:.2f}%")
-        self.log("INFO", "Placeholder", f"Seuil autorisé: {tolerance_percent:.2f}%")
-        self.log("INFO", "Placeholder", "Critère principal (validation): Écart maximal par axe <= seuil.")
-        self.log("INFO", "Placeholder", f"Décision proportions: {'OK' if dimensions_ok else 'FAIL'}")
-
-        self.log("INFO", "Placeholder", "Pivot / position")
-        self.log("INFO", "Placeholder", f"Pivot placeholder: {self._fmt_vec(p_piv)}")
-        self.log("INFO", "Placeholder", f"Pivot high (centre bbox scope): {self._fmt_vec(h_piv)}")
-        self.log("INFO", "Placeholder", f"Pivot delta: {self._fmt_vec(pivot_delta)}")
-        self.log(
-            "INFO",
-            "Placeholder",
-            (
-                f"Décision pivot: {'OK' if pivot_ok else 'FAIL'} "
-                f"(informatif, seuil={pivot_info_threshold:.4f}, max delta={max_pivot_delta:.4f})"
-            ),
-        )
-
-        if dimensions_ok:
-            self.log("INFO", "Placeholder", "Résultat final: OK (proportions validées).")
-            self.set_check_status("placeholder_checked", "OK")
-        else:
-            worst_axis_idx = axis_deviation_percent.index(max_deviation) if axis_deviation_percent else 1
-            reason = (
-                f"Résultat final: FAIL | raison principale: l'axe {axis_names[worst_axis_idx]} "
-                f"dépasse le seuil ({max_deviation:.2f}% > {tolerance_percent:.2f}%)."
-            )
-            self.log("WARNING", "Placeholder", reason, [placeholder] + target_meshes[:150])
+        if failed:
             self.set_check_status("placeholder_checked", "FAIL")
+        else:
+            self.set_check_status("placeholder_checked", "OK")
 
     def run_topology_checks(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
-        if scope_keys is None:
-            statuses: List[str] = []
-            self.log("INFO", "Topology", "----- Run Topology (ordre: MA -> FBX -> Bake) -----")
-            for key, label in self._high_scope_sequence():
-                self.log("INFO", "Topology", f"━━ Étape: {label} ━━")
-                self.run_topology_checks(scope_keys=[key], source_label=label)
-                statuses.append(self.check_states["topology_checked"]["status"])
-            final = "OK" if all(s == "OK" for s in statuses) else ("FAIL" if any(s == "FAIL" for s in statuses) else "PENDING")
-            self.set_check_status("topology_checked", final)
-            return
-        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
-        scope_keys = resolution["scope_keys"]
-        meshes = resolution["meshes"]
-        self._log_scope_resolution("Topology", resolution)
+        _ = (scope_keys, source_label)
+        meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
         if not meshes:
-            self.log("FAIL", "Topology", f"Aucun objet trouvé pour {source_label or self._scope_label(scope_keys)}.")
+            self.log("FAIL", "Topology", "Aucun mesh High.ma trouvé.")
             self.set_check_status("topology_checked", "FAIL")
             return
 
-        self.log("INFO", "Topology", f"Source analysée: {source_label or self._scope_label(scope_keys)} | Meshes: {len(meshes)}")
-
-        fail_count = 0
-        warn_count = 0
-
-        non_manifold_items = []
-        lamina_items = []
-        ngon_faces = []
-        zero_length_edges = []
-        zero_area_faces = []
-        hidden_meshes = []
-        meshes_with_history = []
-        non_identity = []
-        instances = []
+        non_manifold_items: List[str] = []
+        lamina_items: List[str] = []
+        ngon_faces: List[str] = []
 
         for m in meshes:
             nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
             nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
             lam = cmds.polyInfo(m, laminaFaces=True) or []
-
             if nmv or nme:
                 non_manifold_items.append(m)
             if lam:
                 lamina_items.append(m)
-
-            face_count = cmds.polyEvaluate(m, face=True) or 0
+            face_count = int(cmds.polyEvaluate(m, face=True) or 0)
             for face_idx in range(face_count):
                 vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
                 if not vtx:
                     continue
-                # "FACE    0:    10 11 12 13" -> keep numeric tokens only.
                 tokens = [tok for tok in vtx[0].replace(":", " ").split() if tok.isdigit()]
-                if len(tokens) > 5:  # first numeric token is face id
+                if len(tokens) > 5:
                     ngon_faces.append(f"{m}.f[{face_idx}]")
 
-            edge_count = cmds.polyEvaluate(m, edge=True) or 0
-            for edge_idx in range(edge_count):
-                edge_comp = f"{m}.e[{edge_idx}]"
-                edge_info = cmds.polyInfo(edge_comp, edgeToVertex=True) or []
-                if not edge_info:
-                    continue
-                # "EDGE   1:   3 7"
-                verts = [tok for tok in edge_info[0].replace(":", " ").split() if tok.isdigit()]
-                if len(verts) < 3:
-                    continue
-                v1 = f"{m}.vtx[{verts[-2]}]"
-                v2 = f"{m}.vtx[{verts[-1]}]"
-                p1 = cmds.pointPosition(v1, world=True)
-                p2 = cmds.pointPosition(v2, world=True)
-                length_sq = sum((p1[i] - p2[i]) ** 2 for i in range(3))
-                if length_sq <= 1e-12:
-                    zero_length_edges.append(edge_comp)
-
-            face_area = cmds.polyEvaluate(f"{m}.f[*]", area=True) or 0.0
-            if isinstance(face_area, list):
-                for idx, area in enumerate(face_area):
-                    if area <= 1e-12:
-                        zero_area_faces.append(f"{m}.f[{idx}]")
-            elif face_area <= 1e-12 and face_count > 0:
-                # fallback when Maya returns one total area value
-                zero_area_faces.extend([f"{m}.f[{i}]" for i in range(face_count)])
-
-            if not cmds.getAttr(m + ".visibility"):
-                hidden_meshes.append(m)
-
-            hist = cmds.listHistory(m, pruneDagObjects=True) or []
-            hist = [h for h in hist if cmds.nodeType(h) not in ("transform", "mesh", "groupId", "shadingEngine")]
-            if hist:
-                meshes_with_history.append(m)
-
-            t = cmds.xform(m, q=True, os=True, translation=True)
-            r = cmds.xform(m, q=True, os=True, rotation=True)
-            s = cmds.xform(m, q=True, r=True, scale=True)
-            if any(abs(v) > 1e-4 for v in (t + r)) or any(abs(v - 1.0) > 1e-4 for v in s):
-                non_identity.append(m)
-
-            shape = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
-            if shape:
-                parents = cmds.listRelatives(shape[0], allParents=True, fullPath=True) or []
-                if len(parents) > 1:
-                    instances.append(m)
-
-        if ngon_faces:
-            self.log("FAIL", "Topology", f"Faces avec plus de 4 côtés: {len(ngon_faces)}", ngon_faces[:200])
-            fail_count += 1
-        if lamina_items:
-            self.log("FAIL", "Topology", f"Lamina faces détectées sur {len(lamina_items)} mesh(es).", lamina_items)
-            fail_count += 1
         if non_manifold_items:
-            self.log("FAIL", "Topology", f"Non-manifold détecté sur {len(non_manifold_items)} mesh(es).", non_manifold_items)
-            fail_count += 1
-        if zero_length_edges:
-            self.log("FAIL", "Topology", f"Edges de longueur nulle détectées: {len(zero_length_edges)}", zero_length_edges[:200])
-            fail_count += 1
-        if zero_area_faces:
-            self.log("FAIL", "Topology", f"Faces avec aire nulle détectées: {len(zero_area_faces)}", zero_area_faces[:200])
-            fail_count += 1
-        if meshes_with_history:
-            self.log("WARNING", "Topology", f"Historique non supprimé sur {len(meshes_with_history)} mesh(es).", meshes_with_history)
-            warn_count += 1
-        if non_identity:
-            self.log("WARNING", "Topology", f"Transforms non gelées/non identitaires sur {len(non_identity)} mesh(es).", non_identity)
-            warn_count += 1
-        if hidden_meshes:
-            self.log("WARNING", "Topology", f"Géométrie cachée détectée: {len(hidden_meshes)} mesh(es).", hidden_meshes)
-            warn_count += 1
-        if instances:
-            self.log("WARNING", "Topology", f"Instances détectées: {len(set(instances))} mesh(es).", list(set(instances)))
-            warn_count += 1
+            self.log("FAIL", "Topology", f"Non-manifold détecté sur {len(non_manifold_items)} mesh(es).", non_manifold_items[:120])
+        if lamina_items:
+            self.log("FAIL", "Topology", f"Lamina faces détectées sur {len(lamina_items)} mesh(es).", lamina_items[:120])
+        if ngon_faces:
+            self.log("FAIL", "Topology", f"N-gons détectés: {len(ngon_faces)} face(s).", ngon_faces[:120])
 
-        high_root = self.get_high_root()
-        if high_root and "high_ma" in scope_keys:
-            descendants = cmds.listRelatives(high_root, allDescendents=True, fullPath=True) or []
-            non_mesh_desc = [d for d in descendants if cmds.nodeType(d) not in ("transform", "mesh")]
-            if non_mesh_desc:
-                self.log("INFO", "Topology", f"Objets non mesh sous High root: {len(non_mesh_desc)}", non_mesh_desc[:80])
-
-            empty_transforms = []
-            for tr in (cmds.listRelatives(high_root, allDescendents=True, fullPath=True, type="transform") or []):
-                children = cmds.listRelatives(tr, children=True, fullPath=True) or []
-                if not children:
-                    empty_transforms.append(tr)
-            if empty_transforms:
-                self.log("WARNING", "Topology", f"Transforms vides détectées: {len(empty_transforms)}", empty_transforms[:80])
-                warn_count += 1
-
-        if fail_count == 0 and warn_count == 0:
-            self.log("INFO", "Topology", "Aucun problème topologique majeur détecté.")
-            self.set_check_status("topology_checked", "OK")
-        elif fail_count == 0:
-            self.log("WARNING", "Topology", "Checks topologie terminés avec warnings.")
-            self.set_check_status("topology_checked", "PENDING")
-        else:
-            self.set_check_status("topology_checked", "FAIL")
+        ok = not non_manifold_items and not lamina_items and not ngon_faces
+        if ok:
+            self.log("INFO", "Topology", "Topology check OK (N-gons / non-manifold / lamina).")
+        self.set_check_status("topology_checked", "OK" if ok else "FAIL")
 
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
-        if scope_keys is None:
-            statuses: List[str] = []
-            self.log("INFO", "TextureSets", "----- Run Texture Sets (ordre: MA -> FBX -> Bake) -----")
-            for key, label in self._high_scope_sequence():
-                self.log("INFO", "TextureSets", f"━━ Étape: {label} ━━")
-                self.analyze_texture_sets(mode=mode, scope_keys=[key], source_label=label)
-                statuses.append(self.check_states["texture_sets_analyzed"]["status"])
-            final = "OK" if all(s == "OK" for s in statuses) else ("FAIL" if any(s == "FAIL" for s in statuses) else "PENDING")
-            self.set_check_status("texture_sets_analyzed", final)
-            return
-        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
-        scope_keys = resolution["scope_keys"]
-        meshes = resolution["meshes"]
-        per_scope_meshes = resolution["per_scope_meshes"]
-        texture_scope_roots = self._resolve_texture_scope_roots(resolution)
-        analysis_roots = texture_scope_roots["included_roots"]
-        primary_root = texture_scope_roots["primary_root"]
-        self._log_scope_resolution("TextureSets", resolution)
+        _ = (mode, scope_keys, source_label)
+        meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
         if not meshes:
-            self.log("FAIL", "TextureSets", f"Aucun objet trouvé pour {source_label or self._scope_label(scope_keys)}.")
+            self.log("FAIL", "Materials", "Aucun mesh High.ma trouvé.")
             self.set_check_status("texture_sets_analyzed", "FAIL")
             return
-        self.log("INFO", "TextureSets", f"Source analysée: {source_label or self._scope_label(scope_keys)}")
-        self.log("INFO", "TextureSets", "Root(s) résolus pour Texture Sets :")
-        if analysis_roots:
-            for root in analysis_roots:
-                self.log("INFO", "TextureSets", f"- {self._short_name(root)}")
-        else:
-            self.log("WARNING", "TextureSets", "- Aucun root explicite résolu pour le scope actif.")
 
-        excluded_roots = texture_scope_roots.get("excluded_roots", {})
-        excluded_lines: List[str] = []
-        for key in ["placeholder", "high_ma", "high_fbx", "bake_high"]:
-            for root in excluded_roots.get(key, []):
-                reason = "hors scope"
-                if key == "placeholder":
-                    reason = "placeholder / hors scope"
-                excluded_lines.append(f"- {self._short_name(root)} ({reason})")
-        if excluded_lines:
-            self.log("INFO", "TextureSets", "Root(s) exclus :")
-            for line in excluded_lines:
-                self.log("INFO", "TextureSets", line)
-
-        detected: Dict[str, Dict[str, object]] = {}
-        mode = (mode or "materials").lower().strip()
-        include_material = mode in {"material", "materials"}
-        include_groups = mode in {"groups", "group"}
-        mat_to_meshes: Dict[str, List[str]] = {}
-        if include_material:
-            for m in meshes:
-                shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
-                if not shapes:
-                    continue
-                shape = shapes[0]
-
-                sgs = cmds.listConnections(shape, type="shadingEngine") or []
-                if not sgs:
-                    mat_to_meshes.setdefault("<NO_MATERIAL>", []).append(m)
-                    continue
-
-                mats_for_mesh = set()
-                for sg in sgs:
-                    mats = cmds.listConnections(sg + ".surfaceShader") or []
-                    if mats:
-                        mats_for_mesh.update(mats)
-                    else:
-                        mats_for_mesh.add("<UNBOUND_SURFACESHADER>")
-
-                for mat in mats_for_mesh:
-                    mat_to_meshes.setdefault(mat, []).append(m)
-
-            for mat, mat_meshes in mat_to_meshes.items():
-                detected[f"MAT::{mat}"] = {
-                    "name": mat,
-                    "display_name": self._strip_namespaces_from_name(mat),
-                    "method": "material",
-                    "objects": sorted(set(mat_meshes)),
-                }
-
-        group_method_log_lines: List[str] = []
-        if include_groups:
-            if mode in {"groups", "group"}:
-                group_sets, group_method_log_lines = self._compute_root_children_texture_sets(analysis_roots, meshes)
-                detected.update(group_sets)
-            else:
-                direct_children = [m for m in meshes if cmds.listRelatives(m, parent=True, fullPath=True)]
-                grouped: Dict[str, List[str]] = {}
-                for mesh in direct_children:
-                    parent = cmds.listRelatives(mesh, parent=True, fullPath=True) or []
-                    if not parent:
-                        continue
-                    grouped.setdefault(parent[0], []).append(mesh)
-                for child, child_meshes in grouped.items():
-                    if child_meshes:
-                        key = f"GRP::{self._short_name(child)}"
-                        display_name = self._clean_texture_set_display_name(self._short_name(child), primary_root)
-                        detected[key] = {
-                            "name": self._strip_namespaces_from_name(self._short_name(child)),
-                            "display_name": display_name,
-                            "method": "group",
-                            "objects": sorted(set(child_meshes)),
-                        }
-
-        total_quads = 0
-        mesh_quad_cache: Dict[str, Tuple[int, int]] = {}
+        mat_faces: Dict[str, int] = {}
+        mat_objects: Dict[str, List[str]] = {}
+        total_faces = 0
         for mesh in meshes:
-            quad_count, _ = self._mesh_quad_and_face_count(mesh)
-            mesh_quad_cache[mesh] = (quad_count, 0)
-            total_quads += quad_count
+            fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
+            total_faces += fcount
+            for face_idx in range(fcount):
+                face_comp = f"{mesh}.f[{face_idx}]"
+                sgs = cmds.listConnections(face_comp, type="shadingEngine") or []
+                mats: List[str] = []
+                for sg in sgs:
+                    mats.extend(cmds.listConnections(sg + ".surfaceShader") or [])
+                mat = mats[0] if mats else "<NO_MATERIAL>"
+                mat_faces[mat] = mat_faces.get(mat, 0) + 1
+                mat_objects.setdefault(mat, []).append(mesh)
 
-        for set_key, data in detected.items():
-            unique_meshes = sorted(set(data.get("objects", [])))
-            set_quads = sum(mesh_quad_cache.get(mesh, (0, 0))[0] for mesh in unique_meshes)
-            percentage = (float(set_quads) / float(total_quads) * 100.0) if total_quads else 0.0
-            data["quad_count"] = int(set_quads)
-            data["percent_of_total"] = percentage
-            data["objects"] = unique_meshes
-            data["sources"] = self._infer_set_sources(unique_meshes, per_scope_meshes)
+        self.detected_texture_sets = {}
+        for mat, count in sorted(mat_faces.items(), key=lambda x: x[1], reverse=True):
+            pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
+            key = f"MAT::{mat}"
+            self.detected_texture_sets[key] = {
+                "name": mat,
+                "display_name": self._strip_namespaces_from_name(mat),
+                "objects": sorted(set(mat_objects.get(mat, []))),
+                "percent_of_total": pct,
+                "face_count": count,
+            }
+            self.log("INFO", "Materials", f"{self._strip_namespaces_from_name(mat)} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
 
-        self.detected_texture_sets = detected
-        self.last_texture_scope = scope_keys[:]
-        self.texture_set_visibility = {k: self.texture_set_visibility.get(k, True) for k in self.detected_texture_sets.keys()}
-        for set_key in self.detected_texture_sets:
-            self.texture_set_visibility.setdefault(set_key, True)
         self._refresh_texture_sets_list_ui()
-
-        mode_label = {"groups": "groupes", "group": "groupes", "material": "matériaux", "materials": "matériaux"}.get(mode, mode)
-        if group_method_log_lines:
-            for line in group_method_log_lines:
-                self.log("INFO", "TextureSets", line)
-        if mode in {"groups", "group"}:
-            cleaned_names = [
-                data.get("display_name", data.get("name", set_key))
-                for set_key, data in sorted(self.detected_texture_sets.items())
-            ]
-            self.log("INFO", "TextureSets", f"Nombre de texture sets détectés (1er niveau): {len(cleaned_names)}")
-            if cleaned_names:
-                self.log("INFO", "TextureSets", f"Texture sets lisibles: {', '.join(cleaned_names)}")
-        self.log("INFO", "TextureSets", f"Texture sets détectés ({mode_label}): {len(self.detected_texture_sets)}")
-        self.log("INFO", "TextureSets", f"Total High root: {total_quads} quads")
-        for set_key in sorted(self.detected_texture_sets.keys()):
-            data = self.detected_texture_sets[set_key]
-            objs = data.get("objects", [])
-            display_name = data.get("display_name", data.get("name", set_key))
-            method = data.get("method", "unknown")
-            quad_count = int(data.get("quad_count", 0))
-            percent = float(data.get("percent_of_total", 0.0))
-            self.log(
-                "INFO",
-                "TextureSets",
-                f"{display_name} | méthode={method} | {quad_count} quads | {percent:.1f}% du High | {len(objs)} objet(s)",
-                objs[:150],
-            )
-
-        if "<NO_MATERIAL>" in mat_to_meshes or "<UNBOUND_SURFACESHADER>" in mat_to_meshes:
-            self.log("WARNING", "TextureSets", "Des meshes sans matériau valide ont été détectés.")
-            self.set_check_status("texture_sets_analyzed", "PENDING")
-        else:
-            self.set_check_status("texture_sets_analyzed", "OK" if self.detected_texture_sets else "PENDING")
-        if not self.detected_texture_sets:
-            self.log("WARNING", "TextureSets", "Aucun texture set exploitable détecté via la méthode active.")
-        else:
-            self.log("INFO", "TextureSets", "Utilisez la liste et Hide/Show pour isoler visuellement chaque texture set.")
+        self.set_check_status("texture_sets_analyzed", "OK" if self.detected_texture_sets else "FAIL")
 
     def check_vertex_colors(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
-        if scope_keys is None:
-            statuses: List[str] = []
-            self.log("INFO", "VertexColor", "----- Run Vertex Colors (ordre: MA -> FBX -> Bake) -----")
-            for key, label in self._high_scope_sequence():
-                self.log("INFO", "VertexColor", f"━━ Étape: {label} ━━")
-                self.check_vertex_colors(scope_keys=[key], source_label=label)
-                statuses.append(self.check_states["vertex_colors_checked"]["status"])
-            final = "OK" if all(s == "OK" for s in statuses) else "FAIL"
-            self.set_check_status("vertex_colors_checked", final)
-            return
-        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
-        scope_keys = resolution["scope_keys"]
-        meshes = resolution["meshes"]
-        self._log_scope_resolution("VertexColor", resolution)
+        _ = (scope_keys, source_label)
+        meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
         if not meshes:
-            self.log("FAIL", "VertexColor", f"Aucun objet trouvé pour {source_label or self._scope_label(scope_keys)}.")
+            self.log("FAIL", "VertexColor", "Aucun mesh High.ma trouvé.")
             self.set_check_status("vertex_colors_checked", "FAIL")
             return
-        self.log("INFO", "VertexColor", f"Source analysée: {source_label or self._scope_label(scope_keys)}")
 
-        with_vc = []
-        without_vc = []
-        partial_missing: Dict[str, int] = {}
-
+        no_color_set: List[str] = []
+        partial: Dict[str, int] = {}
         for m in meshes:
             shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
             if not shapes:
                 continue
             shape = shapes[0]
-            color_sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
-            if color_sets:
-                with_vc.append(m)
-                face_count = int(cmds.polyEvaluate(shape, face=True) or 0)
-                missing_faces = 0
-                for face_idx in range(face_count):
-                    face_comp = f"{shape}.f[{face_idx}]"
-                    rgb = cmds.polyColorPerVertex(face_comp, query=True, rgb=True) or []
-                    if not rgb:
-                        missing_faces += 1
-                if missing_faces > 0:
-                    partial_missing[m] = missing_faces
-            else:
-                without_vc.append(m)
+            sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
+            if not sets:
+                no_color_set.append(m)
+                continue
+            fcount = int(cmds.polyEvaluate(shape, face=True) or 0)
+            missing = 0
+            for face_idx in range(fcount):
+                rgb = cmds.polyColorPerVertex(f"{shape}.f[{face_idx}]", query=True, rgb=True) or []
+                if not rgb:
+                    missing += 1
+            if missing:
+                partial[m] = missing
 
-        self.log("INFO", "VertexColor", f"Meshes avec vertex colors: {len(with_vc)}", with_vc[:150])
-        self.log("INFO", "VertexColor", f"Meshes sans vertex colors: {len(without_vc)}", without_vc[:150])
+        if no_color_set:
+            self.log("FAIL", "VertexColor", f"Meshes sans color set: {len(no_color_set)}", no_color_set[:100])
+        if partial:
+            self.log("FAIL", "VertexColor", f"Meshes avec faces sans vertex color: {len(partial)}")
+            for m, cnt in list(sorted(partial.items()))[:30]:
+                self.log("INFO", "VertexColorDetail", f"{self._short_name(m)}: {cnt} face(s) sans color", [m])
 
-        if partial_missing:
-            self.log("FAIL", "VertexColor", f"Faces sans vertex color détectées sur {len(partial_missing)} mesh(es).")
-            for mesh, count in sorted(partial_missing.items())[:50]:
-                self.log("INFO", "VertexColorDetail", f"{mesh}: {count} face(s) sans vertex color", [mesh])
-
-        if without_vc:
-            self.log("FAIL", "VertexColor", "Certains meshes n'ont pas de vertex color set.", without_vc)
-
-        if without_vc or partial_missing:
-            self.set_check_status("vertex_colors_checked", "FAIL")
-        else:
-            self.log("INFO", "VertexColor", "Tous les meshes analysés possèdent au moins un color set.")
-            self.set_check_status("vertex_colors_checked", "OK")
+        ok = not no_color_set and not partial
+        if ok:
+            self.log("INFO", "VertexColor", f"Vertex colors OK sur {len(meshes)} mesh(es) High.ma.")
+        self.set_check_status("vertex_colors_checked", "OK" if ok else "FAIL")
 
     def display_vertex_colors(self) -> None:
-        targets: List[str] = []
-        for key, _ in self._high_scope_sequence():
-            resolution = self.resolve_scope_targets(scope_keys=[key])
-            targets.extend(resolution["meshes"])
-        targets = sorted(set(targets))
+        targets, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
         if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet High MA/FBX/Bake trouvé. Action annulée.")
+            self.log("WARNING", "VertexColor", "Aucun high mesh High.ma trouvé.")
             return
-
-        shown = []
         for tr in targets:
             shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            if not shapes:
-                continue
             for shape in shapes:
                 try:
                     cmds.setAttr(shape + ".displayColors", 1)
-                    shown.append(tr)
                 except RuntimeError:
-                    continue
-
+                    pass
         cmds.polyOptions(colorShadedDisplay=True)
-        self.log("INFO", "VertexColor", f"Display Vertex Color activé sur {len(set(shown))} objet(s) (High .ma + High .fbx + High _bake.ma).", list(sorted(set(shown)))[:150])
+        self.log("INFO", "VertexColor", f"Display Vertex Color appliqué sur {len(targets)} mesh(es) High.ma.")
 
     def hide_vertex_colors(self) -> None:
-        targets: List[str] = []
-        for key, _ in self._high_scope_sequence():
-            resolution = self.resolve_scope_targets(scope_keys=[key])
-            targets.extend(resolution["meshes"])
-        targets = sorted(set(targets))
+        targets, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
         if not targets:
-            self.log("WARNING", "VertexColor", "Aucun objet High MA/FBX/Bake trouvé. Action annulée.")
+            self.log("WARNING", "VertexColor", "Aucun high mesh High.ma trouvé.")
             return
-
-        hidden = []
         for tr in targets:
             shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            if not shapes:
-                continue
             for shape in shapes:
                 try:
                     cmds.setAttr(shape + ".displayColors", 0)
-                    hidden.append(tr)
                 except RuntimeError:
-                    continue
-
-        self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(set(hidden))} objet(s) (High .ma + High .fbx + High _bake.ma).", list(sorted(set(hidden)))[:150])
+                    pass
+        self.log("INFO", "VertexColor", f"Hide Vertex Color appliqué sur {len(targets)} mesh(es) High.ma.")
 
     def isolate_meshes_without_vertex_color(self) -> None:
         high_root = self.get_high_root()
@@ -2473,33 +2046,27 @@ class HighPolyReviewTool:
             self.log("INFO", "Naming", "Naming final OK (aucun suffix _low détecté).")
 
     def run_low_review_checks(self) -> None:
-        self.log("INFO", "RunAll", f"Lancement des checks Low Review (asset={self.active_asset or 'N/A'}).")
-        self.run_topology_checks(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review")
-        self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake")
-        self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture")
-        self.check_vertex_colors(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review")
-        self.analyze_texture_sets(mode="materials", scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review")
-        self.check_placeholder_match(scope_keys=["placeholder", "low_fbx", "bake_low"], source_label="Low Review")
-        self.log("INFO", "RunAll", "Checks Low Review terminés.")
+        self.log("INFO", "RunAll", "Low Review désactivée dans cette version High-only.")
 
     def run_final_review_checks(self) -> None:
-        self.log("INFO", "RunAll", f"Lancement des checks Final Review (asset={self.active_asset or 'N/A'}).")
-        self.run_topology_checks(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review")
-        self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake")
-        self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture")
-        self.check_vertex_colors(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review")
-        self.analyze_texture_sets(mode="materials", scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review")
-        self.check_final_naming_no_low_suffix(scope_keys=["final_asset_ma", "final_asset_fbx"])
-        self.log("INFO", "RunAll", "Checks Final Review terminés.")
+        self.log("INFO", "RunAll", "Final Review désactivée dans cette version High-only.")
 
     def run_all_checks(self) -> None:
-        self.log("INFO", "RunAll", "Lancement des steps High Review...")
-        self.check_placeholder_match(scope_keys=["placeholder", "high_ma"], source_label="High Review")
+        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 08) -----")
+        if not (self.context.get("ma_meshes") or []):
+            self.load_ma_scene()
+
+        self.check_placeholder_match()
+        self.log("INFO", "DesignKit", "Step 03 manuel: vérifiez le design kit puis cliquez 'Mark Step as Reviewed'.")
         self.run_topology_checks()
         self.check_vertex_colors()
         self.scan_namespaces()
         self.analyze_texture_sets(mode="materials")
-        self.log("INFO", "RunAll", "Checks High Poly terminés.")
+
+        if not (self.context.get("fbx_meshes") or []):
+            self.load_fbx_into_scene()
+        self.compare_ma_vs_fbx()
+        self.log("INFO", "RunAll", "Run All High Steps terminé.")
 
     def build_report_payload(self) -> Dict:
         return {
@@ -2529,10 +2096,8 @@ class HighPolyReviewTool:
         }
 
     def _detect_asset_name(self) -> str:
-        if self.active_asset:
-            return self.active_asset
-        if self.paths.get("ma"):
-            return os.path.splitext(os.path.basename(self.paths["ma"]))[0]
+        if self.paths.get("high_ma"):
+            return os.path.splitext(os.path.basename(self.paths["high_ma"]))[0]
         scene = cmds.file(query=True, sceneName=True) or ""
         if scene:
             return os.path.splitext(os.path.basename(scene))[0]
