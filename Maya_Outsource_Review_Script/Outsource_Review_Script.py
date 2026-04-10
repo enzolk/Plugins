@@ -27,9 +27,13 @@ MAX_UI_TEXT_LENGTH = 90
 MAX_MENU_LABEL_LENGTH = 72
 ROOT_SUFFIXES = {
     "high": "_high",
+    "low": "_low",
     "placeholder": "_placeholder",
 }
 PLACEHOLDER_TOKEN = "placeholder"
+LOW_UV_DISTORTION_THRESHOLD = 1.6
+LOW_MAP2_TARGET_TD = 20.48
+LOW_MAP2_TOLERANCE = 0.50
 
 
 @dataclass
@@ -53,29 +57,43 @@ class HighPolyReviewTool:
             "high_ma": "",
             "high_fbx": "",
             "bake_ma": "",
+            "low_fbx": "",
+            "final_scene_ma": "",
         }
 
         self.detected_files: Dict[str, List[str]] = {
             "high_ma": [],
             "high_fbx": [],
             "bake_ma": [],
+            "low_fbx": [],
+            "final_scene_ma": [],
         }
 
         self.detected_roots: Dict[str, List[str]] = {
             "high": [],
             "placeholder": [],
+            "low": [],
+            "bake_high": [],
+            "bake_low": [],
+            "final_asset_ma": [],
         }
 
         self.context = {
             "fbx_namespace": "High_FBX_File",
             "ma_namespace": "High_Ma_File",
             "bake_ma_namespace": "Bake_MA_File",
+            "low_fbx_namespace": "Low_FBX_File",
+            "final_asset_ma_namespace": "Final_Asset_MA_File",
             "fbx_nodes": [],
             "fbx_meshes": [],
             "ma_nodes": [],
             "ma_meshes": [],
             "bake_ma_nodes": [],
             "bake_ma_meshes": [],
+            "low_fbx_nodes": [],
+            "low_fbx_meshes": [],
+            "final_asset_ma_nodes": [],
+            "final_asset_ma_meshes": [],
         }
 
         self.check_states = {
@@ -87,6 +105,13 @@ class HighPolyReviewTool:
             "topology_checked": {"status": "PENDING", "mode": "AUTO"},
             "texture_sets_analyzed": {"status": "PENDING", "mode": "AUTO"},
             "vertex_colors_checked": {"status": "PENDING", "mode": "AUTO"},
+            "low_topology_checked": {"status": "PENDING", "mode": "AUTO"},
+            "low_namespaces_checked": {"status": "PENDING", "mode": "AUTO"},
+            "low_materials_checked": {"status": "PENDING", "mode": "AUTO"},
+            "low_uv_map1_checked": {"status": "PENDING", "mode": "AUTO"},
+            "low_uv_map2_checked": {"status": "PENDING", "mode": "AUTO"},
+            "low_bake_compared": {"status": "PENDING", "mode": "AUTO"},
+            "low_final_compared": {"status": "PENDING", "mode": "AUTO"},
         }
 
         self.check_ui_map = {
@@ -98,6 +123,13 @@ class HighPolyReviewTool:
             "topology_checked": "check_topology",
             "texture_sets_analyzed": "check_texturesets",
             "vertex_colors_checked": "check_vtx",
+            "low_topology_checked": "check_low_topology",
+            "low_namespaces_checked": "check_low_ns",
+            "low_materials_checked": "check_low_materials",
+            "low_uv_map1_checked": "check_low_uv_map1",
+            "low_uv_map2_checked": "check_low_uv_map2",
+            "low_bake_compared": "check_low_bake",
+            "low_final_compared": "check_low_final",
         }
 
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
@@ -135,7 +167,7 @@ class HighPolyReviewTool:
 
         self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_file_section()
-        self._build_guided_high_review_section()
+        self._build_review_tabs_section()
         self._build_results_section()
         self._build_notes_section()
         self._build_summary_section()
@@ -268,6 +300,86 @@ class HighPolyReviewTool:
     def _build_guided_high_review_section(self) -> None:
         self._build_technical_checks_section()
         self._build_global_action_section()
+
+    def _build_review_tabs_section(self) -> None:
+        cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=8)
+        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6)
+
+        high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_guided_high_review_section()
+        cmds.setParent("..")
+
+        low_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_guided_low_review_section()
+        cmds.setParent("..")
+
+        cmds.tabLayout(tabs, edit=True, tabLabel=((high_tab, "Review 01 — High"), (low_tab, "Review 02 — Low")))
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _build_guided_low_review_section(self) -> None:
+        cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 01 — Load Low.fbx", align="left")
+        self.ui["low_fbx_status"] = cmds.text(label="Detected Low.fbx: not scanned", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        self.ui["low_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("low_fbx"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["low_fbx_menu"])
+        cmds.button(label="Load / Reference Low.fbx", height=26, command=lambda *_: self.load_low_fbx_scene())
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 02 — Topology Check", align="left")
+        self._build_check_row("check_low_topology", "Run Topology", self.run_low_topology_checks)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 03 — Namespaces", align="left")
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui["check_low_ns"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Only low review namespaces should remain", align="left")
+        cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_low_namespaces())
+        cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_low_namespaces())
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 04 — Materials / Texture Sets", align="left")
+        self._build_check_row("check_low_materials", "Analyze Materials", self.analyze_low_materials)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 05 — UV Check map1", align="left")
+        self._build_check_row("check_low_uv_map1", "Run UV Map1 Check", self.run_low_uv_map1_check)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 06 — UV map2 / Texel Density", align="left")
+        self._build_check_row("check_low_uv_map2", "Run Map2 Density Check", self.run_low_map2_density_check)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 07 — Compare Low.fbx vs Bake Scene Low", align="left")
+        self.ui["bake_ma_status_low"] = cmds.text(label="Detected Bake.ma: not scanned", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["bake_ma_menu_low"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("bake_ma", menu_key="bake_ma_menu_low"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu_low"])
+        cmds.button(label="Load / Reference Bake.ma", height=26, command=lambda *_: self.load_bake_ma_scene())
+        self.ui["check_low_bake"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.setParent("..")
+        cmds.button(label="Run Compare Bake Low", height=26, command=lambda *_: self.compare_low_vs_bake_low())
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 08 — Compare Low.fbx vs Final Scene Asset", align="left")
+        self.ui["final_scene_ma_status"] = cmds.text(label="Detected Final Scene.ma: not scanned", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["final_scene_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_scene_ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["final_scene_ma_menu"])
+        cmds.button(label="Load / Reference Final Scene.ma", height=26, command=lambda *_: self.load_final_asset_ma_scene())
+        self.ui["check_low_final"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.setParent("..")
+        cmds.button(label="Run Compare Final", height=26, command=lambda *_: self.compare_low_vs_final_asset())
+
+        cmds.setParent("..")
+        cmds.setParent("..")
 
     def _build_check_row(self, check_key_ui: str, label: str, command) -> None:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -462,6 +574,9 @@ class HighPolyReviewTool:
             ("high_ma", "high_ma_status", "High MA"),
             ("high_fbx", "high_fbx_status", "High FBX"),
             ("bake_ma", "bake_ma_status", "Bake MA"),
+            ("low_fbx", "low_fbx_status", "Low FBX"),
+            ("bake_ma", "bake_ma_status_low", "Bake MA"),
+            ("final_scene_ma", "final_scene_ma_status", "Final Scene MA"),
         ]
 
         for file_key, status_widget, label in status_map:
@@ -474,13 +589,14 @@ class HighPolyReviewTool:
             if status_widget in self.ui and cmds.text(self.ui[status_widget], exists=True):
                 cmds.text(self.ui[status_widget], e=True, label=text)
 
-    def on_detected_file_selected(self, file_key: str) -> None:
+    def on_detected_file_selected(self, file_key: str, menu_key: Optional[str] = None) -> None:
         files = self.detected_files[file_key]
         if not files:
             self.paths[file_key] = ""
             return
 
-        index = cmds.optionMenu(self.ui[f"{file_key}_menu"], q=True, select=True) - 1
+        widget_key = menu_key or f"{file_key}_menu"
+        index = cmds.optionMenu(self.ui[widget_key], q=True, select=True) - 1
         index = max(0, min(index, len(files) - 1))
         self.paths[file_key] = files[index]
         self.log("INFO", "Scan", f"{file_key.upper()} sélectionné: {self._basename_from_path(self.paths[file_key])}")
@@ -600,6 +716,8 @@ class HighPolyReviewTool:
             "high_fbx": [],
             "high_ma": [],
             "bake_ma": [],
+            "low_fbx": [],
+            "final_scene_ma": [],
         }
 
         for dirpath, _, filenames in os.walk(root):
@@ -609,11 +727,13 @@ class HighPolyReviewTool:
                 if name_lower.endswith("_bake.ma"):
                     found_files["bake_ma"].append(full_path)
                 elif name_lower.endswith("_low.fbx"):
-                    continue
+                    found_files["low_fbx"].append(full_path)
                 elif name_lower.endswith("_high.fbx"):
                     found_files["high_fbx"].append(full_path)
                 elif name_lower.endswith("_high.ma"):
                     found_files["high_ma"].append(full_path)
+                elif name_lower.endswith(".ma"):
+                    found_files["final_scene_ma"].append(full_path)
 
         for key in found_files:
             found_files[key].sort()
@@ -621,18 +741,28 @@ class HighPolyReviewTool:
         for key, files in found_files.items():
             self.detected_files[key] = files
 
-        for file_key in ["high_ma", "high_fbx", "bake_ma"]:
+        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
             if f"{file_key}_menu" in self.ui:
                 self._populate_file_option_menu(file_key)
+        if "bake_ma_menu_low" in self.ui:
+            self._clear_option_menu(self.ui["bake_ma_menu_low"])
+            for p in self.detected_files["bake_ma"] or []:
+                cmds.menuItem(label=os.path.basename(p), parent=self.ui["bake_ma_menu_low"])
+            if not self.detected_files["bake_ma"]:
+                cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu_low"])
         self.paths["high_ma"] = self.paths.get("high_ma", "")
         self.paths["high_fbx"] = self.paths.get("high_fbx", "")
         self.paths["bake_ma"] = self.paths.get("bake_ma", "")
+        self.paths["low_fbx"] = self.paths.get("low_fbx", "")
+        self.paths["final_scene_ma"] = self.paths.get("final_scene_ma", "")
         self.refresh_detected_file_labels()
 
         scan_logs = [
             ("high_ma", "Aucun fichier High MA (*_HIGH.ma) trouvé."),
             ("high_fbx", "Aucun fichier High FBX (*_HIGH.fbx) trouvé."),
             ("bake_ma", "Aucun fichier Bake MA (*_BAKE.ma) trouvé."),
+            ("low_fbx", "Aucun fichier Low FBX (*_LOW.fbx) trouvé."),
+            ("final_scene_ma", "Aucune final scene MA (fichier .ma sans suffixe) trouvée."),
         ]
         for file_key, warning_msg in scan_logs:
             count = len(found_files[file_key])
@@ -1704,7 +1834,48 @@ class HighPolyReviewTool:
         self._log_root_detection("high", "High(FBX)")
 
     def load_low_fbx_scene(self) -> None:
-        self.log("INFO", "Workflow", "Low review désactivée dans cette version High-only.")
+        path = self.paths.get("low_fbx", "")
+        if not path:
+            self.log("FAIL", "LoadLow", "Aucun fichier _LOW.fbx sélectionné (scan requis).")
+            return
+        if not os.path.isfile(path):
+            self.log("FAIL", "LoadLow", f"Fichier _LOW.fbx introuvable: {path}")
+            return
+
+        unload_map = [
+            ("ma_namespace", "High.ma"),
+            ("fbx_namespace", "High.fbx"),
+            ("bake_ma_namespace", "Bake.ma"),
+            ("final_asset_ma_namespace", "Final Scene.ma"),
+        ]
+        unloaded_labels = []
+        for ns_key, label in unload_map:
+            ns = self.context.get(ns_key, "")
+            if ns and cmds.namespace(exists=ns):
+                if self._unload_namespace_references(ns):
+                    unloaded_labels.append(label)
+        self.log("INFO", "LoadLow", f"Références déchargées avant chargement : {', '.join(unloaded_labels) if unloaded_labels else 'Aucune'}")
+
+        namespace = self.context["low_fbx_namespace"]
+        if cmds.namespace(exists=namespace):
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError:
+                pass
+
+        before = set(cmds.ls(long=True) or [])
+        cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        after = set(cmds.ls(long=True) or [])
+        new_nodes = sorted(list(after - before))
+        self.context["low_fbx_nodes"] = new_nodes
+        self.context["low_fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
+        self.paths["low_fbx"] = path
+        self.detected_roots["low"] = self._find_root_candidates("low", namespace=namespace)
+        self.log("INFO", "LoadLow", f"Low.fbx référencé : {self._basename_from_path(path)}")
+        self.log("INFO", "LoadLow", f"Namespace utilisé : {namespace}")
+        self.log("INFO", "LoadLow", f"Meshes importés : {len(self.context['low_fbx_meshes'])}")
+        self.log("INFO", "LoadLow", f"Low roots détectés : {self._preview_list(self.detected_roots['low'], max_items=20)}")
+        self.refresh_root_ui()
 
     def load_bake_ma_scene(self) -> None:
         path = self.paths.get("bake_ma", "")
@@ -1752,7 +1923,35 @@ class HighPolyReviewTool:
         self._log_root_detection("bake_low", "Bake Low")
 
     def load_final_asset_ma_scene(self) -> None:
-        self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
+        path = self.paths.get("final_scene_ma", "")
+        if not path:
+            self.log("FAIL", "LoadFinal", "Aucun fichier Final Scene.ma sélectionné (scan requis).")
+            return
+        if not os.path.isfile(path):
+            self.log("FAIL", "LoadFinal", f"Fichier Final Scene.ma introuvable: {path}")
+            return
+
+        namespace = self.context["final_asset_ma_namespace"]
+        if cmds.namespace(exists=namespace):
+            self._unload_namespace_references(namespace)
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError:
+                pass
+
+        before = set(cmds.ls(long=True) or [])
+        cmds.file(path, reference=True, type="mayaAscii", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        after = set(cmds.ls(long=True) or [])
+        new_nodes = sorted(list(after - before))
+        self.context["final_asset_ma_nodes"] = new_nodes
+        self.context["final_asset_ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
+        self.paths["final_scene_ma"] = path
+        self.detected_roots["final_asset_ma"] = self._find_root_candidates("final", namespace=namespace)
+        self.log("INFO", "LoadFinal", f"Final Scene référencée : {self._basename_from_path(path)}")
+        self.log("INFO", "LoadFinal", f"Namespace utilisé : {namespace}")
+        self.log("INFO", "LoadFinal", f"Meshes importés : {len(self.context['final_asset_ma_meshes'])}")
+        self.log("INFO", "LoadFinal", f"Final roots détectés : {self._preview_list(self.detected_roots['final_asset_ma'], max_items=20)}")
+        self.refresh_root_ui()
 
     def load_final_asset_fbx_scene(self) -> None:
         self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
@@ -1901,6 +2100,112 @@ class HighPolyReviewTool:
         ok = presence_ok and topo_ok and uv_ok
         self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("ma_bake_compared", "OK" if ok else "FAIL")
+
+    def _collect_low_meshes(self) -> List[str]:
+        return self._collect_mesh_transforms_in_namespace(self.context["low_fbx_namespace"], exclude_placeholder_named=True)[0]
+
+    def run_low_topology_checks(self) -> None:
+        meshes = self._collect_low_meshes()
+        self.log("INFO", "LowTopology", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "LowTopology", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowTopology", f"Meshes analysés : {len(meshes)}")
+        if not meshes:
+            self.log("FAIL", "LowTopology", "Aucun mesh LOW chargé.")
+            self.set_check_status("low_topology_checked", "FAIL")
+            return
+
+        non_manifold_items: List[str] = []
+        lamina_items: List[str] = []
+        ngon_faces: List[str] = []
+        for m in meshes:
+            if (cmds.polyInfo(m, nonManifoldVertices=True) or []) or (cmds.polyInfo(m, nonManifoldEdges=True) or []):
+                non_manifold_items.append(m)
+            if cmds.polyInfo(m, laminaFaces=True) or []:
+                lamina_items.append(m)
+            face_count = int(cmds.polyEvaluate(m, face=True) or 0)
+            for face_idx in range(face_count):
+                vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
+                tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
+                if len(tokens) > 5:
+                    ngon_faces.append(f"{m}.f[{face_idx}]")
+
+        self.log("INFO" if not ngon_faces else "FAIL", "LowTopology", f"N-gons : {'OK' if not ngon_faces else f'FAIL ({len(ngon_faces)} faces)'}")
+        self.log("INFO" if not non_manifold_items else "FAIL", "LowTopology", f"Non-manifold : {'OK' if not non_manifold_items else f'FAIL ({len(non_manifold_items)} mesh(es))'}")
+        self.log("INFO" if not lamina_items else "FAIL", "LowTopology", f"Lamina faces : {'OK' if not lamina_items else f'FAIL ({len(lamina_items)} mesh(es))'}")
+        ok = not ngon_faces and not non_manifold_items and not lamina_items
+        self.log("INFO" if ok else "FAIL", "LowTopology", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_topology_checked", "OK" if ok else "FAIL")
+
+    def _scan_namespaces_with_allowed(self, allowed: List[str]) -> List[str]:
+        dag_ns: Set[str] = set()
+        for node in cmds.ls(long=True) or []:
+            dag_ns.update(self._extract_namespaces_from_path(node))
+        all_ns = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
+        dag_ns.update({n for n in all_ns if n and n not in {":", "UI", "shared"}})
+        out = []
+        for ns in sorted(dag_ns):
+            if ns in {"UI", "shared", ":"}:
+                continue
+            if any(ns == ok or ns.startswith(ok + ":") for ok in allowed):
+                continue
+            out.append(ns)
+        return out
+
+    def scan_low_namespaces(self) -> None:
+        allowed = [self.context["low_fbx_namespace"]]
+        invalid = self._scan_namespaces_with_allowed(allowed)
+        self.last_scanned_namespaces = invalid[:]
+        self.log("INFO", "LowNamespace", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "LowNamespace", f"Namespaces autorisés : {', '.join(allowed)}")
+        self.log("INFO", "LowNamespace", f"Namespaces parasites détectés : {len(invalid)}")
+        if invalid:
+            self.log("WARNING", "LowNamespace", f"Liste : {', '.join(invalid)}")
+        ok = not invalid
+        self.log("INFO" if ok else "FAIL", "LowNamespace", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_namespaces_checked", "OK" if ok else "FAIL")
+
+    def remove_low_namespaces(self) -> None:
+        removable = self.last_scanned_namespaces[:]
+        for ns in sorted(removable, key=lambda n: n.count(":"), reverse=True):
+            try:
+                cmds.namespace(removeNamespace=ns, mergeNamespaceWithRoot=True)
+            except RuntimeError as exc:
+                self.log("WARNING", "LowNamespace", f"Suppression impossible pour {ns}: {exc}")
+        self.scan_low_namespaces()
+
+    def analyze_low_materials(self) -> None:
+        meshes = self._collect_low_meshes()
+        self.log("INFO", "LowMaterials", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "LowMaterials", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowMaterials", f"Meshes analysés : {len(meshes)}")
+        if not meshes:
+            self.log("FAIL", "LowMaterials", "Aucun mesh LOW chargé.")
+            self.set_check_status("low_materials_checked", "FAIL")
+            return
+        mat_faces: Dict[str, int] = {}
+        total_faces = 0
+        for mesh in meshes:
+            fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
+            total_faces += fcount
+            for i in range(fcount):
+                mats = cmds.ls(cmds.listConnections(f"{mesh}.f[{i}]", type="shadingEngine") or [], materials=True) or ["<NO_MATERIAL>"]
+                mat = mats[0]
+                mat_faces[mat] = mat_faces.get(mat, 0) + 1
+        valid = 0
+        invalid = 0
+        for mat, count in sorted(mat_faces.items(), key=lambda x: x[1], reverse=True):
+            pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
+            display = self._strip_namespaces_from_name(mat)
+            has_prefix = display.startswith("QDS_")
+            valid += 1 if has_prefix else 0
+            invalid += 0 if has_prefix else 1
+            self.log("INFO" if has_prefix else "FAIL", "LowMaterials", f"{display} | {pct:.2f}% faces | Prefix QDS_: {'OK' if has_prefix else 'FAIL'}")
+        self.log("INFO", "LowMaterials", f"Materials détectés : {len(mat_faces)}")
+        self.log("INFO", "LowMaterials", f"Materials avec prefix QDS_ valide : {valid}")
+        self.log("INFO", "LowMaterials", f"Materials invalides : {invalid}")
+        ok = invalid == 0 and len(mat_faces) > 0
+        self.log("INFO" if ok else "FAIL", "LowMaterials", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_materials_checked", "OK" if ok else "FAIL")
 
     def scan_namespaces(self) -> None:
         user_ns = self._get_scan_namespaces()
@@ -2237,8 +2542,171 @@ class HighPolyReviewTool:
         else:
             self.log("INFO", "Naming", "Naming final OK (aucun suffix _low détecté).")
 
+    def _uv_set_on_shape(self, shape: str, uv_set: str) -> bool:
+        sets = cmds.polyUVSet(shape, q=True, allUVSets=True) or []
+        return uv_set in sets
+
+    def _mesh_uv_distortion_ratio(self, mesh: str, uv_set: str = "map1") -> Optional[float]:
+        shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
+        if not shape or not self._uv_set_on_shape(shape, uv_set):
+            return None
+        try:
+            cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+        except RuntimeError:
+            return None
+        face_count = int(cmds.polyEvaluate(mesh, face=True) or 0)
+        ratios: List[float] = []
+        for i in range(face_count):
+            comp = f"{mesh}.f[{i}]"
+            try:
+                w_area = float(cmds.polyEvaluate(comp, worldArea=True) or 0.0)
+                uv_area = float(cmds.polyEvaluate(comp, uvFaceArea=True) or 0.0)
+            except RuntimeError:
+                continue
+            if w_area <= 1e-12 or uv_area <= 1e-12:
+                continue
+            ratios.append(max(w_area / uv_area, uv_area / w_area))
+        if not ratios:
+            return None
+        return sum(ratios) / float(len(ratios))
+
+    def run_low_uv_map1_check(self) -> None:
+        meshes = self._collect_low_meshes()
+        self.log("INFO", "LowUV1", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "LowUV1", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowUV1", f"Meshes analysés : {len(meshes)}")
+        overlap_fail = []
+        outside_count = 0
+        distortion_warn = []
+        for mesh in meshes:
+            if cmds.polyUVOverlap(mesh, oc=True) or []:
+                overlap_fail.append(mesh)
+            try:
+                bbox = cmds.polyEvaluate(mesh, boundingBox2d=True) or []
+                if bbox:
+                    (u_min, u_max), (v_min, v_max) = bbox
+                    if u_min < 0.0 or v_min < 0.0 or u_max > 1.0 or v_max > 1.0:
+                        outside_count += 1
+            except RuntimeError:
+                pass
+            ratio = self._mesh_uv_distortion_ratio(mesh, uv_set="map1")
+            if ratio is not None and ratio > LOW_UV_DISTORTION_THRESHOLD:
+                distortion_warn.append(mesh)
+        self.log("INFO" if not overlap_fail else "FAIL", "LowUV1", f"UV map1 overlap : {'OK' if not overlap_fail else f'FAIL ({len(overlap_fail)} mesh(es))'}")
+        self.log("INFO" if outside_count == 0 else "FAIL", "LowUV1", f"UV map1 shells in 0-1 : {'OK' if outside_count == 0 else f'FAIL ({outside_count} mesh(es) hors 0-1)'}")
+        self.log("INFO" if not distortion_warn else "WARNING", "LowUV1", f"UV map1 distortion : {'OK' if not distortion_warn else f'WARNING (distorsion forte sur {len(distortion_warn)} mesh)'}")
+        self.log("INFO", "LowUV1", f"Seuil distortion utilisé : {LOW_UV_DISTORTION_THRESHOLD:.2f}")
+        ok = (len(overlap_fail) == 0) and (outside_count == 0)
+        self.log("INFO" if ok else "FAIL", "LowUV1", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_uv_map1_checked", "OK" if ok else "FAIL")
+
+    def _low_asset_key(self, mesh: str) -> str:
+        name = self._strip_namespaces_from_name(self._short_name(mesh)).lower()
+        return re.sub(r"_low$", "", name)
+
+    def _estimate_texel_density(self, mesh: str, uv_set: str = "map2", tex_size: int = 2048) -> Optional[float]:
+        shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
+        if not shape or not self._uv_set_on_shape(shape, uv_set):
+            return None
+        try:
+            cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+            uv_bbox = cmds.polyEvaluate(mesh, boundingBox2d=True) or []
+            w_area = float(cmds.polyEvaluate(mesh, worldArea=True) or 0.0)
+        except RuntimeError:
+            return None
+        if not uv_bbox or w_area <= 1e-12:
+            return None
+        (u_min, u_max), (v_min, v_max) = uv_bbox
+        uv_area = max(0.0, (u_max - u_min) * (v_max - v_min))
+        if uv_area <= 1e-12:
+            return None
+        return (tex_size * (uv_area ** 0.5)) / (w_area ** 0.5)
+
+    def run_low_map2_density_check(self) -> None:
+        meshes = self._collect_low_meshes()
+        self.log("INFO", "LowUV2", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "LowUV2", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowUV2", f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", "LowUV2", "Map analysée : map2")
+        per_asset: Dict[str, List[float]] = {}
+        all_values: List[float] = []
+        for mesh in meshes:
+            td = self._estimate_texel_density(mesh, uv_set="map2", tex_size=2048)
+            if td is None:
+                continue
+            key = self._low_asset_key(mesh)
+            per_asset.setdefault(key, []).append(td)
+            all_values.append(td)
+        for asset_key, values in sorted(per_asset.items()):
+            self.log("INFO", "LowUV2", f"{asset_key}_low : {sum(values)/len(values):.2f}")
+        mean_td = (sum(all_values) / len(all_values)) if all_values else 0.0
+        self.log("INFO", "LowUV2", f"Texel density cible : {LOW_MAP2_TARGET_TD:.2f}")
+        self.log("INFO", "LowUV2", f"Texel density moyenne mesurée : {mean_td:.2f}")
+        self.log("INFO", "LowUV2", f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
+        ok = bool(all_values) and abs(mean_td - LOW_MAP2_TARGET_TD) <= LOW_MAP2_TOLERANCE
+        self.log("INFO" if ok else "FAIL", "LowUV2", f"Résultat global : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_uv_map2_checked", "OK" if ok else "FAIL")
+
+    def compare_low_vs_bake_low(self) -> None:
+        self.log("INFO", "CompareLowBake", "----- Step 07: Compare Low.fbx vs Bake Scene Low -----")
+        low_meshes = self._collect_low_meshes()
+        bake_meshes = [m for m in self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"], exclude_placeholder_named=True)[0] if self._matches_asset_kind(m, "low")]
+        self.log("INFO", "CompareLowBake", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "CompareLowBake", f"Source B : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
+        self.log("INFO", "CompareLowBake", f"Roots analysés dans Low.fbx : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "CompareLowBake", f"Roots analysés dans Bake Scene : {self._preview_list(self.detected_roots.get('bake_low', []), max_items=20)}")
+        self.log("INFO", "CompareLowBake", f"Meshes analysés Low/BakeLow : {len(low_meshes)} / {len(bake_meshes)}")
+        if not low_meshes or not bake_meshes:
+            self.log("FAIL", "CompareLowBake", "Compare impossible : Low.fbx ou Bake Low non chargé.")
+            self.set_check_status("low_bake_compared", "FAIL")
+            return
+        ok = self._compare_mesh_sets(low_meshes, bake_meshes, "Low FBX", "Bake Low")
+        self.log("INFO" if ok else "FAIL", "CompareLowBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_bake_compared", "OK" if ok else "FAIL")
+
+    def compare_low_vs_final_asset(self) -> None:
+        self.log("INFO", "CompareLowFinal", "----- Step 08: Compare Low.fbx vs Final Scene Asset -----")
+        low_meshes = self._collect_low_meshes()
+        final_meshes = self._collect_mesh_transforms_in_namespace(self.context["final_asset_ma_namespace"], exclude_placeholder_named=True)[0]
+        self.log("INFO", "CompareLowFinal", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "CompareLowFinal", f"Source B : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
+        self.log("INFO", "CompareLowFinal", f"Roots analysés dans Low.fbx : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "CompareLowFinal", f"Roots analysés dans Final Scene : {self._preview_list(self.detected_roots.get('final_asset_ma', []), max_items=20)}")
+        self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {len(low_meshes)} / {len(final_meshes)}")
+        if not low_meshes or not final_meshes:
+            self.log("FAIL", "CompareLowFinal", "Compare impossible : Low.fbx ou Final Scene non chargé.")
+            self.set_check_status("low_final_compared", "FAIL")
+            return
+
+        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in low_meshes}
+        final_by = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in final_meshes}
+        common = sorted(set(low_by.keys()) & set(final_by.keys()))
+        missing_final = sorted(set(low_by.keys()) - set(final_by.keys()))
+        missing_low = sorted(set(final_by.keys()) - set(low_by.keys()))
+        topo_mismatch = [k for k in common if (low_by[k]["v"], low_by[k]["e"], low_by[k]["f"]) != (final_by[k]["v"], final_by[k]["e"], final_by[k]["f"])]
+        uv_mismatch = [k for k in common if low_by[k]["uv_total"] != final_by[k]["uv_total"]]
+        presence_ok = not missing_final and not missing_low
+        topo_ok = not topo_mismatch
+        uv_ok = not uv_mismatch
+        self.log("INFO" if presence_ok else "FAIL", "CompareLowFinal", f"Mesh presence match : {'OK' if presence_ok else 'FAIL'}")
+        self.log("INFO" if topo_ok else "FAIL", "CompareLowFinal", f"Topology match : {'OK' if topo_ok else 'FAIL'}")
+        self.log("INFO" if uv_ok else "FAIL", "CompareLowFinal", f"UV match : {'OK' if uv_ok else 'FAIL'}")
+        ok = presence_ok and topo_ok and uv_ok
+        self.log("INFO" if ok else "FAIL", "CompareLowFinal", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("low_final_compared", "OK" if ok else "FAIL")
+
     def run_low_review_checks(self) -> None:
-        self.log("INFO", "RunAll", "Low Review désactivée dans cette version High-only.")
+        self.log("INFO", "RunAllLow", "----- Run All Low Steps (01 -> 08) -----")
+        if not self._collect_low_meshes():
+            self.load_low_fbx_scene()
+        self.run_low_topology_checks()
+        self.scan_low_namespaces()
+        self.analyze_low_materials()
+        self.run_low_uv_map1_check()
+        self.run_low_map2_density_check()
+        self.compare_low_vs_bake_low()
+        self.compare_low_vs_final_asset()
+        self.log("INFO", "RunAllLow", "Résultat : Run All Low Steps terminé.")
 
     def run_final_review_checks(self) -> None:
         self.log("INFO", "RunAll", "Final Review désactivée dans cette version High-only.")
