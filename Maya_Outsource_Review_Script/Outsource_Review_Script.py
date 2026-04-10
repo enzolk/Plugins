@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -31,6 +32,8 @@ ROOT_SUFFIXES = {
 }
 PLACEHOLDER_TOKEN = "placeholder"
 HIGH_REVIEW_SCOPE_ORDER = ["high_ma", "high_fbx", "bake_high"]
+LOW_REVIEW_SCOPE_ORDER = ["low_fbx", "bake_low", "final_asset_ma"]
+FINAL_REVIEW_SCOPE_ORDER = ["final_asset_ma", "final_asset_fbx", "bake_low", "low_fbx"]
 
 
 @dataclass
@@ -120,12 +123,19 @@ class HighPolyReviewTool:
         self.texture_set_label_to_key: Dict[str, str] = {}
         self.texture_set_section_headers: Set[str] = set()
         self.last_scanned_namespaces: List[str] = []
-        self.scope_keys = ["placeholder", "high_ma", "high_fbx", "bake_high"]
+        self.detected_assets: List[str] = []
+        self.asset_to_final_fbx: Dict[str, str] = {}
+        self.active_asset: str = ""
+        self.scope_keys = ["placeholder", "high_ma", "high_fbx", "bake_high", "low_fbx", "bake_low", "final_asset_ma", "final_asset_fbx"]
         self.scope_labels = {
             "placeholder": "Placeholder",
             "high_ma": "High MA",
             "high_fbx": "High FBX",
             "bake_high": "Bake High",
+            "low_fbx": "Low FBX",
+            "bake_low": "Bake Low",
+            "final_asset_ma": "Final Scene MA",
+            "final_asset_fbx": "Final FBX",
         }
         self.last_texture_scope: List[str] = []
 
@@ -241,6 +251,19 @@ class HighPolyReviewTool:
         self.ui["final_asset_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_asset_fbx"))
         cmds.menuItem(label="-- Aucun --", parent=self.ui["final_asset_fbx_menu"])
         cmds.button(label="Reference Final FBX", height=28, command=lambda *_: self.load_final_asset_fbx_scene())
+        cmds.setParent("..")
+
+        cmds.separator(style="in")
+
+        cmds.frameLayout(label="Detected Assets", collapsable=False, marginWidth=6)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        cmds.text(label="Active Asset", align="left")
+        self.ui["active_asset_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_active_asset_changed())
+        cmds.menuItem(label="-- Aucun asset détecté --", parent=self.ui["active_asset_menu"])
+        cmds.setParent("..")
+        self.ui["assets_detected_label"] = cmds.text(label="Available: -", align="left")
+        cmds.setParent("..")
         cmds.setParent("..")
 
         cmds.separator(style="in")
@@ -387,53 +410,6 @@ class HighPolyReviewTool:
         cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
         cmds.setParent("..")
         cmds.setParent("..")
-
-    def _build_review_tabs_section(self) -> None:
-        cmds.frameLayout(label="3) Review Tabs", collapsable=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True)
-        self.ui["review_tabs"] = cmds.tabLayout(innerMarginWidth=8, innerMarginHeight=8)
-
-        self.ui["high_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_technical_checks_section()
-        self._build_texture_sets_section()
-        self._build_global_action_section()
-        cmds.setParent("..")
-
-        self.ui["low_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Low review layout à venir.", align="left")
-        cmds.setParent("..")
-
-        self.ui["bake_scene_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Bake Scene review layout à venir.", align="left")
-        cmds.setParent("..")
-
-        self.ui["final_delivery_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Final Delivery review layout à venir.", align="left")
-        cmds.setParent("..")
-
-        cmds.tabLayout(
-            self.ui["review_tabs"],
-            edit=True,
-            tabLabel=[
-                (self.ui["high_tab"], "High"),
-                (self.ui["low_tab"], "Low"),
-                (self.ui["bake_scene_tab"], "Bake Scene"),
-                (self.ui["final_delivery_tab"], "Final Delivery"),
-            ],
-        )
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_general_checks_section(self) -> None:
-        cmds.frameLayout(label="2) General Checks", collapsable=True, collapse=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label="Pas de namespaces (global scène)", align="left")
-        cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
-        cmds.button(label="Remove Namespaces", height=26, command=lambda *_: self.remove_namespaces())
-        cmds.setParent("..")
-        cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_review_tabs_section(self) -> None:
@@ -448,25 +424,32 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
         self.ui["low_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Low review layout à venir.", align="left")
-        cmds.setParent("..")
-
-        self.ui["bake_scene_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Bake Scene review layout à venir.", align="left")
+        cmds.button(label="Run All Low Checks", height=30, command=lambda *_: self.run_low_review_checks())
+        cmds.button(label="Run Topology (Low)", height=26, command=lambda *_: self.run_topology_checks(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review"))
+        cmds.button(label="Run UV01 Bake", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake"))
+        cmds.button(label="Run UV02 Texture", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture"))
+        cmds.button(label="Run Vertex Colors (Low)", height=26, command=lambda *_: self.check_vertex_colors(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review"))
+        cmds.button(label="Run Texture Sets (Low)", height=26, command=lambda *_: self.analyze_texture_sets(mode="materials", scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review"))
+        cmds.button(label="Run Placeholder Match (Low)", height=26, command=lambda *_: self.check_placeholder_match(scope_keys=["placeholder", "low_fbx", "bake_low"], source_label="Low Review"))
         cmds.setParent("..")
 
         self.ui["final_delivery_tab"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Final Delivery review layout à venir.", align="left")
+        cmds.button(label="Run All Final Checks", height=30, command=lambda *_: self.run_final_review_checks())
+        cmds.button(label="Run Topology (Final)", height=26, command=lambda *_: self.run_topology_checks(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review"))
+        cmds.button(label="Run UV01 Bake", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake"))
+        cmds.button(label="Run UV02 Texture", height=26, command=lambda *_: self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture"))
+        cmds.button(label="Run Vertex Colors (Final)", height=26, command=lambda *_: self.check_vertex_colors(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review"))
+        cmds.button(label="Run Texture Sets (Final)", height=26, command=lambda *_: self.analyze_texture_sets(mode="materials", scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review"))
+        cmds.button(label="Run Naming Final (no _low)", height=26, command=lambda *_: self.check_final_naming_no_low_suffix(scope_keys=["final_asset_ma", "final_asset_fbx"]))
         cmds.setParent("..")
 
         cmds.tabLayout(
             self.ui["review_tabs"],
             edit=True,
             tabLabel=[
-                (self.ui["high_tab"], "High"),
-                (self.ui["low_tab"], "Low"),
-                (self.ui["bake_scene_tab"], "Bake Scene"),
-                (self.ui["final_delivery_tab"], "Final Delivery"),
+                (self.ui["high_tab"], "High Review"),
+                (self.ui["low_tab"], "Low Review"),
+                (self.ui["final_delivery_tab"], "Final Review"),
             ],
         )
         cmds.setParent("..")
@@ -683,7 +666,110 @@ class HighPolyReviewTool:
             self.paths["ma"] = self.paths[file_key]
         elif file_key == "high_fbx":
             self.paths["fbx"] = self.paths[file_key]
+        elif file_key == "final_asset_fbx":
+            self._sync_active_asset_from_final_fbx_path(self.paths[file_key])
         self.log("INFO", "Scan", f"{file_key.upper()} sélectionné: {self.paths[file_key]}")
+
+    def _normalize_asset_token(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+    def _asset_tokens_from_path(self, path: str) -> List[str]:
+        base = os.path.splitext(os.path.basename(path))[0].lower()
+        cleaned = re.sub(r"_(high|low|bake)$", "", base)
+        return [t for t in re.split(r"[^a-z0-9]+", cleaned) if t]
+
+    def _asset_name_from_path(self, path: str) -> str:
+        base = os.path.splitext(os.path.basename(path))[0].lower()
+        return re.sub(r"_(high|low|bake)$", "", base)
+
+    def _populate_active_asset_menu(self) -> None:
+        menu = self.ui.get("active_asset_menu")
+        if not menu or not cmds.optionMenu(menu, exists=True):
+            return
+        self._clear_option_menu(menu)
+        if not self.detected_assets:
+            cmds.menuItem(label="-- Aucun asset détecté --", parent=menu)
+            self.active_asset = ""
+            cmds.text(self.ui["assets_detected_label"], e=True, label="Available: -")
+            return
+        for asset in self.detected_assets:
+            cmds.menuItem(label=asset, parent=menu)
+        cmds.optionMenu(menu, e=True, select=1)
+        self.active_asset = self.detected_assets[0]
+        cmds.text(self.ui["assets_detected_label"], e=True, label=f"Available: {', '.join(self.detected_assets)}")
+
+    def _sync_active_asset_from_final_fbx_path(self, path: str) -> None:
+        if not path:
+            return
+        path_asset = self._asset_name_from_path(path)
+        if not path_asset:
+            return
+        for asset in self.detected_assets:
+            if self._normalize_asset_token(asset) == self._normalize_asset_token(path_asset):
+                self.active_asset = asset
+                idx = self.detected_assets.index(asset) + 1
+                cmds.optionMenu(self.ui["active_asset_menu"], e=True, select=idx)
+                break
+
+    def _detect_assets_from_scan(self) -> None:
+        assets: Set[str] = set()
+        # Primary source: final per-asset FBX files.
+        for fbx_path in self.detected_files.get("final_asset_fbx", []):
+            name = self._asset_name_from_path(fbx_path)
+            if name:
+                assets.add(name)
+
+        # Fallback: token extraction from shared files.
+        if not assets:
+            all_paths = []
+            for key in ["final_asset_ma", "high_ma", "bake_ma", "low_fbx"]:
+                all_paths.extend(self.detected_files.get(key, []))
+            tokens: Set[str] = set()
+            for path in all_paths:
+                for token in self._asset_tokens_from_path(path):
+                    if len(token) > 1 and token not in {"high", "low", "bake", "final", "scene"}:
+                        tokens.add(token)
+            assets = tokens
+
+        self.detected_assets = sorted(assets)
+        self.asset_to_final_fbx = {}
+        for fbx_path in self.detected_files.get("final_asset_fbx", []):
+            asset_name = self._asset_name_from_path(fbx_path)
+            if asset_name in self.detected_assets:
+                self.asset_to_final_fbx[asset_name] = fbx_path
+        self._populate_active_asset_menu()
+        self._auto_match_final_fbx_for_active_asset()
+
+    def _auto_match_final_fbx_for_active_asset(self) -> None:
+        if not self.active_asset:
+            return
+        target = self.asset_to_final_fbx.get(self.active_asset.lower()) or self.asset_to_final_fbx.get(self.active_asset)
+        files = self.detected_files.get("final_asset_fbx", [])
+        if not files or not target:
+            return
+        if target in files:
+            index = files.index(target) + 1
+            cmds.optionMenu(self.ui["final_asset_fbx_menu"], e=True, select=index)
+            self.paths["final_asset_fbx"] = target
+
+    def on_active_asset_changed(self) -> None:
+        if not self.detected_assets:
+            self.active_asset = ""
+            return
+        index = cmds.optionMenu(self.ui["active_asset_menu"], q=True, select=True) - 1
+        index = max(0, min(index, len(self.detected_assets) - 1))
+        self.active_asset = self.detected_assets[index]
+        self._auto_match_final_fbx_for_active_asset()
+        self.auto_detect_scene_roots()
+        self.refresh_root_ui()
+        for key in self.check_states:
+            if self.check_states[key]["mode"] == "AUTO":
+                self.check_states[key]["status"] = "PENDING"
+        self.refresh_checklist_ui()
+        self.detected_texture_sets = {}
+        self.texture_set_visibility = {}
+        self._refresh_texture_sets_list_ui()
+        self.log("INFO", "Asset", f"Active Asset: {self.active_asset}")
 
     def scan_delivery_folder(self) -> None:
         root = cmds.textFieldButtonGrp(self.ui["root_field"], q=True, text=True).strip()
@@ -733,6 +819,7 @@ class HighPolyReviewTool:
             self._populate_file_option_menu(file_key)
         self.paths["ma"] = self.paths.get("high_ma", "")
         self.paths["fbx"] = self.paths.get("high_fbx", "")
+        self._detect_assets_from_scan()
         self.refresh_detected_file_labels()
 
         scan_logs = [
@@ -872,6 +959,21 @@ class HighPolyReviewTool:
             return not self._path_has_any_suffix(node, ("_high", "_low", "_placeholder", "_bake"))
         return False
 
+    def _mesh_matches_active_asset(self, node: str) -> bool:
+        if not self.active_asset:
+            return True
+        normalized_asset = self._normalize_asset_token(self.active_asset)
+        if not normalized_asset:
+            return True
+        short = self._normalize_asset_token(self._strip_namespaces_from_name(self._short_name(node)))
+        if short.startswith(normalized_asset) or normalized_asset in short:
+            return True
+        for segment in [seg for seg in node.split("|") if seg]:
+            cleaned = self._normalize_asset_token(self._strip_namespaces_from_name(segment))
+            if cleaned.startswith(normalized_asset) or normalized_asset in cleaned:
+                return True
+        return False
+
     def _resolve_functional_root_from_mesh(self, mesh_transform: str, asset_kind: str) -> str:
         current = mesh_transform
         while True:
@@ -912,7 +1014,7 @@ class HighPolyReviewTool:
                     mesh_transforms.append(parent[0])
             mesh_transforms = sorted(set(mesh_transforms))
 
-        matching_meshes = [m for m in mesh_transforms if self._matches_asset_kind(m, asset_kind)]
+        matching_meshes = [m for m in mesh_transforms if self._matches_asset_kind(m, asset_kind) and self._mesh_matches_active_asset(m)]
         roots = [self._resolve_functional_root_from_mesh(mesh, asset_kind) for mesh in matching_meshes]
         return sorted(set(roots), key=lambda x: self._candidate_root_score(x), reverse=True)
 
@@ -1008,7 +1110,8 @@ class HighPolyReviewTool:
             if parent:
                 transforms.append(parent[0])
 
-        return sorted(list(set(transforms)))
+        transforms = sorted(list(set(transforms)))
+        return [m for m in transforms if self._mesh_matches_active_asset(m)]
 
     def _mesh_signature(self, mesh_transform: str) -> Tuple[int, int, int]:
         shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
@@ -1220,6 +1323,14 @@ class HighPolyReviewTool:
             namespace = self.context["ma_namespace"]
         elif scope_key == "bake_high":
             namespace = self.context["bake_ma_namespace"]
+        elif scope_key == "low_fbx":
+            namespace = self.context["low_fbx_namespace"]
+        elif scope_key == "bake_low":
+            namespace = self.context["bake_ma_namespace"]
+        elif scope_key == "final_asset_ma":
+            namespace = self.context["final_asset_ma_namespace"]
+        elif scope_key == "final_asset_fbx":
+            namespace = self.context["final_asset_fbx_namespace"]
 
         if scope_key == "placeholder":
             placeholder_root = self.get_placeholder_root()
@@ -1240,7 +1351,7 @@ class HighPolyReviewTool:
     def _resolve_texture_scope_roots(self, resolution: Dict[str, Any]) -> Dict[str, Any]:
         scope_keys = resolution.get("scope_keys", [])
         per_scope = resolution.get("per_scope_meshes", {})
-        all_scope_keys = ["placeholder", "high_ma", "high_fbx", "bake_high"]
+        all_scope_keys = ["placeholder", "high_ma", "high_fbx", "bake_high", "low_fbx", "bake_low", "final_asset_ma", "final_asset_fbx"]
 
         roots_per_scope: Dict[str, List[str]] = {}
         for key in all_scope_keys:
@@ -1292,7 +1403,9 @@ class HighPolyReviewTool:
                     placeholder_excluded.append(parent_transform)
                     continue
                 transforms.append(parent_transform)
-        return sorted(set(transforms)), sorted(set(placeholder_excluded))
+        transforms = sorted(set(transforms))
+        transforms = [m for m in transforms if self._mesh_matches_active_asset(m)]
+        return transforms, sorted(set(placeholder_excluded))
 
     def _get_selected_scope_keys(self) -> List[str]:
         return HIGH_REVIEW_SCOPE_ORDER[:]
@@ -1333,6 +1446,42 @@ class HighPolyReviewTool:
                     bake_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"])
                     meshes = [m for m in bake_meshes if self._matches_asset_kind(m, "high")]
                     roots_by_scope[key] = [self.context["bake_ma_namespace"]]
+            elif key == "low_fbx":
+                low_root = self.get_detected_root("low")
+                if low_root and cmds.objExists(low_root):
+                    meshes = self._collect_mesh_transforms(root=low_root)
+                    roots_by_scope[key] = [low_root]
+                else:
+                    meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["low_fbx_namespace"])
+                    meshes = [m for m in meshes if self._matches_asset_kind(m, "low")]
+                    roots_by_scope[key] = [self.context["low_fbx_namespace"]]
+            elif key == "bake_low":
+                bake_low_root = self.get_detected_root("bake_low")
+                if bake_low_root and cmds.objExists(bake_low_root):
+                    meshes = self._collect_mesh_transforms(root=bake_low_root)
+                    roots_by_scope[key] = [bake_low_root]
+                else:
+                    bake_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"])
+                    meshes = [m for m in bake_meshes if self._matches_asset_kind(m, "low")]
+                    roots_by_scope[key] = [self.context["bake_ma_namespace"]]
+            elif key == "final_asset_ma":
+                final_ma_root = self.get_detected_root("final_asset_ma")
+                if final_ma_root and cmds.objExists(final_ma_root):
+                    meshes = self._collect_mesh_transforms(root=final_ma_root)
+                    roots_by_scope[key] = [final_ma_root]
+                else:
+                    meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["final_asset_ma_namespace"])
+                    meshes = [m for m in meshes if self._matches_asset_kind(m, "final")]
+                    roots_by_scope[key] = [self.context["final_asset_ma_namespace"]]
+            elif key == "final_asset_fbx":
+                final_fbx_root = self.get_detected_root("final_asset_fbx")
+                if final_fbx_root and cmds.objExists(final_fbx_root):
+                    meshes = self._collect_mesh_transforms(root=final_fbx_root)
+                    roots_by_scope[key] = [final_fbx_root]
+                else:
+                    meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["final_asset_fbx_namespace"])
+                    meshes = [m for m in meshes if self._matches_asset_kind(m, "final")]
+                    roots_by_scope[key] = [self.context["final_asset_fbx_namespace"]]
             per_scope[key] = sorted(set(meshes))
         merged = sorted(set([m for meshes in per_scope.values() for m in meshes]))
         return {
@@ -2447,6 +2596,54 @@ class HighPolyReviewTool:
         cmds.isolateSelect("modelPanel4", state=True)
         self.log("INFO", "VertexColor", f"Isolation activée pour {len(without_vc)} mesh(es) sans vertex colors.", without_vc)
 
+    def check_required_uv_sets(self, scope_keys: List[str], required_set: str, label: str) -> None:
+        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
+        meshes = resolution["meshes"]
+        if not meshes:
+            self.log("FAIL", "UV", f"Aucun mesh pour check {label}.")
+            return
+        missing: List[str] = []
+        for mesh in meshes:
+            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
+            if not shapes:
+                continue
+            uv_sets = cmds.polyUVSet(shapes[0], q=True, allUVSets=True) or []
+            if required_set not in uv_sets:
+                missing.append(mesh)
+        if missing:
+            self.log("FAIL", "UV", f"{label}: {len(missing)} mesh(es) sans UV set '{required_set}'.", missing[:200])
+        else:
+            self.log("INFO", "UV", f"{label}: OK ({len(meshes)} mesh(es) avec '{required_set}').")
+
+    def check_final_naming_no_low_suffix(self, scope_keys: List[str]) -> None:
+        resolution = self.resolve_scope_targets(scope_keys=scope_keys)
+        meshes = resolution["meshes"]
+        invalid = [m for m in meshes if self._strip_namespaces_from_name(self._short_name(m)).lower().endswith("_low")]
+        if invalid:
+            self.log("FAIL", "Naming", f"Noms finaux invalides avec suffix _low: {len(invalid)}", invalid[:200])
+        else:
+            self.log("INFO", "Naming", "Naming final OK (aucun suffix _low détecté).")
+
+    def run_low_review_checks(self) -> None:
+        self.log("INFO", "RunAll", f"Lancement des checks Low Review (asset={self.active_asset or 'N/A'}).")
+        self.run_topology_checks(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review")
+        self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake")
+        self.check_required_uv_sets(scope_keys=LOW_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture")
+        self.check_vertex_colors(scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review")
+        self.analyze_texture_sets(mode="materials", scope_keys=LOW_REVIEW_SCOPE_ORDER, source_label="Low Review")
+        self.check_placeholder_match(scope_keys=["placeholder", "low_fbx", "bake_low"], source_label="Low Review")
+        self.log("INFO", "RunAll", "Checks Low Review terminés.")
+
+    def run_final_review_checks(self) -> None:
+        self.log("INFO", "RunAll", f"Lancement des checks Final Review (asset={self.active_asset or 'N/A'}).")
+        self.run_topology_checks(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review")
+        self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map1", label="UV01 bake")
+        self.check_required_uv_sets(scope_keys=FINAL_REVIEW_SCOPE_ORDER, required_set="map2", label="UV02 texture")
+        self.check_vertex_colors(scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review")
+        self.analyze_texture_sets(mode="materials", scope_keys=FINAL_REVIEW_SCOPE_ORDER, source_label="Final Review")
+        self.check_final_naming_no_low_suffix(scope_keys=["final_asset_ma", "final_asset_fbx"])
+        self.log("INFO", "RunAll", "Checks Final Review terminés.")
+
     def run_all_checks(self) -> None:
         self.log("INFO", "RunAll", "Lancement des checks High Poly...")
         self.compare_ma_vs_fbx()
@@ -2485,6 +2682,8 @@ class HighPolyReviewTool:
         }
 
     def _detect_asset_name(self) -> str:
+        if self.active_asset:
+            return self.active_asset
         if self.paths.get("ma"):
             return os.path.splitext(os.path.basename(self.paths["ma"]))[0]
         scene = cmds.file(query=True, sceneName=True) or ""
