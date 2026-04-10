@@ -52,11 +52,13 @@ class HighPolyReviewTool:
             "root": "",
             "high_ma": "",
             "high_fbx": "",
+            "bake_ma": "",
         }
 
         self.detected_files: Dict[str, List[str]] = {
             "high_ma": [],
             "high_fbx": [],
+            "bake_ma": [],
         }
 
         self.detected_roots: Dict[str, List[str]] = {
@@ -67,14 +69,18 @@ class HighPolyReviewTool:
         self.context = {
             "fbx_namespace": "High_FBX_File",
             "ma_namespace": "High_Ma_File",
+            "bake_ma_namespace": "Bake_MA_File",
             "fbx_nodes": [],
             "fbx_meshes": [],
             "ma_nodes": [],
             "ma_meshes": [],
+            "bake_ma_nodes": [],
+            "bake_ma_meshes": [],
         }
 
         self.check_states = {
             "ma_fbx_compared": {"status": "PENDING", "mode": "AUTO"},
+            "ma_bake_compared": {"status": "PENDING", "mode": "AUTO"},
             "no_namespaces": {"status": "PENDING", "mode": "AUTO"},
             "placeholder_checked": {"status": "PENDING", "mode": "AUTO"},
             "design_kit_checked": {"status": "PENDING", "mode": "MANUAL"},
@@ -85,6 +91,7 @@ class HighPolyReviewTool:
 
         self.check_ui_map = {
             "ma_fbx_compared": "check_ma_fbx",
+            "ma_bake_compared": "check_ma_bake",
             "no_namespaces": "check_ns",
             "placeholder_checked": "check_placeholder",
             "design_kit_checked": "check_design",
@@ -246,6 +253,16 @@ class HighPolyReviewTool:
         self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.setParent("..")
         cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_ma_vs_fbx())
+        cmds.separator(style="in")
+        cmds.text(label="Step 09 — Compare High.ma vs Bake Scene High", align="left")
+        self.ui["bake_ma_status"] = cmds.text(label="Detected Bake.ma: not scanned", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["bake_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("bake_ma"))
+        cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu"])
+        cmds.button(label="Load / Reference Bake.ma", height=26, command=lambda *_: self.load_bake_ma_scene())
+        self.ui["check_ma_bake"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.setParent("..")
+        cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_ma_vs_bake_high())
         cmds.setParent("..")
         cmds.setParent("..")
     def _build_guided_high_review_section(self) -> None:
@@ -444,6 +461,7 @@ class HighPolyReviewTool:
         status_map = [
             ("high_ma", "high_ma_status", "High MA"),
             ("high_fbx", "high_fbx_status", "High FBX"),
+            ("bake_ma", "bake_ma_status", "Bake MA"),
         ]
 
         for file_key, status_widget, label in status_map:
@@ -581,6 +599,7 @@ class HighPolyReviewTool:
         found_files: Dict[str, List[str]] = {
             "high_fbx": [],
             "high_ma": [],
+            "bake_ma": [],
         }
 
         for dirpath, _, filenames in os.walk(root):
@@ -588,7 +607,7 @@ class HighPolyReviewTool:
                 name_lower = filename.lower()
                 full_path = os.path.join(dirpath, filename)
                 if name_lower.endswith("_bake.ma"):
-                    continue
+                    found_files["bake_ma"].append(full_path)
                 elif name_lower.endswith("_low.fbx"):
                     continue
                 elif name_lower.endswith("_high.fbx"):
@@ -602,16 +621,18 @@ class HighPolyReviewTool:
         for key, files in found_files.items():
             self.detected_files[key] = files
 
-        for file_key in ["high_ma", "high_fbx"]:
+        for file_key in ["high_ma", "high_fbx", "bake_ma"]:
             if f"{file_key}_menu" in self.ui:
                 self._populate_file_option_menu(file_key)
         self.paths["high_ma"] = self.paths.get("high_ma", "")
         self.paths["high_fbx"] = self.paths.get("high_fbx", "")
+        self.paths["bake_ma"] = self.paths.get("bake_ma", "")
         self.refresh_detected_file_labels()
 
         scan_logs = [
             ("high_ma", "Aucun fichier High MA (*_HIGH.ma) trouvé."),
             ("high_fbx", "Aucun fichier High FBX (*_HIGH.fbx) trouvé."),
+            ("bake_ma", "Aucun fichier Bake MA (*_BAKE.ma) trouvé."),
         ]
         for file_key, warning_msg in scan_logs:
             count = len(found_files[file_key])
@@ -1686,7 +1707,35 @@ class HighPolyReviewTool:
         self.log("INFO", "Workflow", "Low review désactivée dans cette version High-only.")
 
     def load_bake_ma_scene(self) -> None:
-        self.log("INFO", "Workflow", "Bake review désactivée dans cette version High-only.")
+        path = self.paths.get("bake_ma", "")
+        if not path:
+            self.log("FAIL", "File", "Aucun fichier _BAKE.ma sélectionné (scan requis).")
+            return
+        if not os.path.isfile(path):
+            self.log("FAIL", "File", f"Fichier _BAKE.ma introuvable: {path}")
+            return
+
+        namespace = self.context["bake_ma_namespace"]
+        if cmds.namespace(exists=namespace):
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError as exc:
+                self.log("WARNING", "File", f"Namespace {namespace} déjà présent (merge impossible): {exc}")
+
+        before = set(cmds.ls(long=True) or [])
+        cmds.file(path, reference=True, type="mayaAscii", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        after = set(cmds.ls(long=True) or [])
+        new_nodes = sorted(list(after - before))
+        self.context["bake_ma_nodes"] = new_nodes
+        self.context["bake_ma_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
+        self.paths["bake_ma"] = path
+        self.log("INFO", "Load", f"Bake Scene référencée : {self._basename_from_path(path)}")
+        self.log("INFO", "Load", f"Namespace utilisé : {namespace}")
+        self.log("INFO", "Load", f"Meshes importés : {len(self.context['bake_ma_meshes'])}")
+        self.detected_roots["bake_high"] = self._find_root_candidates("high", namespace=namespace)
+        self.detected_roots["bake_low"] = self._find_root_candidates("low", namespace=namespace)
+        self._log_root_detection("bake_high", "Bake High")
+        self._log_root_detection("bake_low", "Bake Low")
 
     def load_final_asset_ma_scene(self) -> None:
         self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
@@ -1747,6 +1796,60 @@ class HighPolyReviewTool:
 
         ok = self._compare_mesh_sets(ma_meshes, fbx_meshes, "High MA", "High FBX")
         self.set_check_status("ma_fbx_compared", "OK" if ok else "FAIL")
+
+    def _unload_namespace_references(self, namespace: str) -> bool:
+        if not cmds.namespace(exists=namespace):
+            return True
+        namespace_nodes = cmds.ls(namespace + ":*", long=True) or []
+        ref_nodes: Set[str] = set()
+        for node in namespace_nodes:
+            try:
+                ref_nodes.add(cmds.referenceQuery(node, referenceNode=True))
+            except RuntimeError:
+                continue
+        if not ref_nodes:
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+                return True
+            except RuntimeError:
+                return False
+
+        ok = True
+        for ref_node in sorted(ref_nodes):
+            try:
+                cmds.file(unloadReference=ref_node)
+            except RuntimeError as exc:
+                ok = False
+                self.log("WARNING", "Scene", f"Impossible de décharger la référence '{ref_node}': {exc}")
+        return ok
+
+    def compare_ma_vs_bake_high(self) -> None:
+        self.log("INFO", "Compare", "----- Step 09: Compare High.ma vs Bake Scene High -----")
+        unload_ok = self._unload_namespace_references(self.context["fbx_namespace"])
+        if unload_ok:
+            self.log("INFO", "Scene", "High.fbx unloaded before Bake comparison")
+        else:
+            self.log("WARNING", "Scene", "Échec partiel lors du unload de High.fbx avant Bake comparison.")
+
+        self.load_bake_ma_scene()
+        self.log("INFO", "Compare", f"Source A : High.ma ({self._basename_from_path(self.paths.get('high_ma', ''))})")
+        self.log("INFO", "Compare", f"Source B : Bake Scene ({self._basename_from_path(self.paths.get('bake_ma', ''))})")
+
+        ma_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
+        bake_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"], exclude_placeholder_named=True)
+        ma_roots = self._find_root_candidates("high", namespace=self.context["ma_namespace"])
+        bake_roots = self._find_root_candidates("high", namespace=self.context["bake_ma_namespace"])
+        self.log("INFO", "Compare", f"Roots analysés dans High.ma : {self._preview_list(ma_roots)}")
+        self.log("INFO", "Compare", f"Roots analysés dans Bake Scene : {self._preview_list(bake_roots)}")
+        self.log("INFO", "Compare", f"Meshes analysés : {min(len(ma_meshes), len(bake_meshes))}")
+
+        if not ma_meshes or not bake_meshes:
+            self.log("FAIL", "Compare", "Résultat : compare impossible (au moins une source sans mesh).")
+            self.set_check_status("ma_bake_compared", "FAIL")
+            return
+
+        ok = self._compare_mesh_sets(ma_meshes, bake_meshes, "High.ma", "Bake Scene")
+        self.set_check_status("ma_bake_compared", "OK" if ok else "FAIL")
 
     def scan_namespaces(self) -> None:
         user_ns = self._get_scan_namespaces()
@@ -2090,9 +2193,10 @@ class HighPolyReviewTool:
         self.log("INFO", "RunAll", "Final Review désactivée dans cette version High-only.")
 
     def run_all_checks(self) -> None:
-        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 08) -----")
+        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 09) -----")
         self.log("INFO", "RunAll", f"Source High.ma : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "RunAll", f"Source High.fbx : {self._basename_from_path(self.paths.get('high_fbx', ''))}")
+        self.log("INFO", "RunAll", f"Source Bake.ma : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
         if not (self.context.get("ma_meshes") or []):
             self.load_ma_scene()
 
@@ -2106,6 +2210,7 @@ class HighPolyReviewTool:
         if not (self.context.get("fbx_meshes") or []):
             self.load_fbx_into_scene()
         self.compare_ma_vs_fbx()
+        self.compare_ma_vs_bake_high()
         self.log("INFO", "RunAll", "Résultat : Run All High Steps terminé.")
 
     def build_report_payload(self) -> Dict:
