@@ -134,9 +134,11 @@ class HighPolyReviewTool:
         }
 
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
+        self.material_sets_by_context: Dict[str, Dict[str, Dict[str, object]]] = {"high": {}, "low": {}}
         self.texture_set_visibility: Dict[str, bool] = {}
-        self.texture_set_label_to_key: Dict[str, str] = {}
-        self.texture_set_section_headers: Set[str] = set()
+        self.texture_set_label_to_key_by_context: Dict[str, Dict[str, str]] = {"high": {}, "low": {}}
+        self.texture_set_section_headers_by_context: Dict[str, Set[str]] = {"high": set(), "low": set()}
+        self.material_isolation_state: Dict[str, str] = {"context": "", "material_key": ""}
         self.last_scanned_namespaces: List[str] = []
         self.detected_assets: List[str] = []
         self.asset_to_final_fbx: Dict[str, str] = {}
@@ -274,8 +276,9 @@ class HighPolyReviewTool:
         self.ui["texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
-            selectCommand=lambda *_: self.on_texture_set_selection_changed(),
+            selectCommand=lambda *_: self.on_texture_set_selection_changed("high"),
         )
+        cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("high"))
         cmds.separator(style="in")
         cmds.text(label="Step 08 — Compare High.ma vs High.fbx", align="left")
         self.ui["high_fbx_status"] = cmds.text(label="Detected High.fbx: not scanned", align="left")
@@ -347,7 +350,13 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
 
         cmds.text(label="Step 04 — Materials / Texture Sets", align="left")
-        self._build_check_row("check_low_materials", "Materials", self.analyze_low_materials)
+        self._build_check_row("check_low_materials", "Analyze Materials", self.analyze_low_materials)
+        self.ui["low_texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=130,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed("low"),
+        )
+        cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("low"))
         cmds.separator(style="in")
 
         cmds.text(label="Step 05 — UV Check map1", align="left")
@@ -712,8 +721,11 @@ class HighPolyReviewTool:
                 self.check_states[key]["status"] = "PENDING"
         self.refresh_checklist_ui()
         self.detected_texture_sets = {}
+        self.material_sets_by_context = {"high": {}, "low": {}}
         self.texture_set_visibility = {}
-        self._refresh_texture_sets_list_ui()
+        self._disable_material_isolation()
+        self._refresh_texture_sets_list_ui("high")
+        self._refresh_texture_sets_list_ui("low")
         self.log("INFO", "Asset", f"Active Asset: {self.active_asset}")
 
     def scan_delivery_folder(self) -> None:
@@ -1560,18 +1572,23 @@ class HighPolyReviewTool:
             return ["unknown"]
         return sources
 
-    def _refresh_texture_sets_list_ui(self) -> None:
-        if "texture_sets_list" not in self.ui:
+    def _list_ui_key_for_context(self, context_key: str) -> str:
+        return "texture_sets_list" if context_key == "high" else "low_texture_sets_list"
+
+    def _refresh_texture_sets_list_ui(self, context_key: str = "high") -> None:
+        list_ui_key = self._list_ui_key_for_context(context_key)
+        if list_ui_key not in self.ui:
             return
-        previous_selection = self._selected_texture_set_names()
-        self.texture_set_label_to_key = {}
-        self.texture_set_section_headers = set()
-        cmds.textScrollList(self.ui["texture_sets_list"], edit=True, removeAll=True)
+        previous_selection = self._selected_texture_set_names(context_key)
+        self.texture_set_label_to_key_by_context[context_key] = {}
+        self.texture_set_section_headers_by_context[context_key] = set()
+        cmds.textScrollList(self.ui[list_ui_key], edit=True, removeAll=True)
+        material_sets = self.material_sets_by_context.get(context_key, {})
 
         grouped_keys: Dict[str, List[str]] = {}
         source_order = ["high_ma", "high_fbx", "bake_high", "placeholder", "mixed", "unknown"]
-        for set_key in sorted(self.detected_texture_sets.keys()):
-            data = self.detected_texture_sets[set_key]
+        for set_key in sorted(material_sets.keys()):
+            data = material_sets[set_key]
             sources = data.get("sources", []) or ["unknown"]
             source_key = "mixed" if len(sources) > 1 else sources[0]
             grouped_keys.setdefault(source_key, []).append(set_key)
@@ -1581,10 +1598,10 @@ class HighPolyReviewTool:
             if not set_keys:
                 continue
             header = f"━━ {self.scope_labels.get(source, source.replace('_', ' ').title())} ━━"
-            self.texture_set_section_headers.add(header)
-            cmds.textScrollList(self.ui["texture_sets_list"], edit=True, append=header)
+            self.texture_set_section_headers_by_context[context_key].add(header)
+            cmds.textScrollList(self.ui[list_ui_key], edit=True, append=header)
             for set_name in set_keys:
-                data = self.detected_texture_sets[set_name]
+                data = material_sets[set_name]
                 method = data.get("method", "unknown")
                 count = len(data.get("objects", []))
                 display_name = data.get("display_name", data.get("name", set_name))
@@ -1601,48 +1618,64 @@ class HighPolyReviewTool:
                     label = f"  {display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
                 unique_label = label
                 duplicate_index = 2
-                while unique_label in self.texture_set_label_to_key:
+                while unique_label in self.texture_set_label_to_key_by_context[context_key]:
                     unique_label = f"{label} [{duplicate_index}]"
                     duplicate_index += 1
-                self.texture_set_label_to_key[unique_label] = set_name
-                cmds.textScrollList(self.ui["texture_sets_list"], edit=True, append=unique_label)
-        self._restore_texture_set_selection(previous_selection)
+                self.texture_set_label_to_key_by_context[context_key][unique_label] = set_name
+                cmds.textScrollList(self.ui[list_ui_key], edit=True, append=unique_label)
+        self._restore_texture_set_selection(previous_selection, context_key)
 
-    def _selected_texture_set_names(self) -> List[str]:
-        selected = cmds.textScrollList(self.ui["texture_sets_list"], query=True, selectItem=True) or []
+    def _selected_texture_set_names(self, context_key: str = "high") -> List[str]:
+        list_ui_key = self._list_ui_key_for_context(context_key)
+        if list_ui_key not in self.ui:
+            return []
+        selected = cmds.textScrollList(self.ui[list_ui_key], query=True, selectItem=True) or []
         names: List[str] = []
+        labels_map = self.texture_set_label_to_key_by_context.get(context_key, {})
+        headers = self.texture_set_section_headers_by_context.get(context_key, set())
+        material_sets = self.material_sets_by_context.get(context_key, {})
         for label in selected:
-            if label in self.texture_set_section_headers:
+            if label in headers:
                 continue
-            set_name = self.texture_set_label_to_key.get(label)
-            if set_name in self.detected_texture_sets:
+            set_name = labels_map.get(label)
+            if set_name in material_sets:
                 names.append(set_name)
         return names
 
-    def _restore_texture_set_selection(self, set_names: List[str]) -> None:
+    def _restore_texture_set_selection(self, set_names: List[str], context_key: str = "high") -> None:
         if not set_names:
             return
-        labels_to_select = [label for label, set_name in self.texture_set_label_to_key.items() if set_name in set_names]
+        list_ui_key = self._list_ui_key_for_context(context_key)
+        if list_ui_key not in self.ui:
+            return
+        labels_to_select = [label for label, set_name in self.texture_set_label_to_key_by_context.get(context_key, {}).items() if set_name in set_names]
         if labels_to_select:
-            cmds.textScrollList(self.ui["texture_sets_list"], edit=True, selectItem=labels_to_select)
+            cmds.textScrollList(self.ui[list_ui_key], edit=True, selectItem=labels_to_select)
 
-    def on_texture_set_selection_changed(self) -> None:
-        selected_names = self._selected_texture_set_names()
+    def on_texture_set_selection_changed(self, context_key: str = "high") -> None:
+        selected_names = self._selected_texture_set_names(context_key)
         objects: List[str] = []
+        components: List[str] = []
+        material_sets = self.material_sets_by_context.get(context_key, {})
         for set_name in selected_names:
-            objects.extend(self.detected_texture_sets[set_name].get("objects", []))
+            data = material_sets.get(set_name, {})
+            objects.extend(data.get("objects", []))
+            components.extend(data.get("components", []))
         objects = sorted(set([o for o in objects if cmds.objExists(o)]))
-        if objects:
-            cmds.select(objects, replace=True)
+        components = [c for c in (cmds.ls(list(set(components)), flatten=True) or []) if cmds.objExists(c)]
+        selected_items = objects + components
+        if selected_items:
+            cmds.select(selected_items, replace=True)
 
     def set_texture_set_visibility(self, visible: bool, selected_only: bool = False) -> None:
-        target_sets = self._selected_texture_set_names() if selected_only else list(self.detected_texture_sets.keys())
+        material_sets = self.material_sets_by_context.get("high", {})
+        target_sets = self._selected_texture_set_names("high") if selected_only else list(material_sets.keys())
         if not target_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set sélectionné.")
             return
         impacted_objects: List[str] = []
         for set_name in target_sets:
-            objs = self.detected_texture_sets[set_name].get("objects", [])
+            objs = material_sets[set_name].get("objects", [])
             for obj in objs:
                 if cmds.objExists(obj):
                     try:
@@ -1651,15 +1684,16 @@ class HighPolyReviewTool:
                     except RuntimeError:
                         pass
             self.texture_set_visibility[set_name] = visible
-        self._refresh_texture_sets_list_ui()
+        self._refresh_texture_sets_list_ui("high")
         if selected_only:
-            self._restore_texture_set_selection(target_sets)
+            self._restore_texture_set_selection(target_sets, "high")
         action = "affichés" if visible else "masqués"
         scope_label = self._scope_label(self.last_texture_scope) if self.last_texture_scope else "N/A"
         self.log("INFO", "TextureSets", f"Texture sets {action}: {', '.join(target_sets)} (scope source: {scope_label})", list(sorted(set(impacted_objects)))[:150])
 
     def toggle_selected_texture_sets(self) -> None:
-        target_sets = self._selected_texture_set_names()
+        material_sets = self.material_sets_by_context.get("high", {})
+        target_sets = self._selected_texture_set_names("high")
         if not target_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour toggle.")
             return
@@ -1667,7 +1701,7 @@ class HighPolyReviewTool:
         for set_name in target_sets:
             current = self.texture_set_visibility.get(set_name, True)
             new_state = not current
-            objs = self.detected_texture_sets[set_name].get("objects", [])
+            objs = material_sets[set_name].get("objects", [])
             for obj in objs:
                 if cmds.objExists(obj):
                     try:
@@ -1676,24 +1710,25 @@ class HighPolyReviewTool:
                     except RuntimeError:
                         pass
             self.texture_set_visibility[set_name] = new_state
-        self._refresh_texture_sets_list_ui()
-        self._restore_texture_set_selection(target_sets)
+        self._refresh_texture_sets_list_ui("high")
+        self._restore_texture_set_selection(target_sets, "high")
         self.log("INFO", "TextureSets", f"Toggle visibility appliqué à: {', '.join(target_sets)}", list(sorted(set(impacted_objects)))[:150])
 
     def isolate_selected_texture_sets(self) -> None:
-        target_sets = self._selected_texture_set_names()
+        material_sets = self.material_sets_by_context.get("high", {})
+        target_sets = self._selected_texture_set_names("high")
         if not target_sets:
             self.log("WARNING", "TextureSets", "Aucun texture set sélectionné pour isolation.")
             return
         scene_transforms = cmds.ls(type="transform", long=True) or []
         default_camera_transforms = set(cmds.listRelatives(cmds.ls(type="camera") or [], parent=True, fullPath=True) or [])
-        all_sets = list(self.detected_texture_sets.keys())
+        all_sets = list(material_sets.keys())
         hidden_objects: List[str] = []
         shown_objects: List[str] = []
         selected_objects: Set[str] = set()
         for set_name in all_sets:
             visible = set_name in target_sets
-            objs = self.detected_texture_sets[set_name].get("objects", [])
+            objs = material_sets[set_name].get("objects", [])
             for obj in objs:
                 if not cmds.objExists(obj):
                     continue
@@ -1722,8 +1757,8 @@ class HighPolyReviewTool:
             except RuntimeError:
                 continue
 
-        self._refresh_texture_sets_list_ui()
-        self._restore_texture_set_selection(target_sets)
+        self._refresh_texture_sets_list_ui("high")
+        self._restore_texture_set_selection(target_sets, "high")
         self.log(
             "INFO",
             "TextureSets",
@@ -1735,7 +1770,7 @@ class HighPolyReviewTool:
         )
 
     def show_all_texture_sets(self) -> None:
-        if not self.detected_texture_sets:
+        if not self.material_sets_by_context.get("high"):
             self.log("WARNING", "TextureSets", "Aucun texture set détecté. Lancez d'abord Run Texture Sets.")
             return
         for tr in cmds.ls(type="transform", long=True) or []:
@@ -2304,39 +2339,34 @@ class HighPolyReviewTool:
 
         mat_faces: Dict[str, int] = {}
         mat_objects: Dict[str, List[str]] = {}
+        mat_full_objects: Dict[str, Set[str]] = {}
+        mat_components: Dict[str, Set[str]] = {}
         total_faces = 0
         for mesh in meshes:
             fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
             total_faces += fcount
-            sgs = cmds.listConnections(mesh, type="shadingEngine") or []
-            if not sgs and fcount > 0:
-                self.log("WARNING", "LowMaterials", f"Aucun material valide trouvé pour mesh : {mesh}", [mesh])
+            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
+            if not shapes:
+                self.log("WARNING", "LowMaterials", f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
                 continue
+            shape = shapes[0]
+            sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
             for sg in sgs:
                 mats = cmds.ls(cmds.listConnections(sg + ".surfaceShader") or [], materials=True) or []
                 if not mats:
                     continue
                 mat = mats[0]
-                assigned_faces = cmds.sets(sg, query=True) or []
-                mesh_face_count = 0
-                mesh_token = mesh + ".f["
-                for face_item in assigned_faces:
-                    if not isinstance(face_item, str) or not face_item.startswith(mesh_token):
-                        continue
-                    if ":" in face_item:
-                        numbers = [int(v) for v in re.findall(r"\d+", face_item)]
-                        if len(numbers) >= 2:
-                            mesh_face_count += (numbers[1] - numbers[0] + 1)
-                    else:
-                        mesh_face_count += 1
-                if mesh_face_count == 0 and len(sgs) == 1:
-                    mesh_face_count = fcount
-                if mesh_face_count == 0:
+                mesh_face_count, object_assigned, component_faces = self._material_assignment_details(mesh, shape, sg, fcount)
+                if mesh_face_count <= 0:
                     continue
                 mat_faces[mat] = mat_faces.get(mat, 0) + mesh_face_count
                 mat_objects.setdefault(mat, []).append(mesh)
+                if object_assigned:
+                    mat_full_objects.setdefault(mat, set()).add(mesh)
+                else:
+                    mat_components.setdefault(mat, set()).update(component_faces)
 
-        self.detected_texture_sets = {}
+        self.material_sets_by_context["low"] = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
         self.log("INFO", "LowMaterials", f"Matériaux détectés : {len(sorted_mats)}")
         for mat, count in sorted_mats:
@@ -2344,19 +2374,22 @@ class HighPolyReviewTool:
             display = self._strip_namespaces_from_name(mat)
             has_prefix = display.startswith("QDS_")
             key = f"MAT::{mat}"
-            self.detected_texture_sets[key] = {
+            self.material_sets_by_context["low"][key] = {
                 "name": mat,
                 "display_name": display,
                 "objects": sorted(set(mat_objects.get(mat, []))),
+                "full_objects": sorted(mat_full_objects.get(mat, set())),
+                "components": sorted(mat_components.get(mat, set())),
                 "percent_of_total": pct,
                 "face_count": count,
                 "is_qds": has_prefix,
             }
-            self.log("INFO" if has_prefix else "FAIL", "LowMaterials", f"{display} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
+            self.log("INFO" if has_prefix else "FAIL", "LowMaterials", f"{display} | {pct:.2f}% faces ({count}/{total_faces})", self.material_sets_by_context["low"][key]["objects"][:80])
         if not sorted_mats:
             self.log("FAIL", "LowMaterials", "Aucun material valide trouvé.")
-        self._refresh_texture_sets_list_ui()
-        ok = bool(self.detected_texture_sets)
+        self.detected_texture_sets = self.material_sets_by_context["low"]
+        self._refresh_texture_sets_list_ui("low")
+        ok = bool(self.material_sets_by_context["low"])
         self.log("INFO" if ok else "FAIL", "LowMaterials", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_materials_checked", "OK" if ok else "FAIL")
 
@@ -2534,9 +2567,19 @@ class HighPolyReviewTool:
         shading_group: str,
         mesh_face_count: int,
     ) -> int:
+        count, _, _ = self._material_assignment_details(mesh, shape, shading_group, mesh_face_count)
+        return count
+
+    def _material_assignment_details(
+        self,
+        mesh: str,
+        shape: str,
+        shading_group: str,
+        mesh_face_count: int,
+    ) -> Tuple[int, bool, List[str]]:
         members = cmds.sets(shading_group, query=True) or []
         if not members:
-            return 0
+            return 0, False, []
 
         mesh_short = mesh.split("|")[-1]
         shape_short = shape.split("|")[-1]
@@ -2555,12 +2598,13 @@ class HighPolyReviewTool:
                 object_assigned = True
 
         if object_assigned:
-            return mesh_face_count
+            return mesh_face_count, True, []
         if not face_components:
-            return 0
+            return 0, False, []
 
         expanded = cmds.ls(face_components, flatten=True) or []
         face_indices: Set[int] = set()
+        clean_components: List[str] = []
         for face in expanded:
             if not isinstance(face, str):
                 continue
@@ -2569,7 +2613,73 @@ class HighPolyReviewTool:
             match = re.search(r"\.f\[(\d+)\]", face)
             if match:
                 face_indices.add(int(match.group(1)))
-        return len(face_indices)
+                clean_components.append(face)
+        return len(face_indices), False, sorted(set(clean_components))
+
+    def _get_active_model_panels(self) -> List[str]:
+        model_panels = cmds.getPanel(type="modelPanel") or []
+        return [panel for panel in model_panels if cmds.modelEditor(panel, exists=True)]
+
+    def _disable_material_isolation(self) -> None:
+        for panel in self._get_active_model_panels():
+            try:
+                if cmds.isolateSelect(panel, query=True, state=True):
+                    cmds.isolateSelect(panel, state=False)
+            except RuntimeError:
+                continue
+        self.material_isolation_state = {"context": "", "material_key": ""}
+
+    def toggle_isolate_selected_material(self, context_key: str) -> None:
+        material_sets = self.material_sets_by_context.get(context_key, {})
+        selected = self._selected_texture_set_names(context_key)
+        selected_key = selected[0] if selected else ""
+        active_key = self.material_isolation_state.get("material_key", "")
+        active_context = self.material_isolation_state.get("context", "")
+        category = "Materials"
+
+        if not selected_key:
+            if active_key:
+                self._disable_material_isolation()
+                self.log("INFO", category, "Isolate Material désactivé")
+                self.log("INFO", category, "Résultat : retour à l’affichage normal")
+            else:
+                self.log("INFO", category, "Aucun matériau sélectionné")
+            return
+
+        if active_key and selected_key == active_key and context_key == active_context:
+            self._disable_material_isolation()
+            self.log("INFO", category, "Isolate Material désactivé")
+            self.log("INFO", category, "Résultat : retour à l’affichage normal")
+            return
+
+        data = material_sets.get(selected_key, {})
+        full_objects = [obj for obj in data.get("full_objects", []) if cmds.objExists(obj)]
+        components = [comp for comp in (cmds.ls(data.get("components", []), flatten=True) or []) if cmds.objExists(comp)]
+        isolate_items = full_objects + components
+        if not isolate_items:
+            self.log("INFO", category, "Aucun matériau sélectionné")
+            return
+
+        if active_key:
+            self.log("INFO", category, "Isolation précédente remplacée")
+            self._disable_material_isolation()
+        else:
+            self.log("INFO", category, "Isolate Material activé")
+
+        cmds.select(isolate_items, replace=True)
+        for panel in self._get_active_model_panels():
+            try:
+                cmds.isolateSelect(panel, state=True)
+                cmds.isolateSelect(panel, loadSelected=True)
+            except RuntimeError:
+                continue
+
+        self.material_isolation_state = {"context": context_key, "material_key": selected_key}
+        display_name = data.get("display_name", data.get("name", selected_key))
+        self.log("INFO", category, f"Material sélectionné : {display_name}")
+        self.log("INFO", category, f"Objets complets isolés : {len(full_objects)}")
+        self.log("INFO", category, f"Components isolés : {len(components)} faces")
+        self.log("INFO", category, "Résultat : OK")
 
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (mode, scope_keys, source_label)
@@ -2585,6 +2695,8 @@ class HighPolyReviewTool:
 
         mat_faces: Dict[str, int] = {}
         mat_objects: Dict[str, List[str]] = {}
+        mat_full_objects: Dict[str, Set[str]] = {}
+        mat_components: Dict[str, Set[str]] = {}
         total_faces = 0
         for mesh in meshes:
             fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
@@ -2602,10 +2714,14 @@ class HighPolyReviewTool:
                 if not mats:
                     continue
                 mat = mats[0]
-                assigned_count = self._count_faces_assigned_to_mesh(mesh, shape, sg, fcount)
+                assigned_count, object_assigned, component_faces = self._material_assignment_details(mesh, shape, sg, fcount)
                 if assigned_count <= 0:
                     continue
                 mesh_material_faces[mat] = mesh_material_faces.get(mat, 0) + assigned_count
+                if object_assigned:
+                    mat_full_objects.setdefault(mat, set()).add(mesh)
+                else:
+                    mat_components.setdefault(mat, set()).update(component_faces)
 
             self.log("INFO", "MaterialsMesh", f"Mesh = {mesh}")
             if not mesh_material_faces:
@@ -2626,27 +2742,31 @@ class HighPolyReviewTool:
             self.log("INFO", "MaterialsMesh", "Result = OK", [mesh])
 
         self.detected_texture_sets = {}
+        self.material_sets_by_context["high"] = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
         self.log("INFO", "Materials", f"Matériaux détectés au total : {len(sorted_mats)}")
         for mat, count in sorted_mats:
             pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
             display_name = self._strip_namespaces_from_name(mat)
             key = f"MAT::{mat}"
-            self.detected_texture_sets[key] = {
+            self.material_sets_by_context["high"][key] = {
                 "name": mat,
                 "display_name": display_name,
                 "objects": sorted(set(mat_objects.get(mat, []))),
+                "full_objects": sorted(mat_full_objects.get(mat, set())),
+                "components": sorted(mat_components.get(mat, set())),
                 "percent_of_total": pct,
                 "face_count": count,
                 "is_qds": display_name.startswith("QDS_"),
             }
             level = "INFO" if display_name.startswith("QDS_") else "FAIL"
-            self.log(level, "Materials", f"{display_name} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
+            self.log(level, "Materials", f"{display_name} | {pct:.2f}% faces ({count}/{total_faces})", self.material_sets_by_context["high"][key]["objects"][:80])
         if not sorted_mats:
             self.log("FAIL", "Materials", "Aucun material valide trouvé.")
 
-        self._refresh_texture_sets_list_ui()
-        ok = bool(self.detected_texture_sets)
+        self.detected_texture_sets = self.material_sets_by_context["high"]
+        self._refresh_texture_sets_list_ui("high")
+        ok = bool(self.material_sets_by_context["high"])
         self.log("INFO" if ok else "FAIL", "Materials", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("texture_sets_analyzed", "OK" if ok else "FAIL")
 
