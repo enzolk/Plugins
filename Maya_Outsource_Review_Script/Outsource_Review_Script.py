@@ -334,28 +334,28 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
 
         cmds.text(label="Step 02 — Topology Check", align="left")
-        self._build_check_row("check_low_topology", "Run Topology", self.run_low_topology_checks)
+        self._build_check_row("check_low_topology", "Topology", self.run_low_topology_checks)
         cmds.separator(style="in")
 
         cmds.text(label="Step 03 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_low_ns"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Only low review namespaces should remain", align="left")
-        cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_low_namespaces())
+        cmds.button(label="Run Namespace Check", height=26, command=lambda *_: self.scan_low_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_low_namespaces())
         cmds.setParent("..")
         cmds.separator(style="in")
 
         cmds.text(label="Step 04 — Materials / Texture Sets", align="left")
-        self._build_check_row("check_low_materials", "Analyze Materials", self.analyze_low_materials)
+        self._build_check_row("check_low_materials", "Materials", self.analyze_low_materials)
         cmds.separator(style="in")
 
         cmds.text(label="Step 05 — UV Check map1", align="left")
-        self._build_check_row("check_low_uv_map1", "Run UV Map1 Check", self.run_low_uv_map1_check)
+        self._build_check_row("check_low_uv_map1", "UV Map1 Check", self.run_low_uv_map1_check)
         cmds.separator(style="in")
 
         cmds.text(label="Step 06 — UV map2 / Texel Density", align="left")
-        self._build_check_row("check_low_uv_map2", "Run UV Map2 Check", self.run_low_map2_density_check)
+        self._build_check_row("check_low_uv_map2", "UV Map2 Check", self.run_low_map2_density_check)
         cmds.separator(style="in")
 
         cmds.text(label="Step 07 — Compare Low.fbx vs Bake Scene Low", align="left")
@@ -366,7 +366,7 @@ class HighPolyReviewTool:
         cmds.button(label="Load / Reference Bake.ma", height=26, command=lambda *_: self.load_bake_ma_scene())
         self.ui["check_low_bake"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.setParent("..")
-        cmds.button(label="Run Compare Bake Low", height=26, command=lambda *_: self.compare_low_vs_bake_low())
+        cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_low_vs_bake_low())
         cmds.separator(style="in")
 
         cmds.text(label="Step 08 — Compare Low.fbx vs Final Scene Asset", align="left")
@@ -377,7 +377,7 @@ class HighPolyReviewTool:
         cmds.button(label="Load / Reference Final Scene.ma", height=26, command=lambda *_: self.load_final_asset_ma_scene())
         self.ui["check_low_final"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.setParent("..")
-        cmds.button(label="Run Compare Final", height=26, command=lambda *_: self.compare_low_vs_final_asset())
+        cmds.button(label="Run Compare Final Asset", height=26, command=lambda *_: self.compare_low_vs_final_asset())
 
         cmds.setParent("..")
         cmds.setParent("..")
@@ -976,7 +976,7 @@ class HighPolyReviewTool:
             self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
         elif import_key == "low_fbx":
             namespace = self.context["low_fbx_namespace"]
-            self.detected_roots["low"] = self._find_root_candidates("low", namespace=namespace)
+            self.detected_roots["low"] = self._resolve_low_roots_for_logs()
         elif import_key == "bake_ma":
             namespace = self.context["bake_ma_namespace"]
             self.detected_roots["bake_high"] = self._find_root_candidates("high", namespace=namespace)
@@ -1861,6 +1861,7 @@ class HighPolyReviewTool:
         self._log_root_detection("high", "High(FBX)")
 
     def load_low_fbx_scene(self) -> None:
+        self._log_step_header(1, "Load Low.fbx", category="LowLoad")
         path = self.paths.get("low_fbx", "")
         if not path:
             self.log("FAIL", "LoadLow", "Aucun fichier _LOW.fbx sélectionné (scan requis).")
@@ -1897,7 +1898,7 @@ class HighPolyReviewTool:
         self.context["low_fbx_nodes"] = new_nodes
         self.context["low_fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
         self.paths["low_fbx"] = path
-        self.detected_roots["low"] = self._find_root_candidates("low", namespace=namespace)
+        self.detected_roots["low"] = self._resolve_low_roots_for_logs()
         self.log("INFO", "LoadLow", f"Low.fbx référencé : {self._basename_from_path(path)}")
         self.log("INFO", "LoadLow", f"Namespace utilisé : {namespace}")
         self.log("INFO", "LoadLow", f"Meshes importés : {len(self.context['low_fbx_meshes'])}")
@@ -2197,36 +2198,52 @@ class HighPolyReviewTool:
     def _collect_low_meshes(self) -> List[str]:
         return self._collect_mesh_transforms_in_namespace(self.context["low_fbx_namespace"], exclude_placeholder_named=True)[0]
 
+    def _resolve_low_roots_for_logs(self) -> List[str]:
+        roots = self._find_root_candidates("low", namespace=self.context["low_fbx_namespace"])
+        if roots:
+            self.detected_roots["low"] = roots
+            return roots
+        return self.detected_roots.get("low", [])
+
     def run_low_topology_checks(self) -> None:
+        self._log_step_header(2, "Topology Check", category="LowTopology")
         meshes = self._collect_low_meshes()
+        roots = self._resolve_low_roots_for_logs()
         self.log("INFO", "LowTopology", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowTopology", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowTopology", f"Roots analysés : {self._preview_list(roots, max_items=20)}")
         self.log("INFO", "LowTopology", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "LowTopology", "Aucun mesh LOW chargé.")
             self.set_check_status("low_topology_checked", "FAIL")
             return
 
-        non_manifold_items: List[str] = []
-        lamina_items: List[str] = []
-        ngon_faces: List[str] = []
+        ok_count = 0
         for m in meshes:
-            if (cmds.polyInfo(m, nonManifoldVertices=True) or []) or (cmds.polyInfo(m, nonManifoldEdges=True) or []):
-                non_manifold_items.append(m)
-            if cmds.polyInfo(m, laminaFaces=True) or []:
-                lamina_items.append(m)
+            nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
+            nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
+            lam = cmds.polyInfo(m, laminaFaces=True) or []
+            non_manifold_count = len(nmv) + len(nme)
+            lamina_count = len(lam)
+            ngon_count = 0
             face_count = int(cmds.polyEvaluate(m, face=True) or 0)
             for face_idx in range(face_count):
                 vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
                 tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
                 if len(tokens) > 5:
-                    ngon_faces.append(f"{m}.f[{face_idx}]")
+                    ngon_count += 1
+            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
+            if mesh_ok:
+                ok_count += 1
 
-        self.log("INFO" if not ngon_faces else "FAIL", "LowTopology", f"N-gons : {'OK' if not ngon_faces else f'FAIL ({len(ngon_faces)} faces)'}")
-        self.log("INFO" if not non_manifold_items else "FAIL", "LowTopology", f"Non-manifold : {'OK' if not non_manifold_items else f'FAIL ({len(non_manifold_items)} mesh(es))'}")
-        self.log("INFO" if not lamina_items else "FAIL", "LowTopology", f"Lamina faces : {'OK' if not lamina_items else f'FAIL ({len(lamina_items)} mesh(es))'}")
-        ok = not ngon_faces and not non_manifold_items and not lamina_items
-        self.log("INFO" if ok else "FAIL", "LowTopology", f"Résultat final : {'OK' if ok else 'FAIL'}")
+            self.log("INFO", "LowTopologyMesh", f"Mesh = {m}")
+            self.log("INFO" if ngon_count == 0 else "FAIL", "LowTopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
+            self.log("INFO" if non_manifold_count == 0 else "FAIL", "LowTopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
+            self.log("INFO" if lamina_count == 0 else "FAIL", "LowTopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
+            self.log("INFO" if mesh_ok else "FAIL", "LowTopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+
+        fail_count = len(meshes) - ok_count
+        ok = fail_count == 0
+        self.log("INFO" if ok else "FAIL", "LowTopology", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         self.set_check_status("low_topology_checked", "OK" if ok else "FAIL")
 
     def _scan_namespaces_with_allowed(self, allowed: List[str]) -> List[str]:
@@ -2248,8 +2265,12 @@ class HighPolyReviewTool:
         self._log_step_header(3, "Namespace Check", category="LowNamespace")
         allowed = sorted({str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v})
         invalid = self._scan_namespaces_with_allowed(allowed)
+        roots = self._resolve_low_roots_for_logs()
+        meshes = self._collect_low_meshes()
         self.last_scanned_namespaces = invalid[:]
         self.log("INFO", "LowNamespace", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
+        self.log("INFO", "LowNamespace", f"Roots analysés : {self._preview_list(roots, max_items=20)}")
+        self.log("INFO", "LowNamespace", f"Meshes analysés : {len(meshes)}")
         self.log("INFO", "LowNamespace", f"Namespaces autorisés : {', '.join(allowed)}")
         self.log("INFO", "LowNamespace", f"Namespaces détectés : {len((cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []))}")
         self.log("INFO", "LowNamespace", f"Namespaces parasites détectés : {len(invalid)}")
@@ -2270,10 +2291,11 @@ class HighPolyReviewTool:
         self.scan_low_namespaces()
 
     def analyze_low_materials(self) -> None:
-        self._log_step_header(4, "Analyze Materials", category="LowMaterials")
+        self._log_step_header(4, "Materials Check", category="LowMaterials")
         meshes = self._collect_low_meshes()
+        roots = self._resolve_low_roots_for_logs()
         self.log("INFO", "LowMaterials", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowMaterials", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowMaterials", f"Roots analysés : {self._preview_list(roots, max_items=20)}")
         self.log("INFO", "LowMaterials", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "LowMaterials", "Aucun mesh LOW chargé.")
@@ -2798,7 +2820,7 @@ class HighPolyReviewTool:
         self._log_step_header(5, "UV Map1 Check", category="LowUV1")
         meshes = self._collect_low_meshes()
         self.log("INFO", "LowUV1", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowUV1", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowUV1", f"Roots analysés : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
         self.log("INFO", "LowUV1", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "LowUV1", "Aucun mesh LOW chargé.")
@@ -2885,7 +2907,7 @@ class HighPolyReviewTool:
         self._log_step_header(6, "UV Map2 Check", category="LowUV2")
         meshes = self._collect_low_meshes()
         self.log("INFO", "LowUV2", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowUV2", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "LowUV2", f"Roots analysés : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
         self.log("INFO", "LowUV2", f"Meshes analysés : {len(meshes)}")
         self.log("INFO", "LowUV2", "Map analysée : map2")
         if not meshes:
@@ -2924,12 +2946,12 @@ class HighPolyReviewTool:
         self.set_check_status("low_uv_map2_checked", "OK" if ok else "FAIL")
 
     def compare_low_vs_bake_low(self) -> None:
-        self._log_step_header(7, "Compare Low vs Bake", category="CompareLowBake")
+        self._log_step_header(7, "Compare Low vs Bake Low", category="LowCompareBake")
         low_meshes = self._collect_low_meshes()
         bake_meshes = [m for m in self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"], exclude_placeholder_named=True)[0] if self._matches_asset_kind(m, "low")]
         self.log("INFO", "CompareLowBake", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "CompareLowBake", f"Source B : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
-        self.log("INFO", "CompareLowBake", f"Roots analysés dans Low.fbx : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "CompareLowBake", f"Roots analysés dans Low.fbx : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
         self.log("INFO", "CompareLowBake", f"Roots analysés dans Bake Scene : {self._preview_list(self.detected_roots.get('bake_low', []), max_items=20)}")
         self.log("INFO", "CompareLowBake", f"Meshes analysés Low/BakeLow : {len(low_meshes)} / {len(bake_meshes)}")
         if not low_meshes or not bake_meshes:
@@ -2984,12 +3006,12 @@ class HighPolyReviewTool:
         self.set_check_status("low_bake_compared", "OK" if ok else "FAIL")
 
     def compare_low_vs_final_asset(self) -> None:
-        self._log_step_header(8, "Compare Low vs Final", category="CompareLowFinal")
+        self._log_step_header(8, "Compare Low vs Final Asset", category="LowCompareFinal")
         low_meshes = self._collect_low_meshes()
         final_meshes = self._collect_mesh_transforms_in_namespace(self.context["final_asset_ma_namespace"], exclude_placeholder_named=True)[0]
         self.log("INFO", "CompareLowFinal", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "CompareLowFinal", f"Source B : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
-        self.log("INFO", "CompareLowFinal", f"Roots analysés dans Low.fbx : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
+        self.log("INFO", "CompareLowFinal", f"Roots analysés dans Low.fbx : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
         self.log("INFO", "CompareLowFinal", f"Roots analysés dans Final Scene : {self._preview_list(self.detected_roots.get('final_asset_ma', []), max_items=20)}")
         self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {len(low_meshes)} / {len(final_meshes)}")
         if not low_meshes or not final_meshes:
