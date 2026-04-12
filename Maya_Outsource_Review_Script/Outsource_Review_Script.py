@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
+import maya.mel as mel
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
@@ -2788,32 +2789,44 @@ class HighPolyReviewTool:
         return re.sub(r"_low$", "", name)
 
     def _estimate_texel_density(self, mesh: str, uv_set: str = "map2", tex_size: int = 2048) -> Optional[float]:
+        """Measure texel density with Maya's native UV Toolkit calculation.
+
+        This mirrors the artist workflow: activate UV set, select all UVs of the mesh,
+        then run the same MEL command used by Maya's texel density UI.
+        """
         shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
         if not shape or not self._uv_set_on_shape(shape, uv_set):
             return None
+
+        previous_selection = cmds.ls(selection=True, long=True) or []
+        current_uv_set = cmds.polyUVSet(shape, query=True, currentUVSet=True) or []
+
         try:
             cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+            uv_count = int(self._scalar_from_maya_result(cmds.polyEvaluate(shape, uvcoord=True), default=0.0))
+            if uv_count <= 0:
+                return None
+
+            cmds.select(clear=True)
+            cmds.select(f"{mesh}.map[*]", replace=True)
+            td_value = mel.eval(f"texGetTexelDensity {int(tex_size)}")
+            td = self._scalar_from_maya_result(td_value, default=-1.0)
+            return td if td > 0.0 else None
         except RuntimeError:
             return None
-
-        face_count = int(self._scalar_from_maya_result(cmds.polyEvaluate(mesh, face=True), default=0.0))
-        weighted_sum = 0.0
-        total_world_area = 0.0
-        for face_idx in range(face_count):
-            comp = f"{mesh}.f[{face_idx}]"
+        finally:
+            if current_uv_set:
+                try:
+                    cmds.polyUVSet(shape, currentUVSet=True, uvSet=current_uv_set[0])
+                except RuntimeError:
+                    pass
             try:
-                world_area = self._scalar_from_maya_result(cmds.polyEvaluate(comp, worldArea=True), default=0.0)
-                uv_area = self._scalar_from_maya_result(cmds.polyEvaluate(comp, uvFaceArea=True), default=0.0)
+                if previous_selection:
+                    cmds.select(previous_selection, replace=True)
+                else:
+                    cmds.select(clear=True)
             except RuntimeError:
-                continue
-            if world_area <= 1e-12 or uv_area <= 1e-12:
-                continue
-            td_face = ((uv_area / world_area) ** 0.5) * float(tex_size)
-            weighted_sum += td_face * world_area
-            total_world_area += world_area
-        if total_world_area <= 1e-12:
-            return None
-        return weighted_sum / total_world_area
+                pass
 
     def run_low_map2_density_check(self) -> None:
         self._log_step_header(6, "UV Map2 Check", category="LowUV2")
@@ -2847,7 +2860,7 @@ class HighPolyReviewTool:
             self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
             self.log("INFO", "LowUV2Mesh", f"TD mesurée = {td:.2f}")
             self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
-            self.log("INFO", "LowUV2Mesh", f"Delta = {delta:+.2f}")
+            self.log("INFO", "LowUV2Mesh", f"Delta = {delta:.2f}")
             self.log("INFO" if mesh_ok else "FAIL", "LowUV2Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
         mean_td = (sum(valid_values) / len(valid_values)) if valid_values else 0.0
