@@ -354,7 +354,7 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
 
         cmds.text(label="Step 06 — UV map2 / Texel Density", align="left")
-        self._build_check_row("check_low_uv_map2", "Run Map2 Density Check", self.run_low_map2_density_check)
+        self._build_check_row("check_low_uv_map2", "Run UV Map2 Check", self.run_low_map2_density_check)
         cmds.separator(style="in")
 
         cmds.text(label="Step 07 — Compare Low.fbx vs Bake Scene Low", align="left")
@@ -460,6 +460,17 @@ class HighPolyReviewTool:
 
     def _log_step_header(self, step_number: int, title: str, category: str = "Step") -> None:
         self.log("INFO", category, f"-- Step {step_number:02d}: {title} --")
+
+    def _scalar_from_maya_result(self, value: Any, default: float = 0.0) -> float:
+        raw = value
+        if isinstance(raw, list):
+            raw = raw[0] if raw else default
+        if raw is None:
+            raw = default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return float(default)
 
     def log(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
@@ -2233,11 +2244,13 @@ class HighPolyReviewTool:
         return out
 
     def scan_low_namespaces(self) -> None:
-        allowed = [self.context["low_fbx_namespace"]]
+        self._log_step_header(3, "Namespace Check", category="LowNamespace")
+        allowed = sorted({str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v})
         invalid = self._scan_namespaces_with_allowed(allowed)
         self.last_scanned_namespaces = invalid[:]
         self.log("INFO", "LowNamespace", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "LowNamespace", f"Namespaces autorisés : {', '.join(allowed)}")
+        self.log("INFO", "LowNamespace", f"Namespaces détectés : {len((cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []))}")
         self.log("INFO", "LowNamespace", f"Namespaces parasites détectés : {len(invalid)}")
         if invalid:
             self.log("WARNING", "LowNamespace", f"Liste : {', '.join(invalid)}")
@@ -2246,7 +2259,8 @@ class HighPolyReviewTool:
         self.set_check_status("low_namespaces_checked", "OK" if ok else "FAIL")
 
     def remove_low_namespaces(self) -> None:
-        removable = self.last_scanned_namespaces[:]
+        allowed = {str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v}
+        removable = [ns for ns in self.last_scanned_namespaces[:] if ns not in allowed]
         for ns in sorted(removable, key=lambda n: n.count(":"), reverse=True):
             try:
                 cmds.namespace(removeNamespace=ns, mergeNamespaceWithRoot=True)
@@ -2255,6 +2269,7 @@ class HighPolyReviewTool:
         self.scan_low_namespaces()
 
     def analyze_low_materials(self) -> None:
+        self._log_step_header(4, "Analyze Materials", category="LowMaterials")
         meshes = self._collect_low_meshes()
         self.log("INFO", "LowMaterials", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "LowMaterials", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
@@ -2263,28 +2278,62 @@ class HighPolyReviewTool:
             self.log("FAIL", "LowMaterials", "Aucun mesh LOW chargé.")
             self.set_check_status("low_materials_checked", "FAIL")
             return
+
         mat_faces: Dict[str, int] = {}
+        mat_objects: Dict[str, List[str]] = {}
         total_faces = 0
         for mesh in meshes:
             fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
             total_faces += fcount
-            for i in range(fcount):
-                mats = cmds.ls(cmds.listConnections(f"{mesh}.f[{i}]", type="shadingEngine") or [], materials=True) or ["<NO_MATERIAL>"]
+            sgs = cmds.listConnections(mesh, type="shadingEngine") or []
+            if not sgs and fcount > 0:
+                self.log("WARNING", "LowMaterials", f"Aucun material valide trouvé pour mesh : {mesh}", [mesh])
+                continue
+            for sg in sgs:
+                mats = cmds.ls(cmds.listConnections(sg + ".surfaceShader") or [], materials=True) or []
+                if not mats:
+                    continue
                 mat = mats[0]
-                mat_faces[mat] = mat_faces.get(mat, 0) + 1
-        valid = 0
-        invalid = 0
-        for mat, count in sorted(mat_faces.items(), key=lambda x: x[1], reverse=True):
+                assigned_faces = cmds.sets(sg, query=True) or []
+                mesh_face_count = 0
+                mesh_token = mesh + ".f["
+                for face_item in assigned_faces:
+                    if not isinstance(face_item, str) or not face_item.startswith(mesh_token):
+                        continue
+                    if ":" in face_item:
+                        numbers = [int(v) for v in re.findall(r"\d+", face_item)]
+                        if len(numbers) >= 2:
+                            mesh_face_count += (numbers[1] - numbers[0] + 1)
+                    else:
+                        mesh_face_count += 1
+                if mesh_face_count == 0 and len(sgs) == 1:
+                    mesh_face_count = fcount
+                if mesh_face_count == 0:
+                    continue
+                mat_faces[mat] = mat_faces.get(mat, 0) + mesh_face_count
+                mat_objects.setdefault(mat, []).append(mesh)
+
+        self.detected_texture_sets = {}
+        sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
+        self.log("INFO", "LowMaterials", f"Matériaux détectés : {len(sorted_mats)}")
+        for mat, count in sorted_mats:
             pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
             display = self._strip_namespaces_from_name(mat)
             has_prefix = display.startswith("QDS_")
-            valid += 1 if has_prefix else 0
-            invalid += 0 if has_prefix else 1
-            self.log("INFO" if has_prefix else "FAIL", "LowMaterials", f"{display} | {pct:.2f}% faces | Prefix QDS_: {'OK' if has_prefix else 'FAIL'}")
-        self.log("INFO", "LowMaterials", f"Materials détectés : {len(mat_faces)}")
-        self.log("INFO", "LowMaterials", f"Materials avec prefix QDS_ valide : {valid}")
-        self.log("INFO", "LowMaterials", f"Materials invalides : {invalid}")
-        ok = invalid == 0 and len(mat_faces) > 0
+            key = f"MAT::{mat}"
+            self.detected_texture_sets[key] = {
+                "name": mat,
+                "display_name": display,
+                "objects": sorted(set(mat_objects.get(mat, []))),
+                "percent_of_total": pct,
+                "face_count": count,
+                "is_qds": has_prefix,
+            }
+            self.log("INFO" if has_prefix else "FAIL", "LowMaterials", f"{display} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
+        if not sorted_mats:
+            self.log("FAIL", "LowMaterials", "Aucun material valide trouvé.")
+        self._refresh_texture_sets_list_ui()
+        ok = bool(self.detected_texture_sets)
         self.log("INFO" if ok else "FAIL", "LowMaterials", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_materials_checked", "OK" if ok else "FAIL")
 
@@ -2680,8 +2729,8 @@ class HighPolyReviewTool:
         for i in range(face_count):
             comp = f"{mesh}.f[{i}]"
             try:
-                w_area = float(cmds.polyEvaluate(comp, worldArea=True) or 0.0)
-                uv_area = float(cmds.polyEvaluate(comp, uvFaceArea=True) or 0.0)
+                w_area = self._scalar_from_maya_result(cmds.polyEvaluate(comp, worldArea=True), default=0.0)
+                uv_area = self._scalar_from_maya_result(cmds.polyEvaluate(comp, uvFaceArea=True), default=0.0)
             except RuntimeError:
                 continue
             if w_area <= 1e-12 or uv_area <= 1e-12:
@@ -2692,32 +2741,45 @@ class HighPolyReviewTool:
         return sum(ratios) / float(len(ratios))
 
     def run_low_uv_map1_check(self) -> None:
+        self._log_step_header(5, "UV Map1 Check", category="LowUV1")
         meshes = self._collect_low_meshes()
         self.log("INFO", "LowUV1", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "LowUV1", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
         self.log("INFO", "LowUV1", f"Meshes analysés : {len(meshes)}")
-        overlap_fail = []
-        outside_count = 0
-        distortion_warn = []
+        if not meshes:
+            self.log("FAIL", "LowUV1", "Aucun mesh LOW chargé.")
+            self.set_check_status("low_uv_map1_checked", "FAIL")
+            return
+
+        fail_count = 0
         for mesh in meshes:
-            if cmds.polyUVOverlap(mesh, oc=True) or []:
-                overlap_fail.append(mesh)
+            overlap_data = cmds.polyUVOverlap(mesh, oc=True) or []
+            overlap_count = len(overlap_data) if isinstance(overlap_data, list) else int(bool(overlap_data))
+            overlap_ok = overlap_count == 0
+            outside_count = 0
             try:
                 bbox = cmds.polyEvaluate(mesh, boundingBox2d=True) or []
                 if bbox:
                     (u_min, u_max), (v_min, v_max) = bbox
                     if u_min < 0.0 or v_min < 0.0 or u_max > 1.0 or v_max > 1.0:
-                        outside_count += 1
+                        outside_count = 1
             except RuntimeError:
                 pass
+            outside_ok = outside_count == 0
             ratio = self._mesh_uv_distortion_ratio(mesh, uv_set="map1")
-            if ratio is not None and ratio > LOW_UV_DISTORTION_THRESHOLD:
-                distortion_warn.append(mesh)
-        self.log("INFO" if not overlap_fail else "FAIL", "LowUV1", f"UV map1 overlap : {'OK' if not overlap_fail else f'FAIL ({len(overlap_fail)} mesh(es))'}")
-        self.log("INFO" if outside_count == 0 else "FAIL", "LowUV1", f"UV map1 shells in 0-1 : {'OK' if outside_count == 0 else f'FAIL ({outside_count} mesh(es) hors 0-1)'}")
-        self.log("INFO" if not distortion_warn else "WARNING", "LowUV1", f"UV map1 distortion : {'OK' if not distortion_warn else f'WARNING (distorsion forte sur {len(distortion_warn)} mesh)'}")
+            distortion_ok = (ratio is None) or ratio <= LOW_UV_DISTORTION_THRESHOLD
+            mesh_ok = overlap_ok and outside_ok
+            if not mesh_ok:
+                fail_count += 1
+
+            self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+            self.log("INFO" if outside_ok else "FAIL", "LowUV1Mesh", f"UV shells hors 0-1 = {outside_count}")
+            self.log("INFO" if overlap_ok else "FAIL", "LowUV1Mesh", f"UV overlap = {overlap_count}")
+            self.log("INFO" if distortion_ok else "WARNING", "LowUV1Mesh", f"Distortion = {'OK' if distortion_ok else f'WARNING ({ratio:.3f})'}")
+            self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+
         self.log("INFO", "LowUV1", f"Seuil distortion utilisé : {LOW_UV_DISTORTION_THRESHOLD:.2f}")
-        ok = (len(overlap_fail) == 0) and (outside_count == 0)
+        ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "LowUV1", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_uv_map1_checked", "OK" if ok else "FAIL")
 
@@ -2731,45 +2793,72 @@ class HighPolyReviewTool:
             return None
         try:
             cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
-            uv_bbox = cmds.polyEvaluate(mesh, boundingBox2d=True) or []
-            w_area = float(cmds.polyEvaluate(mesh, worldArea=True) or 0.0)
         except RuntimeError:
             return None
-        if not uv_bbox or w_area <= 1e-12:
+
+        face_count = int(self._scalar_from_maya_result(cmds.polyEvaluate(mesh, face=True), default=0.0))
+        weighted_sum = 0.0
+        total_world_area = 0.0
+        for face_idx in range(face_count):
+            comp = f"{mesh}.f[{face_idx}]"
+            try:
+                world_area = self._scalar_from_maya_result(cmds.polyEvaluate(comp, worldArea=True), default=0.0)
+                uv_area = self._scalar_from_maya_result(cmds.polyEvaluate(comp, uvFaceArea=True), default=0.0)
+            except RuntimeError:
+                continue
+            if world_area <= 1e-12 or uv_area <= 1e-12:
+                continue
+            td_face = ((uv_area / world_area) ** 0.5) * float(tex_size)
+            weighted_sum += td_face * world_area
+            total_world_area += world_area
+        if total_world_area <= 1e-12:
             return None
-        (u_min, u_max), (v_min, v_max) = uv_bbox
-        uv_area = max(0.0, (u_max - u_min) * (v_max - v_min))
-        if uv_area <= 1e-12:
-            return None
-        return (tex_size * (uv_area ** 0.5)) / (w_area ** 0.5)
+        return weighted_sum / total_world_area
 
     def run_low_map2_density_check(self) -> None:
+        self._log_step_header(6, "UV Map2 Check", category="LowUV2")
         meshes = self._collect_low_meshes()
         self.log("INFO", "LowUV2", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "LowUV2", f"Roots analysés : {self._preview_list(self.detected_roots.get('low', []), max_items=20)}")
         self.log("INFO", "LowUV2", f"Meshes analysés : {len(meshes)}")
         self.log("INFO", "LowUV2", "Map analysée : map2")
-        per_asset: Dict[str, List[float]] = {}
-        all_values: List[float] = []
+        if not meshes:
+            self.log("FAIL", "LowUV2", "Aucun mesh LOW chargé.")
+            self.set_check_status("low_uv_map2_checked", "FAIL")
+            return
+
+        valid_values: List[float] = []
+        pair_fail_count = 0
         for mesh in meshes:
             td = self._estimate_texel_density(mesh, uv_set="map2", tex_size=2048)
             if td is None:
+                pair_fail_count += 1
+                self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
+                self.log("FAIL", "LowUV2Mesh", "TD mesurée = N/A")
+                self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
+                self.log("FAIL", "LowUV2Mesh", "Result = FAIL", [mesh])
                 continue
-            key = self._low_asset_key(mesh)
-            per_asset.setdefault(key, []).append(td)
-            all_values.append(td)
-        for asset_key, values in sorted(per_asset.items()):
-            self.log("INFO", "LowUV2", f"{asset_key}_low : {sum(values)/len(values):.2f}")
-        mean_td = (sum(all_values) / len(all_values)) if all_values else 0.0
-        self.log("INFO", "LowUV2", f"Texel density cible : {LOW_MAP2_TARGET_TD:.2f}")
+
+            valid_values.append(td)
+            delta = td - LOW_MAP2_TARGET_TD
+            mesh_ok = abs(delta) <= LOW_MAP2_TOLERANCE
+            if not mesh_ok:
+                pair_fail_count += 1
+            self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
+            self.log("INFO", "LowUV2Mesh", f"TD mesurée = {td:.2f}")
+            self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
+            self.log("INFO", "LowUV2Mesh", f"Delta = {delta:+.2f}")
+            self.log("INFO" if mesh_ok else "FAIL", "LowUV2Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+
+        mean_td = (sum(valid_values) / len(valid_values)) if valid_values else 0.0
         self.log("INFO", "LowUV2", f"Texel density moyenne mesurée : {mean_td:.2f}")
         self.log("INFO", "LowUV2", f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
-        ok = bool(all_values) and abs(mean_td - LOW_MAP2_TARGET_TD) <= LOW_MAP2_TOLERANCE
+        ok = bool(valid_values) and pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "LowUV2", f"Résultat global : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_uv_map2_checked", "OK" if ok else "FAIL")
 
     def compare_low_vs_bake_low(self) -> None:
-        self.log("INFO", "CompareLowBake", "----- Step 07: Compare Low.fbx vs Bake Scene Low -----")
+        self._log_step_header(7, "Compare Low vs Bake", category="CompareLowBake")
         low_meshes = self._collect_low_meshes()
         bake_meshes = [m for m in self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"], exclude_placeholder_named=True)[0] if self._matches_asset_kind(m, "low")]
         self.log("INFO", "CompareLowBake", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
@@ -2781,12 +2870,55 @@ class HighPolyReviewTool:
             self.log("FAIL", "CompareLowBake", "Compare impossible : Low.fbx ou Bake Low non chargé.")
             self.set_check_status("low_bake_compared", "FAIL")
             return
-        ok = self._compare_mesh_sets(low_meshes, bake_meshes, "Low FBX", "Bake Low")
+
+        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in low_meshes}
+        bake_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in bake_meshes}
+        all_keys = sorted(set(low_by.keys()) | set(bake_by.keys()))
+        self.log("INFO", "CompareLowBake", f"Paires comparées : {len(all_keys)}")
+
+        pair_fail_count = 0
+        for key in all_keys:
+            low_data = low_by.get(key)
+            bake_data = bake_by.get(key)
+            low_name = low_data["path"] if low_data else f"{self.context['low_fbx_namespace']}:{key}"
+            bake_name = bake_data["path"] if bake_data else f"{self.context['bake_ma_namespace']}:{key}"
+
+            presence_ok = bool(low_data and bake_data)
+            topo_ok = bool(low_data and bake_data and (low_data["v"], low_data["e"], low_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"]))
+            uv_ok = bool(low_data and bake_data and low_data["uv_total"] == bake_data["uv_total"] and low_data["uv_sets"] == bake_data["uv_sets"])
+            bbox_dims_low = (0.0, 0.0, 0.0)
+            bbox_dims_bake = (0.0, 0.0, 0.0)
+            bbox_delta = (0.0, 0.0, 0.0)
+            bbox_center_delta = (0.0, 0.0, 0.0)
+            bbox_ok = False
+            if presence_ok:
+                bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_data["path"])
+                bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
+                bbox_delta = tuple(abs(bbox_dims_low[i] - bbox_dims_bake[i]) for i in range(3))
+                bbox_center_delta = tuple(abs(bbox_center_low[i] - bbox_center_bake[i]) for i in range(3))
+                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
+            if not pair_ok:
+                pair_fail_count += 1
+
+            self.log("INFO", "CompareLowBakePair", f"Low = {low_name}")
+            self.log("INFO", "CompareLowBakePair", f"Bake Low = {bake_name}")
+            self.log("INFO" if presence_ok else "FAIL", "CompareLowBakePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+            self.log("INFO" if topo_ok else "FAIL", "CompareLowBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
+            self.log("INFO" if uv_ok else "FAIL", "CompareLowBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+            self.log("INFO", "CompareLowBakePair", f"Bounding Box Low = {self._fmt_vec(bbox_dims_low, precision=2)}")
+            self.log("INFO", "CompareLowBakePair", f"Bounding Box Bake Low = {self._fmt_vec(bbox_dims_bake, precision=2)}")
+            self.log("INFO", "CompareLowBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+            self.log("INFO", "CompareLowBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+            self.log("INFO" if bbox_ok else "FAIL", "CompareLowBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+            self.log("INFO" if pair_ok else "FAIL", "CompareLowBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+
+        ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareLowBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_bake_compared", "OK" if ok else "FAIL")
 
     def compare_low_vs_final_asset(self) -> None:
-        self.log("INFO", "CompareLowFinal", "----- Step 08: Compare Low.fbx vs Final Scene Asset -----")
+        self._log_step_header(8, "Compare Low vs Final", category="CompareLowFinal")
         low_meshes = self._collect_low_meshes()
         final_meshes = self._collect_mesh_transforms_in_namespace(self.context["final_asset_ma_namespace"], exclude_placeholder_named=True)[0]
         self.log("INFO", "CompareLowFinal", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
@@ -2801,18 +2933,47 @@ class HighPolyReviewTool:
 
         low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in low_meshes}
         final_by = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in final_meshes}
-        common = sorted(set(low_by.keys()) & set(final_by.keys()))
-        missing_final = sorted(set(low_by.keys()) - set(final_by.keys()))
-        missing_low = sorted(set(final_by.keys()) - set(low_by.keys()))
-        topo_mismatch = [k for k in common if (low_by[k]["v"], low_by[k]["e"], low_by[k]["f"]) != (final_by[k]["v"], final_by[k]["e"], final_by[k]["f"])]
-        uv_mismatch = [k for k in common if low_by[k]["uv_total"] != final_by[k]["uv_total"]]
-        presence_ok = not missing_final and not missing_low
-        topo_ok = not topo_mismatch
-        uv_ok = not uv_mismatch
-        self.log("INFO" if presence_ok else "FAIL", "CompareLowFinal", f"Mesh presence match : {'OK' if presence_ok else 'FAIL'}")
-        self.log("INFO" if topo_ok else "FAIL", "CompareLowFinal", f"Topology match : {'OK' if topo_ok else 'FAIL'}")
-        self.log("INFO" if uv_ok else "FAIL", "CompareLowFinal", f"UV match : {'OK' if uv_ok else 'FAIL'}")
-        ok = presence_ok and topo_ok and uv_ok
+        all_keys = sorted(set(low_by.keys()) | set(final_by.keys()))
+        self.log("INFO", "CompareLowFinal", f"Paires comparées : {len(all_keys)}")
+
+        pair_fail_count = 0
+        for key in all_keys:
+            low_data = low_by.get(key)
+            final_data = final_by.get(key)
+            low_name = low_data["path"] if low_data else f"{self.context['low_fbx_namespace']}:{key}"
+            final_name = final_data["path"] if final_data else f"{self.context['final_asset_ma_namespace']}:{key}"
+
+            presence_ok = bool(low_data and final_data)
+            topo_ok = bool(low_data and final_data and (low_data["v"], low_data["e"], low_data["f"]) == (final_data["v"], final_data["e"], final_data["f"]))
+            uv_ok = bool(low_data and final_data and low_data["uv_total"] == final_data["uv_total"] and low_data["uv_sets"] == final_data["uv_sets"])
+            bbox_dims_low = (0.0, 0.0, 0.0)
+            bbox_dims_final = (0.0, 0.0, 0.0)
+            bbox_delta = (0.0, 0.0, 0.0)
+            bbox_center_delta = (0.0, 0.0, 0.0)
+            bbox_ok = False
+            if presence_ok:
+                bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_data["path"])
+                bbox_dims_final, bbox_center_final = self._mesh_bbox_dims_and_center_world(final_data["path"])
+                bbox_delta = tuple(abs(bbox_dims_low[i] - bbox_dims_final[i]) for i in range(3))
+                bbox_center_delta = tuple(abs(bbox_center_low[i] - bbox_center_final[i]) for i in range(3))
+                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
+            if not pair_ok:
+                pair_fail_count += 1
+
+            self.log("INFO", "CompareLowFinalPair", f"Low = {low_name}")
+            self.log("INFO", "CompareLowFinalPair", f"Final = {final_name}")
+            self.log("INFO" if presence_ok else "FAIL", "CompareLowFinalPair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+            self.log("INFO" if topo_ok else "FAIL", "CompareLowFinalPair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
+            self.log("INFO" if uv_ok else "FAIL", "CompareLowFinalPair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+            self.log("INFO", "CompareLowFinalPair", f"Bounding Box Low = {self._fmt_vec(bbox_dims_low, precision=2)}")
+            self.log("INFO", "CompareLowFinalPair", f"Bounding Box Final = {self._fmt_vec(bbox_dims_final, precision=2)}")
+            self.log("INFO", "CompareLowFinalPair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+            self.log("INFO", "CompareLowFinalPair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+            self.log("INFO" if bbox_ok else "FAIL", "CompareLowFinalPair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+            self.log("INFO" if pair_ok else "FAIL", "CompareLowFinalPair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+
+        ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareLowFinal", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_final_compared", "OK" if ok else "FAIL")
 
