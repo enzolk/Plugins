@@ -1152,6 +1152,12 @@ class HighPolyReviewTool:
         bb = cmds.exactWorldBoundingBox(mesh_transform)
         return (bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
 
+    def _mesh_bbox_dims_and_center_world(self, mesh_transform: str) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+        bb = cmds.exactWorldBoundingBox(mesh_transform)
+        dims = (bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
+        center = ((bb[0] + bb[3]) * 0.5, (bb[1] + bb[4]) * 0.5, (bb[2] + bb[5]) * 0.5)
+        return dims, center
+
     def _world_union_bbox(self, nodes: List[str]) -> Optional[Tuple[float, float, float, float, float, float]]:
         existing = [n for n in nodes if cmds.objExists(n)]
         if not existing:
@@ -1574,7 +1580,13 @@ class HighPolyReviewTool:
                 percent_of_total = float(data.get("percent_of_total", 0.0))
                 visible = self.texture_set_visibility.get(set_name, True)
                 state = "Shown" if visible else "Hidden"
-                label = f"  {display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
+                if set_name.startswith("MAT::"):
+                    is_qds = display_name.startswith("QDS_")
+                    qds_prefix = "[OK-QDS]" if is_qds else "[NON-QDS]"
+                    face_count = int(data.get("face_count", 0))
+                    label = f"  {qds_prefix} {display_name} - {percent_of_total:.1f}% faces ({face_count}) | {count} obj(s) | {state}"
+                else:
+                    label = f"  {display_name} - {quad_count} Quads - {percent_of_total:.1f}% | {method} | {count} obj(s) | {state}"
                 unique_label = label
                 duplicate_index = 2
                 while unique_label in self.texture_set_label_to_key:
@@ -2032,7 +2044,18 @@ class HighPolyReviewTool:
                 ma_data["uv_total"] == fbx_data["uv_total"] and
                 ma_data["uv_sets"] == fbx_data["uv_sets"]
             )
-            pair_ok = presence_ok and topo_ok and uv_ok
+            bbox_dims_ma = (0.0, 0.0, 0.0)
+            bbox_dims_fbx = (0.0, 0.0, 0.0)
+            bbox_delta = (0.0, 0.0, 0.0)
+            bbox_center_delta = (0.0, 0.0, 0.0)
+            bbox_ok = False
+            if presence_ok:
+                bbox_dims_ma, bbox_center_ma = self._mesh_bbox_dims_and_center_world(ma_data["path"])
+                bbox_dims_fbx, bbox_center_fbx = self._mesh_bbox_dims_and_center_world(fbx_data["path"])
+                bbox_delta = tuple(abs(bbox_dims_ma[i] - bbox_dims_fbx[i]) for i in range(3))
+                bbox_center_delta = tuple(abs(bbox_center_ma[i] - bbox_center_fbx[i]) for i in range(3))
+                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
             if not pair_ok:
                 pair_fail_count += 1
 
@@ -2041,6 +2064,11 @@ class HighPolyReviewTool:
             self.log("INFO" if presence_ok else "FAIL", "ComparePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
             self.log("INFO" if topo_ok else "FAIL", "ComparePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
             self.log("INFO" if uv_ok else "FAIL", "ComparePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+            self.log("INFO", "ComparePair", f"Bounding Box MA = {self._fmt_vec(bbox_dims_ma, precision=2)}")
+            self.log("INFO", "ComparePair", f"Bounding Box FBX = {self._fmt_vec(bbox_dims_fbx, precision=2)}")
+            self.log("INFO", "ComparePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+            self.log("INFO", "ComparePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+            self.log("INFO" if bbox_ok else "FAIL", "ComparePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
             self.log("INFO" if pair_ok else "FAIL", "ComparePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
 
         ok = pair_fail_count == 0
@@ -2123,7 +2151,18 @@ class HighPolyReviewTool:
                 ma_data["uv_total"] == bake_data["uv_total"] and
                 ma_data["uv_sets"] == bake_data["uv_sets"]
             )
-            pair_ok = presence_ok and topo_ok and uv_ok
+            bbox_dims_ma = (0.0, 0.0, 0.0)
+            bbox_dims_bake = (0.0, 0.0, 0.0)
+            bbox_delta = (0.0, 0.0, 0.0)
+            bbox_center_delta = (0.0, 0.0, 0.0)
+            bbox_ok = False
+            if presence_ok:
+                bbox_dims_ma, bbox_center_ma = self._mesh_bbox_dims_and_center_world(ma_data["path"])
+                bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
+                bbox_delta = tuple(abs(bbox_dims_ma[i] - bbox_dims_bake[i]) for i in range(3))
+                bbox_center_delta = tuple(abs(bbox_center_ma[i] - bbox_center_bake[i]) for i in range(3))
+                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
             if not pair_ok:
                 pair_fail_count += 1
 
@@ -2132,6 +2171,11 @@ class HighPolyReviewTool:
             self.log("INFO" if presence_ok else "FAIL", "CompareBakePair", f"Mesh presence match = {'OK' if presence_ok else 'FAIL'}")
             self.log("INFO" if topo_ok else "FAIL", "CompareBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
             self.log("INFO" if uv_ok else "FAIL", "CompareBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+            self.log("INFO", "CompareBakePair", f"Bounding Box High.ma = {self._fmt_vec(bbox_dims_ma, precision=2)}")
+            self.log("INFO", "CompareBakePair", f"Bounding Box Bake = {self._fmt_vec(bbox_dims_bake, precision=2)}")
+            self.log("INFO", "CompareBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+            self.log("INFO", "CompareBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+            self.log("INFO" if bbox_ok else "FAIL", "CompareBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
             self.log("INFO" if pair_ok else "FAIL", "CompareBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
 
         ok = pair_fail_count == 0
@@ -2460,18 +2504,19 @@ class HighPolyReviewTool:
         self.detected_texture_sets = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
         self.log("INFO", "Materials", f"Matériaux détectés : {len(sorted_mats)}")
-        for idx, (mat, count) in enumerate(sorted_mats):
+        for mat, count in sorted_mats:
             pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
+            display_name = self._strip_namespaces_from_name(mat)
             key = f"MAT::{mat}"
             self.detected_texture_sets[key] = {
                 "name": mat,
-                "display_name": self._strip_namespaces_from_name(mat),
+                "display_name": display_name,
                 "objects": sorted(set(mat_objects.get(mat, []))),
                 "percent_of_total": pct,
                 "face_count": count,
+                "is_qds": display_name.startswith("QDS_"),
             }
-            if idx < 12:
-                self.log("INFO", "Materials", f"{self._strip_namespaces_from_name(mat)} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
+            self.log("INFO", "Materials", f"{display_name} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
         if not sorted_mats:
             self.log("FAIL", "Materials", "Aucun material valide trouvé.")
 
