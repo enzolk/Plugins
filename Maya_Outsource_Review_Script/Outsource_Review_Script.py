@@ -2504,6 +2504,50 @@ class HighPolyReviewTool:
         self.log("INFO" if ok else "FAIL", "Topology", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         self.set_check_status("topology_checked", "OK" if ok else "FAIL")
 
+    def _count_faces_assigned_to_mesh(
+        self,
+        mesh: str,
+        shape: str,
+        shading_group: str,
+        mesh_face_count: int,
+    ) -> int:
+        members = cmds.sets(shading_group, query=True) or []
+        if not members:
+            return 0
+
+        mesh_short = mesh.split("|")[-1]
+        shape_short = shape.split("|")[-1]
+        prefixes = (mesh, shape, mesh_short, shape_short)
+
+        object_assigned = False
+        face_components: List[str] = []
+        for member in members:
+            if not isinstance(member, str):
+                continue
+            if not any(member == p or member.startswith(f"{p}.") for p in prefixes):
+                continue
+            if ".f[" in member:
+                face_components.append(member)
+            else:
+                object_assigned = True
+
+        if object_assigned:
+            return mesh_face_count
+        if not face_components:
+            return 0
+
+        expanded = cmds.ls(face_components, flatten=True) or []
+        face_indices: Set[int] = set()
+        for face in expanded:
+            if not isinstance(face, str):
+                continue
+            if not any(face.startswith(f"{p}.f[") for p in prefixes):
+                continue
+            match = re.search(r"\.f\[(\d+)\]", face)
+            if match:
+                face_indices.add(int(match.group(1)))
+        return len(face_indices)
+
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (mode, scope_keys, source_label)
         self._log_step_header(7, "Analyze Materials", category="Materials")
@@ -2522,37 +2566,45 @@ class HighPolyReviewTool:
         for mesh in meshes:
             fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
             total_faces += fcount
-            sgs = cmds.listConnections(mesh, type="shadingEngine") or []
-            if not sgs and fcount > 0:
-                self.log("WARNING", "Materials", f"Aucun material valide trouvé pour mesh : {mesh}", [mesh])
+            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
+            if not shapes:
+                self.log("WARNING", "Materials", f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
                 continue
+
+            shape = shapes[0]
+            sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
+            mesh_material_faces: Dict[str, int] = {}
             for sg in sgs:
-                mats = cmds.ls(cmds.listConnections(sg + ".surfaceShader") or [], materials=True) or []
+                mats = cmds.ls(cmds.listConnections(f"{sg}.surfaceShader") or [], materials=True) or []
                 if not mats:
                     continue
                 mat = mats[0]
-                assigned_faces = cmds.sets(sg, query=True) or []
-                mesh_face_count = 0
-                mesh_token = mesh + ".f["
-                for face_item in assigned_faces:
-                    if not isinstance(face_item, str) or not face_item.startswith(mesh_token):
-                        continue
-                    if ":" in face_item:
-                        numbers = [int(v) for v in re.findall(r"\d+", face_item)]
-                        if len(numbers) >= 2:
-                            mesh_face_count += (numbers[1] - numbers[0] + 1)
-                    else:
-                        mesh_face_count += 1
-                if mesh_face_count == 0 and len(sgs) == 1:
-                    mesh_face_count = fcount
-                if mesh_face_count == 0:
+                assigned_count = self._count_faces_assigned_to_mesh(mesh, shape, sg, fcount)
+                if assigned_count <= 0:
                     continue
-                mat_faces[mat] = mat_faces.get(mat, 0) + mesh_face_count
+                mesh_material_faces[mat] = mesh_material_faces.get(mat, 0) + assigned_count
+
+            self.log("INFO", "MaterialsMesh", f"Mesh = {mesh}")
+            if not mesh_material_faces:
+                if fcount > 0:
+                    self.log("WARNING", "Materials", f"Aucun material valide trouvé pour mesh : {mesh}", [mesh])
+                self.log("FAIL", "MaterialsMesh", "Result = FAIL", [mesh])
+                continue
+
+            display_materials = ", ".join(self._strip_namespaces_from_name(m) for m in sorted(mesh_material_faces.keys()))
+            self.log("INFO", "MaterialsMesh", f"Materials trouvés = {display_materials}", [mesh])
+            for mat, count in sorted(mesh_material_faces.items(), key=lambda item: item[1], reverse=True):
+                display_name = self._strip_namespaces_from_name(mat)
+                pct = (count / float(fcount) * 100.0) if fcount else 0.0
+                level = "INFO" if display_name.startswith("QDS_") else "FAIL"
+                self.log(level, "MaterialsMesh", f"{display_name} | {pct:.2f}% faces", [mesh])
+                mat_faces[mat] = mat_faces.get(mat, 0) + count
                 mat_objects.setdefault(mat, []).append(mesh)
+            self.log("INFO", "MaterialsMesh", "Result = OK", [mesh])
 
         self.detected_texture_sets = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
-        self.log("INFO", "Materials", f"Matériaux détectés : {len(sorted_mats)}")
+        self.log("INFO", "Materials", f"Matériaux détectés au total : {len(sorted_mats)}")
         for mat, count in sorted_mats:
             pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
             display_name = self._strip_namespaces_from_name(mat)
@@ -2565,7 +2617,8 @@ class HighPolyReviewTool:
                 "face_count": count,
                 "is_qds": display_name.startswith("QDS_"),
             }
-            self.log("INFO", "Materials", f"{display_name} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
+            level = "INFO" if display_name.startswith("QDS_") else "FAIL"
+            self.log(level, "Materials", f"{display_name} | {pct:.2f}% faces ({count}/{total_faces})", self.detected_texture_sets[key]["objects"][:80])
         if not sorted_mats:
             self.log("FAIL", "Materials", "Aucun material valide trouvé.")
 
