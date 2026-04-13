@@ -1741,19 +1741,10 @@ class HighPolyReviewTool:
             cmds.textScrollList(self.ui[list_ui_key], edit=True, selectItem=labels_to_select)
 
     def on_texture_set_selection_changed(self, context_key: str = "high") -> None:
-        selected_names = self._selected_texture_set_names(context_key)
-        objects: List[str] = []
-        components: List[str] = []
-        material_sets = self.material_sets_by_context.get(context_key, {})
-        for set_name in selected_names:
-            data = material_sets.get(set_name, {})
-            objects.extend(data.get("objects", []))
-            components.extend(data.get("components", []))
-        objects = sorted(set([o for o in objects if cmds.objExists(o)]))
-        components = [c for c in (cmds.ls(list(set(components)), flatten=True) or []) if cmds.objExists(c)]
-        selected_items = objects + components
-        if selected_items:
-            cmds.select(selected_items, replace=True)
+        _ = context_key
+        # IMPORTANT UX: selecting an entry in the materials list must not trigger
+        # any scene selection or isolate action. Isolation is button-driven only.
+        return
 
     def set_texture_set_visibility(self, visible: bool, selected_only: bool = False) -> None:
         material_sets = self.material_sets_by_context.get("high", {})
@@ -2911,10 +2902,63 @@ class HighPolyReviewTool:
             return
 
         data = material_sets.get(selected_key, {})
-        full_objects, components = self._resolve_material_isolation_items(context_key, data)
-        isolate_items = full_objects + components
+        material_name = str(data.get("name", "") or "")
+        if not material_name:
+            self.log("FAIL", category, "Le matériau sélectionné est invalide")
+            return
+        if not cmds.objExists(material_name):
+            self.log("FAIL", category, f"Matériau introuvable dans la scène : {material_name}")
+            return
+
+        shading_groups = cmds.listConnections(material_name, type="shadingEngine") or []
+        if not shading_groups:
+            self.log("FAIL", category, "Le nœud sélectionné n'est pas un material valide")
+            return
+
+        object_members: List[str] = []
+        component_members: List[str] = []
+        for shading_group in sorted(set(shading_groups)):
+            members = cmds.sets(shading_group, query=True) or []
+            for member in members:
+                if not isinstance(member, str):
+                    continue
+                if ".f[" in member or ".vtx[" in member or ".e[" in member:
+                    component_members.append(member)
+                    continue
+                object_members.append(member)
+
+        object_members = sorted(set(cmds.ls(object_members, long=True) or []))
+        component_members = sorted(set(cmds.ls(component_members, flatten=True) or []))
+        if not object_members and not component_members:
+            self.log("FAIL", category, "Aucun objet assigné à ce material")
+            return
+
+        full_objects: Set[str] = set()
+        for obj in object_members:
+            if not cmds.objExists(obj):
+                continue
+            if cmds.nodeType(obj) == "transform":
+                full_objects.add(obj)
+                continue
+            parents = cmds.listRelatives(obj, parent=True, fullPath=True) or []
+            if parents:
+                full_objects.add(parents[0])
+
+        for comp in component_members:
+            base_name = comp.split(".", 1)[0]
+            base_long = (cmds.ls(base_name, long=True) or [base_name])[0]
+            if not cmds.objExists(base_long):
+                continue
+            if cmds.nodeType(base_long) == "transform":
+                full_objects.add(base_long)
+                continue
+            parents = cmds.listRelatives(base_long, parent=True, fullPath=True) or []
+            if parents:
+                full_objects.add(parents[0])
+
+        isolate_items = sorted(full_objects)
         if not isolate_items:
-            self.log("FAIL", category, "Aucune assignation exploitable trouvée pour le material sélectionné")
+            self.log("FAIL", category, "Aucun transform exploitable trouvé pour l'isolation")
             return
 
         if active_key:
@@ -2934,8 +2978,7 @@ class HighPolyReviewTool:
         self.material_isolation_state = {"context": context_key, "material_key": selected_key}
         display_name = data.get("display_name", data.get("name", selected_key))
         self.log("INFO", category, f"Material sélectionné : {display_name}")
-        self.log("INFO", category, f"Objets complets isolés : {len(full_objects)}")
-        self.log("INFO", category, f"Components isolés : {len(components)} faces")
+        self.log("INFO", category, f"Objets sélectionnés via material : {len(isolate_items)}")
         self.log("INFO", category, "Résultat : OK")
 
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
