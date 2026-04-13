@@ -1198,17 +1198,6 @@ class HighPolyReviewTool:
             mesh_segments = mesh_segments[1:]
         return "/".join(mesh_segments)
 
-    def _placeholder_match_key(self, mesh_transform: str, root: Optional[str] = None) -> str:
-        relative_key = self._normalized_relative_mesh_key(mesh_transform, root=root)
-        canonical_segments: List[str] = []
-        for segment in [s for s in relative_key.split("/") if s]:
-            lowered = segment.lower()
-            lowered = lowered.replace(PLACEHOLDER_TOKEN, "")
-            lowered = re.sub(r"[^a-z0-9]+", "", lowered)
-            if lowered:
-                canonical_segments.append(lowered)
-        return "/".join(canonical_segments)
-
     def _mesh_data_signature(self, mesh_transform: str, root: Optional[str] = None) -> Dict[str, object]:
         shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
         if not shape:
@@ -2677,8 +2666,8 @@ class HighPolyReviewTool:
 
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance = max(0.0, float(tolerance_percent)) / 100.0
-        high_by = {self._placeholder_match_key(m, root=high_root): m for m in high_meshes}
-        placeholder_by = {self._placeholder_match_key(m, root=placeholder_root): m for m in placeholder_meshes}
+        high_by = {self._normalized_relative_mesh_key(m, root=high_root): m for m in high_meshes}
+        placeholder_by = {self._normalized_relative_mesh_key(m, root=placeholder_root): m for m in placeholder_meshes}
         all_keys = sorted(set(high_by.keys()) | set(placeholder_by.keys()))
         all_pairs = len(all_keys)
         ok_count = 0
