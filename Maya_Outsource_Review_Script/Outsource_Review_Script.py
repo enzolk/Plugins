@@ -767,20 +767,31 @@ class HighPolyReviewTool:
         for key, files in found_files.items():
             self.detected_files[key] = files
 
+        # Toujours synchroniser les chemins utilisables par les loaders,
+        # même si les optionMenu ne sont pas présents dans l'UI courante.
+        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
+            files = self.detected_files[file_key]
+            previous = self.paths.get(file_key, "")
+            if previous and previous in files:
+                self.paths[file_key] = previous
+            elif files:
+                self.paths[file_key] = files[0]
+            else:
+                self.paths[file_key] = ""
+
         for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
             if f"{file_key}_menu" in self.ui:
                 self._populate_file_option_menu(file_key)
+                current = self.paths.get(file_key, "")
+                if current in self.detected_files[file_key]:
+                    index = self.detected_files[file_key].index(current) + 1
+                    cmds.optionMenu(self.ui[f"{file_key}_menu"], edit=True, select=index)
         if "bake_ma_menu_low" in self.ui:
             self._clear_option_menu(self.ui["bake_ma_menu_low"])
             for p in self.detected_files["bake_ma"] or []:
                 cmds.menuItem(label=os.path.basename(p), parent=self.ui["bake_ma_menu_low"])
             if not self.detected_files["bake_ma"]:
                 cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu_low"])
-        self.paths["high_ma"] = self.paths.get("high_ma", "")
-        self.paths["high_fbx"] = self.paths.get("high_fbx", "")
-        self.paths["bake_ma"] = self.paths.get("bake_ma", "")
-        self.paths["low_fbx"] = self.paths.get("low_fbx", "")
-        self.paths["final_scene_ma"] = self.paths.get("final_scene_ma", "")
         self.refresh_detected_file_labels()
 
         scan_logs = [
@@ -797,6 +808,7 @@ class HighPolyReviewTool:
             else:
                 label = file_key.replace("_", " ").title()
                 self.log("INFO", "Scan", f"{count} fichier(s) {label} détecté(s).")
+                self.log("INFO", "Scan", f"{file_key.upper()} actif: {self.paths.get(file_key, '-- vide --')}")
 
     def _populate_root_option_menu(self, root_key: str) -> None:
         menu = self.ui[f"{root_key}_root_menu"]
@@ -2096,9 +2108,16 @@ class HighPolyReviewTool:
         self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
 
     def load_everything(self) -> None:
+        self.log("INFO", "Load", "Action: Load Everything")
+        self.log("INFO", "Load", f"Root courant: {self.paths.get('root', '') or '-- non défini --'}")
+
         if not cmds.objExists("Outsourcing_Review"):
             cmds.group(empty=True, name="Outsourcing_Review")
+            self.log("INFO", "Load", "Groupe Outsourcing_Review créé.")
+        else:
+            self.log("INFO", "Load", "Groupe Outsourcing_Review déjà présent.")
         cmds.setAttr("Outsourcing_Review.visibility", 0)
+        self.log("INFO", "Load", "Groupe Outsourcing_Review masqué (visibility=0).")
 
         self.review_group_contents = {
             "high_ma": [],
@@ -2116,28 +2135,75 @@ class HighPolyReviewTool:
             ("final_scene_ma", "Final_Asset_MA_File"),
         ]
 
+        attempted = 0
+        skipped = 0
+        loaded_or_reused = 0
+
         for file_key, namespace in load_plan:
             path = self.paths.get(file_key, "")
+            self.log(
+                "INFO",
+                "Load",
+                f"Préparation [{file_key}] namespace={namespace} | path={path or '-- vide --'}",
+            )
             if not path or not os.path.isfile(path):
+                reason = "path vide/non sélectionné" if not path else "fichier introuvable"
+                self.log("WARNING", "Load", f"Skip [{file_key}] : {reason}.")
+                skipped += 1
                 continue
 
+            attempted += 1
             top_nodes: List[str] = []
             if cmds.namespace(exists=namespace):
                 top_nodes = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
+                self.log(
+                    "INFO",
+                    "Load",
+                    f"Namespace existant [{namespace}] détecté, réutilisation de {len(top_nodes)} top node(s).",
+                )
             else:
                 new_nodes = cmds.file(path, reference=True, namespace=namespace, returnNewNodes=True) or []
                 top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
+                self.log(
+                    "INFO",
+                    "Load",
+                    f"Référence créée [{file_key}] : {self._basename_from_path(path)} | "
+                    f"newNodes={len(new_nodes)} | topNodes={len(top_nodes)}",
+                )
 
             stored_nodes: List[str] = []
             for node in top_nodes:
                 if not cmds.objExists(node):
+                    self.log("WARNING", "Load", f"Node ignoré (inexistant): {node}")
                     continue
                 try:
                     cmds.parent(node, "Outsourcing_Review")
                     stored_nodes.append(node)
                 except RuntimeError:
+                    self.log("WARNING", "Load", f"Impossible de parent {node} -> Outsourcing_Review")
                     continue
             self.review_group_contents[file_key] = stored_nodes
+            loaded_or_reused += 1
+            self.log(
+                "INFO",
+                "Load",
+                f"[{file_key}] top nodes parentés: {len(stored_nodes)} | "
+                f"{self._preview_list(stored_nodes, max_items=8)}",
+            )
+
+        total_parented = sum(len(nodes) for nodes in self.review_group_contents.values())
+        self.log(
+            "INFO",
+            "Load",
+            f"Load Everything terminé | attempted={attempted} | skipped={skipped} | "
+            f"loaded_or_reused={loaded_or_reused} | total_parented={total_parented}",
+        )
+        if attempted == 0:
+            self.log(
+                "WARNING",
+                "Load",
+                "Aucune référence chargée: vérifier le scan, la sélection des fichiers et l'existence des chemins.",
+            )
 
     def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
         left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
