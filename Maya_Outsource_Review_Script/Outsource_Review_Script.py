@@ -2666,42 +2666,42 @@ class HighPolyReviewTool:
 
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance = max(0.0, float(tolerance_percent)) / 100.0
-        high_by = {self._normalized_relative_mesh_key(m, root=high_root): m for m in high_meshes}
-        placeholder_by = {self._normalized_relative_mesh_key(m, root=placeholder_root): m for m in placeholder_meshes}
-        all_keys = sorted(set(high_by.keys()) | set(placeholder_by.keys()))
-        all_pairs = len(all_keys)
-        ok_count = 0
-        for key in all_keys:
-            high = high_by.get(key)
-            placeholder = placeholder_by.get(key)
-            if not high or not placeholder:
-                self.log("FAIL", "PlaceholderPair", f"Présence mismatch pour sous-mesh relatif: {key}")
-                continue
-            h_dim = self._mesh_bbox_dims_world(high)
-            p_dim = self._mesh_bbox_dims_world(placeholder)
-            bbox_delta = tuple(abs(h_dim[i] - p_dim[i]) for i in range(3))
-            ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
-            bbox_ok = all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0)
-            high_pivot = tuple(cmds.xform(high, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
-            placeholder_pivot = tuple(cmds.xform(placeholder, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
-            pivot_delta = tuple(abs(high_pivot[i] - placeholder_pivot[i]) for i in range(3))
-            pivot_ok = all(v <= 1e-4 for v in pivot_delta)
-            pair_ok = bbox_ok and pivot_ok
 
-            self.log("INFO", "PlaceholderPair", f"High = {high}")
-            self.log("INFO", "PlaceholderPair", f"Placeholder = {placeholder}")
-            self.log("INFO", "PlaceholderPair", f"High bbox = {self._fmt_vec(h_dim, precision=2)}")
-            self.log("INFO", "PlaceholderPair", f"Placeholder bbox = {self._fmt_vec(p_dim, precision=2)}")
-            self.log("INFO", "PlaceholderPair", f"BBox delta = {self._fmt_vec(bbox_delta, precision=2)}")
-            self.log("INFO", "PlaceholderPair", f"High pivot = {self._fmt_vec(high_pivot, precision=4)}")
-            self.log("INFO", "PlaceholderPair", f"Placeholder pivot = {self._fmt_vec(placeholder_pivot, precision=4)}")
-            self.log("INFO", "PlaceholderPair", f"Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
-            self.log("INFO" if pair_ok else "FAIL", "PlaceholderPair", f"Result = {'OK' if pair_ok else 'FAIL'}", [high, placeholder])
+        def _bbox_dims_for_root(root: str) -> Tuple[float, float, float]:
+            bbox = cmds.exactWorldBoundingBox(root) or [0.0] * 6
+            if len(bbox) < 6:
+                return (0.0, 0.0, 0.0)
+            return (
+                float(bbox[3] - bbox[0]),
+                float(bbox[4] - bbox[1]),
+                float(bbox[5] - bbox[2]),
+            )
 
-            if pair_ok:
-                ok_count += 1
+        h_dim = _bbox_dims_for_root(high_root)
+        p_dim = _bbox_dims_for_root(placeholder_root)
+        bbox_delta = tuple(abs(h_dim[i] - p_dim[i]) for i in range(3))
+        ratio = tuple((h_dim[i] / p_dim[i]) if p_dim[i] else 0.0 for i in range(3))
+        bbox_ok = all(abs(r - 1.0) <= tolerance for r in ratio if r != 0.0)
 
-        fail_count = all_pairs - ok_count
+        high_pivot = tuple(cmds.xform(high_root, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+        placeholder_pivot = tuple(cmds.xform(placeholder_root, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+        pivot_delta = tuple(abs(high_pivot[i] - placeholder_pivot[i]) for i in range(3))
+        pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+        pair_ok = bbox_ok and pivot_ok
+
+        self.log("INFO", "PlaceholderPair", "Mode ensemble: aucun matching de sous-mesh par nom.")
+        self.log("INFO", "PlaceholderPair", f"High ensemble = {high_root} ({len(high_meshes)} sous-mesh)", [high_root])
+        self.log("INFO", "PlaceholderPair", f"Placeholder ensemble = {placeholder_root} ({len(placeholder_meshes)} sous-mesh)", [placeholder_root])
+        self.log("INFO", "PlaceholderPair", f"High bbox (ensemble) = {self._fmt_vec(h_dim, precision=2)}")
+        self.log("INFO", "PlaceholderPair", f"Placeholder bbox (ensemble) = {self._fmt_vec(p_dim, precision=2)}")
+        self.log("INFO", "PlaceholderPair", f"BBox delta (ensemble) = {self._fmt_vec(bbox_delta, precision=2)}")
+        self.log("INFO", "PlaceholderPair", f"High pivot (root) = {self._fmt_vec(high_pivot, precision=4)}")
+        self.log("INFO", "PlaceholderPair", f"Placeholder pivot (root) = {self._fmt_vec(placeholder_pivot, precision=4)}")
+        self.log("INFO", "PlaceholderPair", f"Pivot delta (root) = {self._fmt_vec(pivot_delta, precision=4)}")
+        self.log("INFO" if pair_ok else "FAIL", "PlaceholderPair", f"Result = {'OK' if pair_ok else 'FAIL'}", [high_root, placeholder_root])
+
+        ok_count = 1 if pair_ok else 0
+        fail_count = 0 if pair_ok else 1
         self.log("INFO" if fail_count == 0 else "FAIL", "Placeholder", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         self.set_check_status("placeholder_checked", "OK" if fail_count == 0 else "FAIL")
 
