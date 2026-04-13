@@ -2096,9 +2096,16 @@ class HighPolyReviewTool:
         self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
 
     def load_everything(self) -> None:
+        self.log("INFO", "Load", "Action: Load Everything")
+        self.log("INFO", "Load", f"Root courant: {self.paths.get('root', '') or '-- non défini --'}")
+
         if not cmds.objExists("Outsourcing_Review"):
             cmds.group(empty=True, name="Outsourcing_Review")
+            self.log("INFO", "Load", "Groupe Outsourcing_Review créé.")
+        else:
+            self.log("INFO", "Load", "Groupe Outsourcing_Review déjà présent.")
         cmds.setAttr("Outsourcing_Review.visibility", 0)
+        self.log("INFO", "Load", "Groupe Outsourcing_Review masqué (visibility=0).")
 
         self.review_group_contents = {
             "high_ma": [],
@@ -2116,28 +2123,75 @@ class HighPolyReviewTool:
             ("final_scene_ma", "Final_Asset_MA_File"),
         ]
 
+        attempted = 0
+        skipped = 0
+        loaded_or_reused = 0
+
         for file_key, namespace in load_plan:
             path = self.paths.get(file_key, "")
+            self.log(
+                "INFO",
+                "Load",
+                f"Préparation [{file_key}] namespace={namespace} | path={path or '-- vide --'}",
+            )
             if not path or not os.path.isfile(path):
+                reason = "path vide/non sélectionné" if not path else "fichier introuvable"
+                self.log("WARNING", "Load", f"Skip [{file_key}] : {reason}.")
+                skipped += 1
                 continue
 
+            attempted += 1
             top_nodes: List[str] = []
             if cmds.namespace(exists=namespace):
                 top_nodes = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
+                self.log(
+                    "INFO",
+                    "Load",
+                    f"Namespace existant [{namespace}] détecté, réutilisation de {len(top_nodes)} top node(s).",
+                )
             else:
                 new_nodes = cmds.file(path, reference=True, namespace=namespace, returnNewNodes=True) or []
                 top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
+                self.log(
+                    "INFO",
+                    "Load",
+                    f"Référence créée [{file_key}] : {self._basename_from_path(path)} | "
+                    f"newNodes={len(new_nodes)} | topNodes={len(top_nodes)}",
+                )
 
             stored_nodes: List[str] = []
             for node in top_nodes:
                 if not cmds.objExists(node):
+                    self.log("WARNING", "Load", f"Node ignoré (inexistant): {node}")
                     continue
                 try:
                     cmds.parent(node, "Outsourcing_Review")
                     stored_nodes.append(node)
                 except RuntimeError:
+                    self.log("WARNING", "Load", f"Impossible de parent {node} -> Outsourcing_Review")
                     continue
             self.review_group_contents[file_key] = stored_nodes
+            loaded_or_reused += 1
+            self.log(
+                "INFO",
+                "Load",
+                f"[{file_key}] top nodes parentés: {len(stored_nodes)} | "
+                f"{self._preview_list(stored_nodes, max_items=8)}",
+            )
+
+        total_parented = sum(len(nodes) for nodes in self.review_group_contents.values())
+        self.log(
+            "INFO",
+            "Load",
+            f"Load Everything terminé | attempted={attempted} | skipped={skipped} | "
+            f"loaded_or_reused={loaded_or_reused} | total_parented={total_parented}",
+        )
+        if attempted == 0:
+            self.log(
+                "WARNING",
+                "Load",
+                "Aucune référence chargée: vérifier le scan, la sélection des fichiers et l'existence des chemins.",
+            )
 
     def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
         left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
