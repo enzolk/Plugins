@@ -2081,7 +2081,7 @@ class HighPolyReviewTool:
     def load_everything(self) -> None:
         if not cmds.objExists("Outsourcing_Review"):
             cmds.group(empty=True, name="Outsourcing_Review")
-        cmds.setAttr("Outsourcing_Review.visibility", 1)
+        cmds.setAttr("Outsourcing_Review.visibility", 0)
 
         self.review_group_contents = {
             "high_ma": [],
@@ -2104,43 +2104,16 @@ class HighPolyReviewTool:
             if not path or not os.path.isfile(path):
                 continue
 
-            load_namespace = namespace
-            if cmds.namespace(exists=namespace):
-                self._unload_namespace_references(namespace)
-                try:
-                    cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
-                except RuntimeError:
-                    pass
-            if cmds.namespace(exists=load_namespace):
-                load_namespace = f"{namespace}_LoadAll"
-                if cmds.namespace(exists(load_namespace)):
-                    self._unload_namespace_references(load_namespace)
-                    try:
-                        cmds.namespace(removeNamespace=load_namespace, mergeNamespaceWithRoot=True)
-                    except RuntimeError:
-                        pass
-
-            file_type = "FBX" if path.lower().endswith(".fbx") else "mayaAscii"
-            try:
-                cmds.file(path, reference=True, type=file_type, ignoreVersion=True, mergeNamespacesOnClash=False, namespace=load_namespace)
-            except RuntimeError as exc:
-                self.log("FAIL", "LoadEverything", f"Échec de référence {self._basename_from_path(path)}: {exc}")
-                continue
-
-            all_assemblies = cmds.ls(assemblies=True, long=True) or []
             top_nodes: List[str] = []
-            ns_prefix = f"|{load_namespace}:"
-            for assembly in all_assemblies:
-                if assembly.startswith(ns_prefix):
-                    top_nodes.append(assembly)
+            if cmds.namespace(exists=namespace):
+                top_nodes = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
+            else:
+                new_nodes = cmds.file(path, reference=True, namespace=namespace, returnNewNodes=True) or []
+                top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
 
             stored_nodes: List[str] = []
             for node in top_nodes:
                 if not cmds.objExists(node):
-                    continue
-                parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
-                if parent and parent[0] == "|Outsourcing_Review":
-                    stored_nodes.append(node)
                     continue
                 try:
                     cmds.parent(node, "Outsourcing_Review")
