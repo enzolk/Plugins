@@ -2814,172 +2814,62 @@ class HighPolyReviewTool:
                 continue
         self.material_isolation_state = {"context": "", "material_key": ""}
 
-    def _resolve_material_isolation_items(self, context_key: str, material_data: Dict[str, object]) -> Tuple[List[str], List[str]]:
+    def isolate_on_all_viewports(self, state: int = 1) -> None:
+        _ = state
+        mel.eval(
+            """
+string $currentPanel = `paneLayout -q -pane1 viewPanes`;
+int $x = `isolateSelect -q -state $currentPanel`;
+
+if ($x == 0)
+    enableIsolateSelect $currentPanel 1;
+else
+    enableIsolateSelect $currentPanel 0;
+"""
+        )
+
+    def select_objects_from_selected_material(self, context_key: str) -> Optional[str]:
+        selected = self._selected_texture_set_names(context_key)
+        if not selected:
+            self.log("WARNING", "Materials", "Aucun material sélectionné.")
+            return None
+
+        material_sets = self.material_sets_by_context.get(context_key, {})
+        selected_key = selected[0]
+        material_data = material_sets.get(selected_key, {})
         material_name = str(material_data.get("name", "") or "")
         if not material_name or not cmds.objExists(material_name):
-            return [], []
-
-        scope_objects = set(material_data.get("objects", []) or [])
-        scope_meshes: Set[str] = set()
-        scope_shapes: Set[str] = set()
-        for obj in scope_objects:
-            if not isinstance(obj, str) or not cmds.objExists(obj):
-                continue
-            shapes = cmds.listRelatives(obj, shapes=True, noIntermediate=True, fullPath=True) or []
-            if not shapes:
-                continue
-            scope_meshes.add(obj)
-            scope_shapes.add(shapes[0])
-
-        shading_groups = sorted(set(cmds.listConnections(material_name, type="shadingEngine") or []))
-        if not shading_groups:
-            return [], []
-
-        full_objects: Set[str] = set()
-        component_tokens: Set[str] = set()
-
-        for shading_group in shading_groups:
-            members = cmds.sets(shading_group, query=True) or []
-            if not members:
-                continue
-            for member in members:
-                if not isinstance(member, str):
-                    continue
-
-                base_name = member.split(".", 1)[0]
-                base_long = (cmds.ls(base_name, long=True) or [base_name])[0]
-                mesh_transform = ""
-                mesh_shape = ""
-
-                if cmds.nodeType(base_long) == "transform":
-                    mesh_transform = base_long
-                    shapes = cmds.listRelatives(base_long, shapes=True, noIntermediate=True, fullPath=True) or []
-                    mesh_shape = shapes[0] if shapes else ""
-                elif cmds.nodeType(base_long) == "mesh":
-                    mesh_shape = base_long
-                    parents = cmds.listRelatives(base_long, parent=True, fullPath=True) or []
-                    mesh_transform = parents[0] if parents else ""
-
-                if scope_meshes and mesh_transform and mesh_transform not in scope_meshes and mesh_shape not in scope_shapes:
-                    continue
-
-                if ".f[" in member:
-                    face_suffix = member[member.find(".f[") :]
-                    if mesh_transform:
-                        component_tokens.add(f"{mesh_transform}{face_suffix}")
-                    elif mesh_shape:
-                        component_tokens.add(f"{mesh_shape}{face_suffix}")
-                    continue
-
-                if mesh_transform and cmds.objExists(mesh_transform):
-                    full_objects.add(mesh_transform)
-
-        components = cmds.ls(sorted(component_tokens), flatten=True) or []
-        valid_components = [comp for comp in components if isinstance(comp, str) and ".f[" in comp]
-        return sorted(full_objects), sorted(set(valid_components))
-
-    def toggle_isolate_selected_material(self, context_key: str) -> None:
-        material_sets = self.material_sets_by_context.get(context_key, {})
-        selected = self._selected_texture_set_names(context_key)
-        selected_key = selected[0] if selected else ""
-        active_key = self.material_isolation_state.get("material_key", "")
-        active_context = self.material_isolation_state.get("context", "")
-        category = "Materials"
-
-        if not selected_key:
-            if active_key:
-                self._disable_material_isolation()
-                self.log("INFO", category, "Isolate Material désactivé")
-                self.log("INFO", category, "Résultat : retour à l’affichage normal")
-            else:
-                self.log("INFO", category, "Aucun matériau sélectionné")
-            return
-
-        if active_key and selected_key == active_key and context_key == active_context:
-            self._disable_material_isolation()
-            self.log("INFO", category, "Isolate Material désactivé")
-            self.log("INFO", category, "Résultat : retour à l’affichage normal")
-            return
-
-        data = material_sets.get(selected_key, {})
-        material_name = str(data.get("name", "") or "")
-        if not material_name:
-            self.log("FAIL", category, "Le matériau sélectionné est invalide")
-            return
-        if not cmds.objExists(material_name):
-            self.log("FAIL", category, f"Matériau introuvable dans la scène : {material_name}")
-            return
+            self.log("FAIL", "Materials", "Le nœud sélectionné n'est pas un material valide.")
+            return None
 
         shading_groups = cmds.listConnections(material_name, type="shadingEngine") or []
         if not shading_groups:
-            self.log("FAIL", category, "Le nœud sélectionné n'est pas un material valide")
-            return
+            self.log("FAIL", "Materials", "Le nœud sélectionné n'est pas un material valide.")
+            return None
 
-        object_members: List[str] = []
-        component_members: List[str] = []
-        for shading_group in sorted(set(shading_groups)):
-            members = cmds.sets(shading_group, query=True) or []
-            for member in members:
-                if not isinstance(member, str):
-                    continue
-                if ".f[" in member or ".vtx[" in member or ".e[" in member:
-                    component_members.append(member)
-                    continue
-                object_members.append(member)
+        objects = cmds.sets(shading_groups[0], query=True) or []
+        if not objects:
+            self.log("FAIL", "Materials", "Aucun objet assigné à ce material.")
+            return None
 
-        object_members = sorted(set(cmds.ls(object_members, long=True) or []))
-        component_members = sorted(set(cmds.ls(component_members, flatten=True) or []))
-        if not object_members and not component_members:
-            self.log("FAIL", category, "Aucun objet assigné à ce material")
-            return
+        cmds.select(objects, replace=True)
+        return selected_key
 
-        full_objects: Set[str] = set()
-        for obj in object_members:
-            if not cmds.objExists(obj):
-                continue
-            if cmds.nodeType(obj) == "transform":
-                full_objects.add(obj)
-                continue
-            parents = cmds.listRelatives(obj, parent=True, fullPath=True) or []
-            if parents:
-                full_objects.add(parents[0])
-
-        for comp in component_members:
-            base_name = comp.split(".", 1)[0]
-            base_long = (cmds.ls(base_name, long=True) or [base_name])[0]
-            if not cmds.objExists(base_long):
-                continue
-            if cmds.nodeType(base_long) == "transform":
-                full_objects.add(base_long)
-                continue
-            parents = cmds.listRelatives(base_long, parent=True, fullPath=True) or []
-            if parents:
-                full_objects.add(parents[0])
-
-        isolate_items = sorted(full_objects)
-        if not isolate_items:
-            self.log("FAIL", category, "Aucun transform exploitable trouvé pour l'isolation")
-            return
-
-        if active_key:
-            self.log("INFO", category, "Isolation précédente remplacée")
+    def toggle_isolate_selected_material(self, context_key: str) -> None:
+        active_key = self.material_isolation_state.get("material_key", "")
+        active_context = self.material_isolation_state.get("context", "")
+        if active_key and active_context:
             self._disable_material_isolation()
-        else:
-            self.log("INFO", category, "Isolate Material activé")
+            self.log("INFO", "Materials", "Isolate Material désactivé")
+            return
 
-        cmds.select(isolate_items, replace=True)
-        for panel in self._get_active_model_panels():
-            try:
-                cmds.isolateSelect(panel, state=True)
-                cmds.isolateSelect(panel, loadSelected=True)
-            except RuntimeError:
-                continue
+        selected_key = self.select_objects_from_selected_material(context_key)
+        if not selected_key:
+            return
 
+        self.isolate_on_all_viewports()
         self.material_isolation_state = {"context": context_key, "material_key": selected_key}
-        display_name = data.get("display_name", data.get("name", selected_key))
-        self.log("INFO", category, f"Material sélectionné : {display_name}")
-        self.log("INFO", category, f"Objets sélectionnés via material : {len(isolate_items)}")
-        self.log("INFO", category, "Résultat : OK")
+        self.log("INFO", "Materials", "Isolate Material activé")
 
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (mode, scope_keys, source_label)
