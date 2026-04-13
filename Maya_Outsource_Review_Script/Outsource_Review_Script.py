@@ -2081,7 +2081,7 @@ class HighPolyReviewTool:
     def load_everything(self) -> None:
         if not cmds.objExists("Outsourcing_Review"):
             cmds.group(empty=True, name="Outsourcing_Review")
-        cmds.setAttr("Outsourcing_Review.visibility", 1)
+        cmds.setAttr("Outsourcing_Review.visibility", 0)
 
         self.review_group_contents = {
             "high_ma": [],
@@ -2104,41 +2104,16 @@ class HighPolyReviewTool:
             if not path or not os.path.isfile(path):
                 continue
 
-            reference_group = f"{namespace}_LoadAll_GRP"
+            top_nodes: List[str] = []
             if cmds.namespace(exists=namespace):
-                self._unload_namespace_references(namespace)
-                try:
-                    cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
-                except RuntimeError:
-                    pass
-            if cmds.objExists(reference_group):
-                try:
-                    cmds.delete(reference_group)
-                except RuntimeError:
-                    pass
-
-            file_type = "FBX" if path.lower().endswith(".fbx") else "mayaAscii"
-            cmds.file(
-                path,
-                reference=True,
-                type=file_type,
-                ignoreVersion=True,
-                mergeNamespacesOnClash=False,
-                namespace=namespace,
-                groupReference=True,
-                groupName=reference_group,
-            )
-            top_nodes: List[str] = [reference_group] if cmds.objExists(reference_group) else []
-            if not top_nodes:
                 top_nodes = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
+            else:
+                new_nodes = cmds.file(path, reference=True, namespace=namespace, returnNewNodes=True) or []
+                top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
 
             stored_nodes: List[str] = []
             for node in top_nodes:
                 if not cmds.objExists(node):
-                    continue
-                parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
-                if parent and parent[0] == "|Outsourcing_Review":
-                    stored_nodes.append(node)
                     continue
                 try:
                     cmds.parent(node, "Outsourcing_Review")
