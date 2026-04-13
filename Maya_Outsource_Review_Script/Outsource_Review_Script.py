@@ -767,20 +767,31 @@ class HighPolyReviewTool:
         for key, files in found_files.items():
             self.detected_files[key] = files
 
+        # Toujours synchroniser les chemins utilisables par les loaders,
+        # même si les optionMenu ne sont pas présents dans l'UI courante.
+        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
+            files = self.detected_files[file_key]
+            previous = self.paths.get(file_key, "")
+            if previous and previous in files:
+                self.paths[file_key] = previous
+            elif files:
+                self.paths[file_key] = files[0]
+            else:
+                self.paths[file_key] = ""
+
         for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
             if f"{file_key}_menu" in self.ui:
                 self._populate_file_option_menu(file_key)
+                current = self.paths.get(file_key, "")
+                if current in self.detected_files[file_key]:
+                    index = self.detected_files[file_key].index(current) + 1
+                    cmds.optionMenu(self.ui[f"{file_key}_menu"], edit=True, select=index)
         if "bake_ma_menu_low" in self.ui:
             self._clear_option_menu(self.ui["bake_ma_menu_low"])
             for p in self.detected_files["bake_ma"] or []:
                 cmds.menuItem(label=os.path.basename(p), parent=self.ui["bake_ma_menu_low"])
             if not self.detected_files["bake_ma"]:
                 cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu_low"])
-        self.paths["high_ma"] = self.paths.get("high_ma", "")
-        self.paths["high_fbx"] = self.paths.get("high_fbx", "")
-        self.paths["bake_ma"] = self.paths.get("bake_ma", "")
-        self.paths["low_fbx"] = self.paths.get("low_fbx", "")
-        self.paths["final_scene_ma"] = self.paths.get("final_scene_ma", "")
         self.refresh_detected_file_labels()
 
         scan_logs = [
@@ -797,6 +808,7 @@ class HighPolyReviewTool:
             else:
                 label = file_key.replace("_", " ").title()
                 self.log("INFO", "Scan", f"{count} fichier(s) {label} détecté(s).")
+                self.log("INFO", "Scan", f"{file_key.upper()} actif: {self.paths.get(file_key, '-- vide --')}")
 
     def _populate_root_option_menu(self, root_key: str) -> None:
         menu = self.ui[f"{root_key}_root_menu"]
