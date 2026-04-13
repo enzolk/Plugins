@@ -153,6 +153,9 @@ class HighPolyReviewTool:
             "bake_ma": [],
             "final_scene_ma": [],
         }
+        self.manual_root_menu_sources: Dict[str, str] = {}
+        self.manual_root_menu_values: Dict[str, List[str]] = {}
+        self.manual_root_overrides: Dict[str, List[str]] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -202,6 +205,7 @@ class HighPolyReviewTool:
 
         self.refresh_detected_file_labels()
         self.refresh_root_ui()
+        self.refresh_manual_root_menus()
         self.refresh_summary()
         self.refresh_checklist_ui()
 
@@ -230,15 +234,9 @@ class HighPolyReviewTool:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
         cmds.separator(style="in")
-        cmds.text(label="Step 01 — Load High.ma", align="left")
-        self.ui["high_ma_status"] = cmds.text(label="Detected High.ma: not scanned", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        self.ui["high_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_ma_menu"])
-        cmds.button(label="Load / Reference High.ma", height=26, command=lambda *_: self.load_ma_scene())
-        cmds.setParent("..")
-        cmds.separator(style="in")
-        cmds.text(label="Step 02 — Placeholder Match", align="left")
+        cmds.text(label="Step 01 — Placeholder Match", align="left")
+        self._build_manual_root_selector("placeholder_high_root_menu", "Select High Root", "high_ma")
+        self._build_manual_root_selector("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma")
         cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
         self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Verify that each high matches its placeholder", align="left")
@@ -247,7 +245,7 @@ class HighPolyReviewTool:
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
         cmds.separator(style="in")
-        cmds.text(label="Step 03 — Design Kit Review (manual)", align="left")
+        cmds.text(label="Step 02 — Design Kit Review (manual)", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui["check_design"] = cmds.checkBox(
             label="",
@@ -258,10 +256,12 @@ class HighPolyReviewTool:
         cmds.button(label="Mark Step as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
         cmds.setParent("..")
         cmds.separator(style="in")
-        cmds.text(label="Step 04 — Topology Check", align="left")
+        cmds.text(label="Step 03 — Topology Check", align="left")
+        self._build_manual_root_selector("topology_high_root_menu", "Select High Root for Topology Check", "high_ma")
         self._build_check_row("check_topology", "Topology", self.run_topology_checks)
         cmds.separator(style="in")
-        cmds.text(label="Step 05 — Vertex Colors", align="left")
+        cmds.text(label="Step 04 — Vertex Colors", align="left")
+        self._build_manual_root_selector("vertex_high_root_menu", "Select High Root for Vertex Color Check", "high_ma")
         cmds.rowLayout(
             numberOfColumns=5,
             adjustableColumn=2,
@@ -275,7 +275,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.text(label="Manual note: confirm Color ID readability for future bake.", align="left")
         cmds.separator(style="in")
-        cmds.text(label="Step 06 — Namespaces", align="left")
+        cmds.text(label="Step 05 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Only tool namespaces should remain", align="left")
@@ -283,7 +283,8 @@ class HighPolyReviewTool:
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_namespaces())
         cmds.setParent("..")
         cmds.separator(style="in")
-        cmds.text(label="Step 07 — Materials / Texture Sets", align="left")
+        cmds.text(label="Step 06 — Materials / Texture Sets", align="left")
+        self._build_manual_root_selector("materials_high_root_menu", "Select High Root for Materials / Texture Sets", "high_ma")
         self._build_check_row("check_texturesets", "Analyze Materials", lambda: self.analyze_texture_sets(mode="materials"))
         self.ui["texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
@@ -292,24 +293,16 @@ class HighPolyReviewTool:
         )
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("high"))
         cmds.separator(style="in")
-        cmds.text(label="Step 08 — Compare High.ma vs High.fbx", align="left")
-        self.ui["high_fbx_status"] = cmds.text(label="Detected High.fbx: not scanned", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["high_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("high_fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["high_fbx_menu"])
-        cmds.button(label="Load / Reference High.fbx", height=26, command=lambda *_: self.load_fbx_into_scene())
+        cmds.text(label="Step 07 — Compare High.ma vs High.fbx", align="left")
+        self._build_manual_root_selector("compare_ma_root_menu", "Select High.ma Root", "high_ma")
+        self._build_manual_root_selector("compare_fbx_root_menu", "Select High.fbx Root", "high_fbx")
         self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.setParent("..")
         cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_ma_vs_fbx())
         cmds.separator(style="in")
-        cmds.text(label="Step 09 — Compare High.ma vs Bake Scene High", align="left")
-        self.ui["bake_ma_status"] = cmds.text(label="Detected Bake.ma: not scanned", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["bake_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("bake_ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu"])
-        cmds.button(label="Load / Reference Bake.ma", height=26, command=lambda *_: self.load_bake_ma_scene())
+        cmds.text(label="Step 08 — Compare High.ma vs Bake Scene High", align="left")
+        self._build_manual_root_selector("compare_bake_ma_root_menu", "Select High.ma Root", "high_ma")
+        self._build_manual_root_selector("compare_bake_high_root_menu", "Select Bake High Root", "bake_high")
         self.ui["check_ma_bake"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.setParent("..")
         cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_ma_vs_bake_high())
         cmds.setParent("..")
         cmds.setParent("..")
@@ -338,21 +331,12 @@ class HighPolyReviewTool:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
         cmds.separator(style="in")
-
-        cmds.text(label="Step 01 — Load Low.fbx", align="left")
-        self.ui["low_fbx_status"] = cmds.text(label="Detected Low.fbx: not scanned", align="left")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        self.ui["low_fbx_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("low_fbx"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["low_fbx_menu"])
-        cmds.button(label="Load / Reference Low.fbx", height=26, command=lambda *_: self.load_low_fbx_scene())
-        cmds.setParent("..")
-        cmds.separator(style="in")
-
-        cmds.text(label="Step 02 — Topology Check", align="left")
+        cmds.text(label="Step 01 — Topology Check", align="left")
+        self._build_manual_root_selector("low_topology_root_menu", "Select Low Root for Topology Check", "low_fbx")
         self._build_check_row("check_low_topology", "Topology", self.run_low_topology_checks)
         cmds.separator(style="in")
 
-        cmds.text(label="Step 03 — Namespaces", align="left")
+        cmds.text(label="Step 02 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_low_ns"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="Only low review namespaces should remain", align="left")
@@ -361,7 +345,8 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.separator(style="in")
 
-        cmds.text(label="Step 04 — Materials / Texture Sets", align="left")
+        cmds.text(label="Step 03 — Materials / Texture Sets", align="left")
+        self._build_manual_root_selector("low_materials_root_menu", "Select Low Root for Materials / Texture Sets", "low_fbx")
         self._build_check_row("check_low_materials", "Analyze Materials", self.analyze_low_materials)
         self.ui["low_texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
@@ -371,33 +356,27 @@ class HighPolyReviewTool:
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("low"))
         cmds.separator(style="in")
 
-        cmds.text(label="Step 05 — UV Check map1", align="left")
+        cmds.text(label="Step 04 — UV Check map1", align="left")
+        self._build_manual_root_selector("low_uv1_root_menu", "Select Low Root for UV map1 Check", "low_fbx")
         self._build_check_row("check_low_uv_map1", "UV Map1 Check", self.run_low_uv_map1_check)
         cmds.separator(style="in")
 
-        cmds.text(label="Step 06 — UV map2 / Texel Density", align="left")
+        cmds.text(label="Step 05 — UV map2 / Texel Density", align="left")
+        self._build_manual_root_selector("low_uv2_root_menu", "Select Low Root for UV map2 / TD Check", "low_fbx")
         self._build_check_row("check_low_uv_map2", "UV Map2 Check", self.run_low_map2_density_check)
         cmds.separator(style="in")
 
-        cmds.text(label="Step 07 — Compare Low.fbx vs Bake Scene Low", align="left")
-        self.ui["bake_ma_status_low"] = cmds.text(label="Detected Bake.ma: not scanned", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["bake_ma_menu_low"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("bake_ma", menu_key="bake_ma_menu_low"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["bake_ma_menu_low"])
-        cmds.button(label="Load / Reference Bake.ma", height=26, command=lambda *_: self.load_bake_ma_scene())
+        cmds.text(label="Step 06 — Compare Low.fbx vs Bake Scene Low", align="left")
+        self._build_manual_root_selector("compare_low_bake_low_root_menu", "Select Low.fbx Root", "low_fbx")
+        self._build_manual_root_selector("compare_low_bake_bake_root_menu", "Select Bake Low Root", "bake_low")
         self.ui["check_low_bake"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.setParent("..")
         cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_low_vs_bake_low())
         cmds.separator(style="in")
 
-        cmds.text(label="Step 08 — Compare Low.fbx vs Final Scene Asset", align="left")
-        self.ui["final_scene_ma_status"] = cmds.text(label="Detected Final Scene.ma: not scanned", align="left")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["final_scene_ma_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.on_detected_file_selected("final_scene_ma"))
-        cmds.menuItem(label="-- Aucun --", parent=self.ui["final_scene_ma_menu"])
-        cmds.button(label="Load / Reference Final Scene.ma", height=26, command=lambda *_: self.load_final_asset_ma_scene())
+        cmds.text(label="Step 07 — Compare Low.fbx vs Final Scene Asset", align="left")
+        self._build_manual_root_selector("compare_low_final_low_root_menu", "Select Low.fbx Root", "low_fbx")
+        self._build_manual_root_selector("compare_low_final_final_root_menu", "Select Final Scene Root", "final_ma")
         self.ui["check_low_final"] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.setParent("..")
         cmds.button(label="Run Compare Final Asset", height=26, command=lambda *_: self.compare_low_vs_final_asset())
 
         cmds.setParent("..")
@@ -409,6 +388,15 @@ class HighPolyReviewTool:
         cmds.text(label=label, align="left")
         cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
         cmds.setParent("..")
+
+    def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.text(label=label, align="left")
+        self.ui[menu_key] = cmds.optionMenu(changeCommand=lambda *_: self.on_manual_root_changed(menu_key))
+        cmds.menuItem(label="-- Aucun root --", parent=self.ui[menu_key])
+        cmds.button(label="Use Selection", height=24, command=lambda *_: self.set_manual_root_from_selection(menu_key))
+        cmds.setParent("..")
+        self.manual_root_menu_sources[menu_key] = source_key
 
     def _build_global_action_section(self) -> None:
         cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=8)
@@ -564,7 +552,7 @@ class HighPolyReviewTool:
         checked = cmds.checkBox(self.ui["check_design"], q=True, value=True)
         self.set_check_status("design_kit_checked", "OK" if checked else "PENDING")
         if checked:
-            self._log_step_header(3, "Design Kit Review", category="DesignKit")
+            self._log_step_header(2, "Design Kit Review", category="DesignKit")
             self.log("INFO", "DesignKit", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
             self.log("INFO", "DesignKit", "Résultat : Revue design kit marquée comme effectuée (manuel).")
 
@@ -838,6 +826,82 @@ class HighPolyReviewTool:
         for root_key in ["high", "placeholder", "low", "bake_high", "bake_low", "final_asset_ma", "final_asset_fbx"]:
             if f"{root_key}_root_menu" in self.ui:
                 self._populate_root_option_menu(root_key)
+        self.refresh_manual_root_menus()
+
+    def _manual_root_candidates(self, source_key: str) -> List[str]:
+        if source_key == "high_ma":
+            return self._find_root_candidates("high", namespace=self.context["ma_namespace"])
+        if source_key == "placeholder_ma":
+            return self._find_root_candidates("placeholder", namespace=self.context["ma_namespace"])
+        if source_key == "high_fbx":
+            return self._find_root_candidates("high", namespace=self.context["fbx_namespace"])
+        if source_key == "bake_high":
+            return self._find_root_candidates("high", namespace=self.context["bake_ma_namespace"])
+        if source_key == "low_fbx":
+            return self._find_root_candidates("low", namespace=self.context["low_fbx_namespace"])
+        if source_key == "bake_low":
+            return self._find_root_candidates("low", namespace=self.context["bake_ma_namespace"])
+        if source_key == "final_ma":
+            return self._find_root_candidates("final", namespace=self.context["final_asset_ma_namespace"])
+        return []
+
+    def refresh_manual_root_menus(self) -> None:
+        for menu_key, source_key in self.manual_root_menu_sources.items():
+            menu = self.ui.get(menu_key)
+            if not menu or not cmds.optionMenu(menu, exists=True):
+                continue
+            current = self.get_manual_selected_root(menu_key)
+            overrides = [n for n in self.manual_root_overrides.get(menu_key, []) if cmds.objExists(n)]
+            detected = [n for n in self._manual_root_candidates(source_key) if cmds.objExists(n)]
+            values: List[str] = []
+            for node in overrides + detected:
+                if node not in values:
+                    values.append(node)
+            self.manual_root_overrides[menu_key] = overrides
+            self.manual_root_menu_values[menu_key] = values
+            self._clear_option_menu(menu)
+            if not values:
+                cmds.menuItem(label="-- Aucun root --", parent=menu)
+                continue
+            for node in values:
+                cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
+            idx = values.index(current) + 1 if current in values else 1
+            cmds.optionMenu(menu, e=True, select=idx)
+
+    def get_manual_selected_root(self, menu_key: str) -> Optional[str]:
+        values = self.manual_root_menu_values.get(menu_key, [])
+        menu = self.ui.get(menu_key)
+        if not values or not menu or not cmds.optionMenu(menu, exists=True):
+            return None
+        index = max(1, cmds.optionMenu(menu, q=True, select=True)) - 1
+        index = max(0, min(index, len(values) - 1))
+        root = values[index]
+        return root if cmds.objExists(root) else None
+
+    def set_manual_root_from_selection(self, menu_key: str) -> None:
+        sel = cmds.ls(selection=True, long=True) or []
+        if not sel:
+            self.log("WARNING", "Selection", "Aucun objet sélectionné.")
+            return
+        node = sel[0]
+        if cmds.nodeType(node) == "mesh":
+            parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
+            if parent:
+                node = parent[0]
+        overrides = self.manual_root_overrides.setdefault(menu_key, [])
+        if node in overrides:
+            overrides.remove(node)
+        overrides.insert(0, node)
+        self.refresh_manual_root_menus()
+        values = self.manual_root_menu_values.get(menu_key, [])
+        if node in values:
+            cmds.optionMenu(self.ui[menu_key], e=True, select=values.index(node) + 1)
+        self.log("INFO", "RootSelect", f"Root manuel défini: {self._short_name(node)}", [node])
+
+    def on_manual_root_changed(self, menu_key: str) -> None:
+        root = self.get_manual_selected_root(menu_key)
+        if root:
+            self.log("INFO", "RootSelect", f"Root sélectionné: {self._short_name(root)}", [root])
 
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
@@ -2110,15 +2174,19 @@ class HighPolyReviewTool:
         return False
 
     def compare_ma_vs_fbx(self) -> None:
-        self._log_step_header(8, "Compare High.ma vs High.fbx", category="Compare")
+        self._log_step_header(7, "Compare High.ma vs High.fbx", category="Compare")
         self.log("INFO", "Compare", f"Source A : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "Compare", f"Source B : {self._basename_from_path(self.paths.get('high_fbx', ''))}")
-        ma_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        fbx_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["fbx_namespace"], exclude_placeholder_named=True)
-        ma_roots = self._find_root_candidates("high", namespace=self.context["ma_namespace"])
-        fbx_roots = self._find_root_candidates("high", namespace=self.context["fbx_namespace"])
-        self.log("INFO", "Compare", f"Roots analysés dans MA : {self._preview_list(ma_roots)}")
-        self.log("INFO", "Compare", f"Roots analysés dans FBX : {self._preview_list(fbx_roots)}")
+        ma_root = self.get_manual_selected_root("compare_ma_root_menu")
+        fbx_root = self.get_manual_selected_root("compare_fbx_root_menu")
+        if not ma_root or not fbx_root:
+            self.log("FAIL", "Compare", "Sélection manuelle requise: choisir High.ma Root et High.fbx Root.")
+            self.set_check_status("ma_fbx_compared", "FAIL")
+            return
+        ma_meshes = self._collect_mesh_transforms(ma_root)
+        fbx_meshes = self._collect_mesh_transforms(fbx_root)
+        self.log("INFO", "Compare", f"Root MA sélectionné : {ma_root}", [ma_root])
+        self.log("INFO", "Compare", f"Root FBX sélectionné : {fbx_root}", [fbx_root])
         self.log("INFO", "Compare", f"Meshes analysés MA/FBX : {len(ma_meshes)}/{len(fbx_meshes)}")
 
         if not ma_meshes or not fbx_meshes:
@@ -2126,8 +2194,8 @@ class HighPolyReviewTool:
             self.set_check_status("ma_fbx_compared", "FAIL")
             return
 
-        ma_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in ma_meshes}
-        fbx_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in fbx_meshes}
+        ma_by_key = {self._normalized_relative_mesh_key(m, root=ma_root): self._mesh_data_signature(m) for m in ma_meshes}
+        fbx_by_key = {self._normalized_relative_mesh_key(m, root=fbx_root): self._mesh_data_signature(m) for m in fbx_meshes}
         all_keys = sorted(set(ma_by_key.keys()) | set(fbx_by_key.keys()))
         self.log("INFO", "Compare", f"Paires comparées : {len(all_keys)}")
 
@@ -2206,35 +2274,26 @@ class HighPolyReviewTool:
         return ok
 
     def compare_ma_vs_bake_high(self) -> None:
-        self._log_step_header(9, "Compare High.ma vs Bake High", category="CompareBake")
-        ma_namespace = self.context["ma_namespace"]
-        bake_namespace = self.context["bake_ma_namespace"]
-
-        ma_meshes_all, _ = self._collect_mesh_transforms_in_namespace(ma_namespace, exclude_placeholder_named=True)
-        bake_meshes_all, _ = self._collect_mesh_transforms_in_namespace(bake_namespace, exclude_placeholder_named=True)
-        ma_meshes = [m for m in ma_meshes_all if self._matches_asset_kind(m, "high")]
-        bake_meshes = [m for m in bake_meshes_all if self._matches_asset_kind(m, "high")]
-
-        if not cmds.namespace(exists=ma_namespace) or not ma_meshes:
-            self.log("FAIL", "CompareBake", "Compare impossible : High.ma non chargé")
+        self._log_step_header(8, "Compare High.ma vs Bake High", category="CompareBake")
+        ma_root = self.get_manual_selected_root("compare_bake_ma_root_menu")
+        bake_root = self.get_manual_selected_root("compare_bake_high_root_menu")
+        if not ma_root or not bake_root:
+            self.log("FAIL", "CompareBake", "Sélection manuelle requise: choisir High.ma Root et Bake High Root.")
             self.set_check_status("ma_bake_compared", "FAIL")
             return
-        if not cmds.namespace(exists=bake_namespace) or not bake_meshes:
-            self.log("FAIL", "CompareBake", "Compare impossible : Bake.ma non chargé")
-            self.set_check_status("ma_bake_compared", "FAIL")
-            return
+        ma_meshes = self._collect_mesh_transforms(ma_root)
+        bake_meshes = self._collect_mesh_transforms(bake_root)
 
         self.log("INFO", "CompareBake", f"Source A : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "CompareBake", f"Source B : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
-
-        ma_roots = self._find_root_candidates("high", namespace=self.context["ma_namespace"])
-        bake_roots = self._find_root_candidates("high", namespace=self.context["bake_ma_namespace"])
-        self.log("INFO", "CompareBake", f"Roots analysés dans High.ma : {self._preview_list(ma_roots)}")
-        self.log("INFO", "CompareBake", f"Roots analysés dans Bake.ma : {self._preview_list(bake_roots)}")
+        self.log("INFO", "CompareBake", f"Root High.ma sélectionné : {ma_root}", [ma_root])
+        self.log("INFO", "CompareBake", f"Root Bake sélectionné : {bake_root}", [bake_root])
         self.log("INFO", "CompareBake", f"Meshes analysés High.ma / Bake High : {len(ma_meshes)} / {len(bake_meshes)}")
+        ma_namespace = self.context["ma_namespace"]
+        bake_namespace = self.context["bake_ma_namespace"]
 
-        ma_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in ma_meshes}
-        bake_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in bake_meshes}
+        ma_by_key = {self._normalized_relative_mesh_key(m, root=ma_root): self._mesh_data_signature(m) for m in ma_meshes}
+        bake_by_key = {self._normalized_relative_mesh_key(m, root=bake_root): self._mesh_data_signature(m) for m in bake_meshes}
         all_keys = sorted(set(ma_by_key.keys()) | set(bake_by_key.keys()))
         self.log("INFO", "CompareBake", f"Paires comparées : {len(all_keys)}")
 
@@ -2297,11 +2356,15 @@ class HighPolyReviewTool:
         return self.detected_roots.get("low", [])
 
     def run_low_topology_checks(self) -> None:
-        self._log_step_header(2, "Topology Check", category="LowTopology")
-        meshes = self._collect_low_meshes()
-        roots = self._resolve_low_roots_for_logs()
+        self._log_step_header(1, "Topology Check", category="LowTopology")
+        root = self.get_manual_selected_root("low_topology_root_menu")
+        if not root:
+            self.log("FAIL", "LowTopology", "Sélection manuelle requise: Select Low Root for Topology Check.")
+            self.set_check_status("low_topology_checked", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "LowTopology", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowTopology", f"Roots analysés : {self._preview_list(roots, max_items=20)}")
+        self.log("INFO", "LowTopology", f"Root analysé : {root}", [root])
         self.log("INFO", "LowTopology", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "LowTopology", "Aucun mesh LOW chargé.")
@@ -2382,11 +2445,15 @@ class HighPolyReviewTool:
         self.scan_low_namespaces()
 
     def analyze_low_materials(self) -> None:
-        self._log_step_header(4, "Materials Check", category="LowMaterials")
-        meshes = self._collect_low_meshes()
-        roots = self._resolve_low_roots_for_logs()
+        self._log_step_header(3, "Materials Check", category="LowMaterials")
+        root = self.get_manual_selected_root("low_materials_root_menu")
+        if not root:
+            self.log("FAIL", "LowMaterials", "Sélection manuelle requise: Select Low Root for Materials / Texture Sets.")
+            self.set_check_status("low_materials_checked", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "LowMaterials", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowMaterials", f"Roots analysés : {self._preview_list(roots, max_items=20)}")
+        self.log("INFO", "LowMaterials", f"Root analysé : {root}", [root])
         self.log("INFO", "LowMaterials", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "LowMaterials", "Aucun mesh LOW chargé.")
@@ -2512,38 +2579,38 @@ class HighPolyReviewTool:
 
     def check_placeholder_match(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
-        self._log_step_header(2, "Placeholder Check", category="Placeholder")
+        self._log_step_header(1, "Placeholder Check", category="Placeholder")
         file_label = self._basename_from_path(self.paths.get("high_ma", ""))
         self.log("INFO", "Placeholder", f"Analyse du fichier High.ma : {file_label}")
-        high_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        placeholder_meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"])
-        placeholder_meshes = [m for m in placeholder_meshes if self._is_placeholder_node(m) or self._path_contains_placeholder_token(m)]
-        self.log("INFO", "Placeholder", f"Paires détectées (candidats) High/Placeholder : {len(high_meshes)}/{len(placeholder_meshes)}")
+        high_root = self.get_manual_selected_root("placeholder_high_root_menu")
+        placeholder_root = self.get_manual_selected_root("placeholder_placeholder_root_menu")
+        if not high_root or not placeholder_root:
+            self.log("FAIL", "Placeholder", "Sélection manuelle requise: Select High Root et Select Placeholder Root.")
+            self.set_check_status("placeholder_checked", "FAIL")
+            return
+        high_meshes = self._collect_mesh_transforms(high_root)
+        placeholder_meshes = self._collect_mesh_transforms(placeholder_root)
+        self.log("INFO", "Placeholder", f"High Root sélectionné : {high_root}", [high_root])
+        self.log("INFO", "Placeholder", f"Placeholder Root sélectionné : {placeholder_root}", [placeholder_root])
+        self.log("INFO", "Placeholder", f"Meshes analysés High/Placeholder : {len(high_meshes)}/{len(placeholder_meshes)}")
         if not high_meshes or not placeholder_meshes:
             self.log("FAIL", "Placeholder", "High/Placeholder non détectés dans High.ma.")
             self.set_check_status("placeholder_checked", "FAIL")
             return
 
-        def _pair_token(node: str) -> str:
-            name = self._strip_namespaces_from_name(self._short_name(node)).lower()
-            name = name.replace("_high", "").replace("_placeholder", "")
-            return re.sub(r"[^a-z0-9]", "", name)
-
-        high_by = {_pair_token(h): h for h in high_meshes}
-        placeholder_by = {_pair_token(p): p for p in placeholder_meshes}
-        common = sorted(set(high_by.keys()) & set(placeholder_by.keys()))
-        if not common:
-            self.log("FAIL", "Placeholder", "Matching High/Placeholder impossible (tokens incompatibles).")
-            self.set_check_status("placeholder_checked", "FAIL")
-            return
-        self.log("INFO", "Placeholder", f"Paires détectées : {len(common)}")
-
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance = max(0.0, float(tolerance_percent)) / 100.0
+        high_by = {self._normalized_relative_mesh_key(m, root=high_root): m for m in high_meshes}
+        placeholder_by = {self._normalized_relative_mesh_key(m, root=placeholder_root): m for m in placeholder_meshes}
+        all_keys = sorted(set(high_by.keys()) | set(placeholder_by.keys()))
+        all_pairs = len(all_keys)
         ok_count = 0
-        for key in common:
-            high = high_by[key]
-            placeholder = placeholder_by[key]
+        for key in all_keys:
+            high = high_by.get(key)
+            placeholder = placeholder_by.get(key)
+            if not high or not placeholder:
+                self.log("FAIL", "PlaceholderPair", f"Présence mismatch pour sous-mesh relatif: {key}")
+                continue
             h_dim = self._mesh_bbox_dims_world(high)
             p_dim = self._mesh_bbox_dims_world(placeholder)
             bbox_delta = tuple(abs(h_dim[i] - p_dim[i]) for i in range(3))
@@ -2568,16 +2635,21 @@ class HighPolyReviewTool:
             if pair_ok:
                 ok_count += 1
 
-        fail_count = len(common) - ok_count
+        fail_count = all_pairs - ok_count
         self.log("INFO" if fail_count == 0 else "FAIL", "Placeholder", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         self.set_check_status("placeholder_checked", "OK" if fail_count == 0 else "FAIL")
 
     def run_topology_checks(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
-        self._log_step_header(4, "Topology Check", category="Topology")
-        meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
+        self._log_step_header(3, "Topology Check", category="Topology")
+        root = self.get_manual_selected_root("topology_high_root_menu")
+        if not root:
+            self.log("FAIL", "Topology", "Sélection manuelle requise: Select High Root for Topology Check.")
+            self.set_check_status("topology_checked", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "Topology", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        self.log("INFO", "Topology", f"Roots analysés : {self._preview_list(self._find_root_candidates('high', namespace=self.context['ma_namespace']))}")
+        self.log("INFO", "Topology", f"Root analysé : {root}", [root])
         self.log("INFO", "Topology", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "Topology", "Aucun mesh High.ma trouvé.")
@@ -2802,10 +2874,15 @@ class HighPolyReviewTool:
 
     def analyze_texture_sets(self, mode: str = "materials", scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (mode, scope_keys, source_label)
-        self._log_step_header(7, "Analyze Materials", category="Materials")
-        meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
+        self._log_step_header(6, "Analyze Materials", category="Materials")
+        root = self.get_manual_selected_root("materials_high_root_menu")
+        if not root:
+            self.log("FAIL", "Materials", "Sélection manuelle requise: Select High Root for Materials / Texture Sets.")
+            self.set_check_status("texture_sets_analyzed", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "Materials", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        self.log("INFO", "Materials", f"Roots analysés : {self._preview_list(self._find_root_candidates('high', namespace=self.context['ma_namespace']))}")
+        self.log("INFO", "Materials", f"Root analysé : {root}", [root])
         self.log("INFO", "Materials", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "Materials", "Aucun mesh High.ma trouvé.")
@@ -2891,10 +2968,15 @@ class HighPolyReviewTool:
 
     def check_vertex_colors(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
-        self._log_step_header(5, "Vertex Color Check", category="VertexColor")
-        meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
+        self._log_step_header(4, "Vertex Color Check", category="VertexColor")
+        root = self.get_manual_selected_root("vertex_high_root_menu")
+        if not root:
+            self.log("FAIL", "VertexColor", "Sélection manuelle requise: Select High Root for Vertex Color Check.")
+            self.set_check_status("vertex_colors_checked", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "VertexColor", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        self.log("INFO", "VertexColor", f"Roots analysés : {self._preview_list(self._find_root_candidates('high', namespace=self.context['ma_namespace']))}")
+        self.log("INFO", "VertexColor", f"Root analysé : {root}", [root])
         self.log("INFO", "VertexColor", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "VertexColor", "Aucun mesh High.ma trouvé.")
@@ -3056,10 +3138,15 @@ class HighPolyReviewTool:
         return sum(ratios) / float(len(ratios))
 
     def run_low_uv_map1_check(self) -> None:
-        self._log_step_header(5, "UV Map1 Check", category="LowUV1")
-        meshes = self._collect_low_meshes()
+        self._log_step_header(4, "UV Map1 Check", category="LowUV1")
+        root = self.get_manual_selected_root("low_uv1_root_menu")
+        if not root:
+            self.log("FAIL", "LowUV1", "Sélection manuelle requise: Select Low Root for UV map1 Check.")
+            self.set_check_status("low_uv_map1_checked", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "LowUV1", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowUV1", f"Roots analysés : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
+        self.log("INFO", "LowUV1", f"Root analysé : {root}", [root])
         self.log("INFO", "LowUV1", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "LowUV1", "Aucun mesh LOW chargé.")
@@ -3143,10 +3230,15 @@ class HighPolyReviewTool:
                 pass
 
     def run_low_map2_density_check(self) -> None:
-        self._log_step_header(6, "UV Map2 Check", category="LowUV2")
-        meshes = self._collect_low_meshes()
+        self._log_step_header(5, "UV Map2 Check", category="LowUV2")
+        root = self.get_manual_selected_root("low_uv2_root_menu")
+        if not root:
+            self.log("FAIL", "LowUV2", "Sélection manuelle requise: Select Low Root for UV map2 / TD Check.")
+            self.set_check_status("low_uv_map2_checked", "FAIL")
+            return
+        meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "LowUV2", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowUV2", f"Roots analysés : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
+        self.log("INFO", "LowUV2", f"Root analysé : {root}", [root])
         self.log("INFO", "LowUV2", f"Meshes analysés : {len(meshes)}")
         self.log("INFO", "LowUV2", "Map analysée : map2")
         if not meshes:
@@ -3185,21 +3277,27 @@ class HighPolyReviewTool:
         self.set_check_status("low_uv_map2_checked", "OK" if ok else "FAIL")
 
     def compare_low_vs_bake_low(self) -> None:
-        self._log_step_header(7, "Compare Low vs Bake Low", category="LowCompareBake")
-        low_meshes = self._collect_low_meshes()
-        bake_meshes = [m for m in self._collect_mesh_transforms_in_namespace(self.context["bake_ma_namespace"], exclude_placeholder_named=True)[0] if self._matches_asset_kind(m, "low")]
+        self._log_step_header(6, "Compare Low vs Bake Low", category="LowCompareBake")
+        low_root = self.get_manual_selected_root("compare_low_bake_low_root_menu")
+        bake_root = self.get_manual_selected_root("compare_low_bake_bake_root_menu")
+        if not low_root or not bake_root:
+            self.log("FAIL", "CompareLowBake", "Sélection manuelle requise: Select Low.fbx Root et Select Bake Low Root.")
+            self.set_check_status("low_bake_compared", "FAIL")
+            return
+        low_meshes = self._collect_mesh_transforms(low_root)
+        bake_meshes = self._collect_mesh_transforms(bake_root)
         self.log("INFO", "CompareLowBake", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "CompareLowBake", f"Source B : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
-        self.log("INFO", "CompareLowBake", f"Roots analysés dans Low.fbx : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
-        self.log("INFO", "CompareLowBake", f"Roots analysés dans Bake Scene : {self._preview_list(self.detected_roots.get('bake_low', []), max_items=20)}")
+        self.log("INFO", "CompareLowBake", f"Root Low sélectionné : {low_root}", [low_root])
+        self.log("INFO", "CompareLowBake", f"Root Bake Low sélectionné : {bake_root}", [bake_root])
         self.log("INFO", "CompareLowBake", f"Meshes analysés Low/BakeLow : {len(low_meshes)} / {len(bake_meshes)}")
         if not low_meshes or not bake_meshes:
             self.log("FAIL", "CompareLowBake", "Compare impossible : Low.fbx ou Bake Low non chargé.")
             self.set_check_status("low_bake_compared", "FAIL")
             return
 
-        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in low_meshes}
-        bake_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in bake_meshes}
+        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=low_root)): self._mesh_data_signature(m) for m in low_meshes}
+        bake_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=bake_root)): self._mesh_data_signature(m) for m in bake_meshes}
         all_keys = sorted(set(low_by.keys()) | set(bake_by.keys()))
         self.log("INFO", "CompareLowBake", f"Paires comparées : {len(all_keys)}")
 
@@ -3245,21 +3343,27 @@ class HighPolyReviewTool:
         self.set_check_status("low_bake_compared", "OK" if ok else "FAIL")
 
     def compare_low_vs_final_asset(self) -> None:
-        self._log_step_header(8, "Compare Low vs Final Asset", category="LowCompareFinal")
-        low_meshes = self._collect_low_meshes()
-        final_meshes = self._collect_mesh_transforms_in_namespace(self.context["final_asset_ma_namespace"], exclude_placeholder_named=True)[0]
+        self._log_step_header(7, "Compare Low vs Final Asset", category="LowCompareFinal")
+        low_root = self.get_manual_selected_root("compare_low_final_low_root_menu")
+        final_root = self.get_manual_selected_root("compare_low_final_final_root_menu")
+        if not low_root or not final_root:
+            self.log("FAIL", "CompareLowFinal", "Sélection manuelle requise: Select Low.fbx Root et Select Final Scene Root.")
+            self.set_check_status("low_final_compared", "FAIL")
+            return
+        low_meshes = self._collect_mesh_transforms(low_root)
+        final_meshes = self._collect_mesh_transforms(final_root)
         self.log("INFO", "CompareLowFinal", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "CompareLowFinal", f"Source B : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
-        self.log("INFO", "CompareLowFinal", f"Roots analysés dans Low.fbx : {self._preview_list(self._resolve_low_roots_for_logs(), max_items=20)}")
-        self.log("INFO", "CompareLowFinal", f"Roots analysés dans Final Scene : {self._preview_list(self.detected_roots.get('final_asset_ma', []), max_items=20)}")
+        self.log("INFO", "CompareLowFinal", f"Root Low sélectionné : {low_root}", [low_root])
+        self.log("INFO", "CompareLowFinal", f"Root Final sélectionné : {final_root}", [final_root])
         self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {len(low_meshes)} / {len(final_meshes)}")
         if not low_meshes or not final_meshes:
             self.log("FAIL", "CompareLowFinal", "Compare impossible : Low.fbx ou Final Scene non chargé.")
             self.set_check_status("low_final_compared", "FAIL")
             return
 
-        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m)): self._mesh_data_signature(m) for m in low_meshes}
-        final_by = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in final_meshes}
+        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=low_root)): self._mesh_data_signature(m) for m in low_meshes}
+        final_by = {self._normalized_relative_mesh_key(m, root=final_root): self._mesh_data_signature(m) for m in final_meshes}
         all_keys = sorted(set(low_by.keys()) | set(final_by.keys()))
         self.log("INFO", "CompareLowFinal", f"Paires comparées : {len(all_keys)}")
 
@@ -3305,7 +3409,7 @@ class HighPolyReviewTool:
         self.set_check_status("low_final_compared", "OK" if ok else "FAIL")
 
     def run_low_review_checks(self) -> None:
-        self.log("INFO", "RunAllLow", "----- Run All Low Steps (01 -> 08) -----")
+        self.log("INFO", "RunAllLow", "----- Run All Low Steps (01 -> 07) -----")
         if not self._collect_low_meshes():
             self.load_low_fbx_scene()
         self.run_low_topology_checks()
@@ -3321,7 +3425,7 @@ class HighPolyReviewTool:
         self.log("INFO", "RunAll", "Final Review désactivée dans cette version High-only.")
 
     def run_all_checks(self) -> None:
-        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 09) -----")
+        self.log("INFO", "RunAll", "----- Run All High Steps (01 -> 08) -----")
         self.log("INFO", "RunAll", f"Source High.ma : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "RunAll", f"Source High.fbx : {self._basename_from_path(self.paths.get('high_fbx', ''))}")
         self.log("INFO", "RunAll", f"Source Bake.ma : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
@@ -3329,7 +3433,7 @@ class HighPolyReviewTool:
             self.load_ma_scene()
 
         self.check_placeholder_match()
-        self.log("INFO", "DesignKit", "Step 03 manuel: vérifiez le design kit puis cliquez 'Mark Step as Reviewed'.")
+        self.log("INFO", "DesignKit", "Step 02 manuel: vérifiez le design kit puis cliquez 'Mark Step as Reviewed'.")
         self.run_topology_checks()
         self.check_vertex_colors()
         self.scan_namespaces()
