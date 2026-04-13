@@ -2104,16 +2104,24 @@ class HighPolyReviewTool:
             if not path or not os.path.isfile(path):
                 continue
 
-            top_nodes: List[str] = []
             if cmds.namespace(exists=namespace):
-                top_nodes = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
-            else:
-                new_nodes = cmds.file(path, reference=True, namespace=namespace, returnNewNodes=True) or []
-                top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
+                self._unload_namespace_references(namespace)
+                try:
+                    cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+                except RuntimeError:
+                    pass
+
+            file_type = "FBX" if path.lower().endswith(".fbx") else "mayaAscii"
+            cmds.file(path, reference=True, type=file_type, ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+            top_nodes: List[str] = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
 
             stored_nodes: List[str] = []
             for node in top_nodes:
                 if not cmds.objExists(node):
+                    continue
+                parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
+                if parent and parent[0] == "|Outsourcing_Review":
+                    stored_nodes.append(node)
                     continue
                 try:
                     cmds.parent(node, "Outsourcing_Review")
