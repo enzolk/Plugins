@@ -2629,6 +2629,70 @@ class HighPolyReviewTool:
                 continue
         self.material_isolation_state = {"context": "", "material_key": ""}
 
+    def _resolve_material_isolation_items(self, context_key: str, material_data: Dict[str, object]) -> Tuple[List[str], List[str]]:
+        material_name = str(material_data.get("name", "") or "")
+        if not material_name or not cmds.objExists(material_name):
+            return [], []
+
+        scope_objects = set(material_data.get("objects", []) or [])
+        scope_meshes: Set[str] = set()
+        scope_shapes: Set[str] = set()
+        for obj in scope_objects:
+            if not isinstance(obj, str) or not cmds.objExists(obj):
+                continue
+            shapes = cmds.listRelatives(obj, shapes=True, noIntermediate=True, fullPath=True) or []
+            if not shapes:
+                continue
+            scope_meshes.add(obj)
+            scope_shapes.add(shapes[0])
+
+        shading_groups = sorted(set(cmds.listConnections(material_name, type="shadingEngine") or []))
+        if not shading_groups:
+            return [], []
+
+        full_objects: Set[str] = set()
+        component_tokens: Set[str] = set()
+
+        for shading_group in shading_groups:
+            members = cmds.sets(shading_group, query=True) or []
+            if not members:
+                continue
+            for member in members:
+                if not isinstance(member, str):
+                    continue
+
+                base_name = member.split(".", 1)[0]
+                base_long = (cmds.ls(base_name, long=True) or [base_name])[0]
+                mesh_transform = ""
+                mesh_shape = ""
+
+                if cmds.nodeType(base_long) == "transform":
+                    mesh_transform = base_long
+                    shapes = cmds.listRelatives(base_long, shapes=True, noIntermediate=True, fullPath=True) or []
+                    mesh_shape = shapes[0] if shapes else ""
+                elif cmds.nodeType(base_long) == "mesh":
+                    mesh_shape = base_long
+                    parents = cmds.listRelatives(base_long, parent=True, fullPath=True) or []
+                    mesh_transform = parents[0] if parents else ""
+
+                if scope_meshes and mesh_transform and mesh_transform not in scope_meshes and mesh_shape not in scope_shapes:
+                    continue
+
+                if ".f[" in member:
+                    face_suffix = member[member.find(".f[") :]
+                    if mesh_transform:
+                        component_tokens.add(f"{mesh_transform}{face_suffix}")
+                    elif mesh_shape:
+                        component_tokens.add(f"{mesh_shape}{face_suffix}")
+                    continue
+
+                if mesh_transform and cmds.objExists(mesh_transform):
+                    full_objects.add(mesh_transform)
+
+        components = cmds.ls(sorted(component_tokens), flatten=True) or []
+        valid_components = [comp for comp in components if isinstance(comp, str) and ".f[" in comp]
+        return sorted(full_objects), sorted(set(valid_components))
+
     def toggle_isolate_selected_material(self, context_key: str) -> None:
         material_sets = self.material_sets_by_context.get(context_key, {})
         selected = self._selected_texture_set_names(context_key)
@@ -2653,11 +2717,10 @@ class HighPolyReviewTool:
             return
 
         data = material_sets.get(selected_key, {})
-        full_objects = [obj for obj in data.get("full_objects", []) if cmds.objExists(obj)]
-        components = [comp for comp in (cmds.ls(data.get("components", []), flatten=True) or []) if cmds.objExists(comp)]
+        full_objects, components = self._resolve_material_isolation_items(context_key, data)
         isolate_items = full_objects + components
         if not isolate_items:
-            self.log("INFO", category, "Aucun matériau sélectionné")
+            self.log("FAIL", category, "Aucune assignation exploitable trouvée pour le material sélectionné")
             return
 
         if active_key:
