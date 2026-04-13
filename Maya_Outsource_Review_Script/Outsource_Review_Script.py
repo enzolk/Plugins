@@ -146,6 +146,13 @@ class HighPolyReviewTool:
         self.scope_keys = ["placeholder", "high_ma", "high_fbx"]
         self.scope_labels = {"placeholder": "Placeholder", "high_ma": "High MA", "high_fbx": "High FBX"}
         self.last_texture_scope: List[str] = []
+        self.review_group_contents = {
+            "high_ma": [],
+            "high_fbx": [],
+            "low_fbx": [],
+            "bake_ma": [],
+            "final_scene_ma": [],
+        }
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -209,6 +216,11 @@ class HighPolyReviewTool:
             buttonCommand=lambda *_: self.pick_root_folder(),
         )
         cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder())
+        cmds.button(
+            label="Load Everything",
+            height=30,
+            command=lambda *_: self.load_everything()
+        )
 
         cmds.setParent("..")
         cmds.setParent("..")
@@ -2018,6 +2030,50 @@ class HighPolyReviewTool:
 
     def load_final_asset_fbx_scene(self) -> None:
         self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
+
+    def load_everything(self) -> None:
+        if not cmds.objExists("Outsourcing_Review"):
+            cmds.group(empty=True, name="Outsourcing_Review")
+        cmds.setAttr("Outsourcing_Review.visibility", 0)
+
+        self.review_group_contents = {
+            "high_ma": [],
+            "high_fbx": [],
+            "low_fbx": [],
+            "bake_ma": [],
+            "final_scene_ma": [],
+        }
+
+        load_plan = [
+            ("high_ma", "High_Ma_File"),
+            ("high_fbx", "High_FBX_File"),
+            ("low_fbx", "Low_FBX_File"),
+            ("bake_ma", "Bake_MA_File"),
+            ("final_scene_ma", "Final_Asset_MA_File"),
+        ]
+
+        for file_key, namespace in load_plan:
+            path = self.paths.get(file_key, "")
+            if not path or not os.path.isfile(path):
+                continue
+
+            top_nodes: List[str] = []
+            if cmds.namespace(exists=namespace):
+                top_nodes = cmds.ls(namespace + ":*", assemblies=True, long=True) or []
+            else:
+                new_nodes = cmds.file(path, reference=True, namespace=namespace, returnNewNodes=True) or []
+                top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
+
+            stored_nodes: List[str] = []
+            for node in top_nodes:
+                if not cmds.objExists(node):
+                    continue
+                try:
+                    cmds.parent(node, "Outsourcing_Review")
+                    stored_nodes.append(node)
+                except RuntimeError:
+                    continue
+            self.review_group_contents[file_key] = stored_nodes
 
     def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
         left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
