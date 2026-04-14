@@ -100,6 +100,9 @@ class HighPolyReviewTool:
         self.check_states = {
             "ma_fbx_compared": {"status": "PENDING", "mode": "AUTO"},
             "ma_bake_compared": {"status": "PENDING", "mode": "AUTO"},
+            "bake_structure_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_pairing_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_ready_checked": {"status": "PENDING", "mode": "AUTO"},
             "no_namespaces": {"status": "PENDING", "mode": "AUTO"},
             "placeholder_checked": {"status": "PENDING", "mode": "AUTO"},
             "design_kit_checked": {"status": "PENDING", "mode": "MANUAL"},
@@ -118,6 +121,9 @@ class HighPolyReviewTool:
         self.check_ui_map = {
             "ma_fbx_compared": "check_ma_fbx",
             "ma_bake_compared": "check_ma_bake",
+            "bake_structure_checked": "check_bake_structure",
+            "bake_pairing_checked": "check_bake_pairing",
+            "bake_ready_checked": "check_bake_ready",
             "no_namespaces": "check_ns",
             "placeholder_checked": "check_placeholder",
             "design_kit_checked": "check_design",
@@ -322,7 +328,19 @@ class HighPolyReviewTool:
         self._build_guided_low_review_section()
         cmds.setParent("..")
 
-        cmds.tabLayout(tabs, edit=True, tabLabel=((high_tab, "Review 01 — High"), (low_tab, "Review 02 — Low")))
+        bake_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_guided_bake_review_section()
+        cmds.setParent("..")
+
+        cmds.tabLayout(
+            tabs,
+            edit=True,
+            tabLabel=(
+                (high_tab, "Review 01 — High"),
+                (low_tab, "Review 02 — Low"),
+                (bake_tab, "Review 03 — Bake Scene"),
+            ),
+        )
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -378,6 +396,45 @@ class HighPolyReviewTool:
         self._build_manual_root_selector("compare_low_final_final_root_menu", "Select Final Scene Root", "final_ma")
         self.ui["check_low_final"] = cmds.checkBox(label="", value=False, enable=False)
         cmds.button(label="Run Compare Final Asset", height=26, command=lambda *_: self.compare_low_vs_final_asset())
+
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _build_guided_bake_review_section(self) -> None:
+        cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+
+        cmds.text(label="Guided review of the Bake Scene.", align="left")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 01 — Bake Scene Structure", align="left")
+        self._build_manual_root_selector("bake_structure_high_root_menu", "Select Bake High Root", "bake_high")
+        self._build_manual_root_selector("bake_structure_low_root_menu", "Select Bake Low Root", "bake_low")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["check_bake_structure"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Bake High / Low structure", align="left")
+        cmds.button(label="Run Structure Check", height=26, command=lambda *_: self.check_bake_scene_structure())
+        cmds.setParent("..")
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 02 — Naming & Pairing", align="left")
+        self._build_manual_root_selector("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high")
+        self._build_manual_root_selector("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["check_bake_pairing"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="High ↔ Low pairing", align="left")
+        cmds.button(label="Check Pairing", height=26, command=lambda *_: self.check_bake_pairing())
+        cmds.setParent("..")
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 03 — Bake Readiness", align="left")
+        self._build_manual_root_selector("bake_ready_high_root_menu", "Select Bake High Root", "bake_high")
+        self._build_manual_root_selector("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["check_bake_ready"] = cmds.checkBox(label="", value=False, enable=False)
+        cmds.text(label="Bake validation", align="left")
+        cmds.button(label="Run Bake Validation", height=26, command=lambda *_: self.check_bake_readiness())
+        cmds.setParent("..")
 
         cmds.setParent("..")
         cmds.setParent("..")
@@ -2401,6 +2458,187 @@ class HighPolyReviewTool:
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("ma_bake_compared", "OK" if ok else "FAIL")
+
+    def check_bake_scene_structure(self) -> None:
+        self._log_step_header(1, "Bake Scene Structure", category="BakeStructure")
+        namespace = self.context.get("bake_ma_namespace", "")
+        high_root = self.get_manual_selected_root("bake_structure_high_root_menu")
+        low_root = self.get_manual_selected_root("bake_structure_low_root_menu")
+
+        self.log("INFO", "BakeStructure", f"Fichier analysé : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
+        self.log("INFO", "BakeStructure", f"Namespace attendu : {namespace or 'N/A'}")
+        self.log("INFO", "BakeStructure", f"Bake High détectés : {len(self.detected_roots.get('bake_high', []))}")
+        self.log("INFO", "BakeStructure", f"Bake Low détectés : {len(self.detected_roots.get('bake_low', []))}")
+
+        if not high_root:
+            candidates = [r for r in self.detected_roots.get("bake_high", []) if cmds.objExists(r)]
+            high_root = candidates[0] if candidates else None
+        if not low_root:
+            candidates = [r for r in self.detected_roots.get("bake_low", []) if cmds.objExists(r)]
+            low_root = candidates[0] if candidates else None
+
+        if not high_root or not low_root:
+            self.log("FAIL", "BakeStructure", "Bake High et/ou Bake Low introuvable(s).")
+            self.set_check_status("bake_structure_checked", "FAIL")
+            return
+
+        self.log("INFO", "BakeStructure", f"Root Bake High : {high_root}", [high_root])
+        self.log("INFO", "BakeStructure", f"Root Bake Low : {low_root}", [low_root])
+        high_meshes = self._collect_mesh_transforms(high_root)
+        low_meshes = self._collect_mesh_transforms(low_root)
+        self.log("INFO", "BakeStructure", f"Meshes High/Low : {len(high_meshes)} / {len(low_meshes)}")
+
+        high_ok = bool(high_meshes)
+        low_ok = bool(low_meshes)
+        namespace_ok = True
+        if namespace:
+            namespace_ok = (
+                f"|{namespace}:" in high_root and
+                f"|{namespace}:" in low_root
+            )
+
+        overlap_objects = sorted(set(high_meshes) & set(low_meshes))
+        overlap_ok = len(overlap_objects) == 0
+
+        mixed_low_in_high = [m for m in high_meshes if self._strip_namespaces_from_name(self._short_name(m)).lower().endswith("_low")]
+        mixed_high_in_low = [m for m in low_meshes if self._strip_namespaces_from_name(self._short_name(m)).lower().endswith("_high")]
+        naming_split_ok = not mixed_low_in_high and not mixed_high_in_low
+
+        self.log("INFO" if high_ok else "FAIL", "BakeStructure", f"Bake High présent = {'OK' if high_ok else 'FAIL'}")
+        self.log("INFO" if low_ok else "FAIL", "BakeStructure", f"Bake Low présent = {'OK' if low_ok else 'FAIL'}")
+        self.log("INFO" if namespace_ok else "FAIL", "BakeStructure", f"Namespace bake cohérent = {'OK' if namespace_ok else 'FAIL'}")
+        self.log("INFO" if overlap_ok else "FAIL", "BakeStructure", f"High/Low séparés (pas de meshes partagés) = {'OK' if overlap_ok else 'FAIL'}", overlap_objects[:120])
+        self.log(
+            "INFO" if naming_split_ok else "FAIL",
+            "BakeStructure",
+            f"Pas de mélange _high/_low = {'OK' if naming_split_ok else 'FAIL'}",
+            (mixed_low_in_high + mixed_high_in_low)[:120],
+        )
+
+        ok = high_ok and low_ok and namespace_ok and overlap_ok and naming_split_ok
+        self.log("INFO" if ok else "FAIL", "BakeStructure", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("bake_structure_checked", "OK" if ok else "FAIL")
+
+    def _bake_pair_key(self, mesh: str, root: str, expected_suffix: str) -> Tuple[str, bool]:
+        key = self._normalized_relative_mesh_key(mesh, root=root)
+        clean = self._strip_namespaces_from_name(key).lower()
+        has_suffix = clean.endswith(expected_suffix)
+        clean = re.sub(r"_high$", "", clean)
+        clean = re.sub(r"_low$", "", clean)
+        return clean, has_suffix
+
+    def check_bake_pairing(self) -> None:
+        self._log_step_header(2, "Naming & Pairing", category="BakePairing")
+        high_root = self.get_manual_selected_root("bake_pairing_high_root_menu")
+        low_root = self.get_manual_selected_root("bake_pairing_low_root_menu")
+        if not high_root or not low_root:
+            self.log("FAIL", "BakePairing", "Sélection manuelle requise: Select Bake High Root et Select Bake Low Root.")
+            self.set_check_status("bake_pairing_checked", "FAIL")
+            return
+
+        high_meshes = self._collect_mesh_transforms(high_root)
+        low_meshes = self._collect_mesh_transforms(low_root)
+        self.log("INFO", "BakePairing", f"Fichier analysé : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
+        self.log("INFO", "BakePairing", f"Root Bake High : {high_root}", [high_root])
+        self.log("INFO", "BakePairing", f"Root Bake Low : {low_root}", [low_root])
+        self.log("INFO", "BakePairing", f"Meshes High/Low : {len(high_meshes)} / {len(low_meshes)}")
+        if not high_meshes or not low_meshes:
+            self.log("FAIL", "BakePairing", "Pairing impossible: Bake High ou Bake Low vide.")
+            self.set_check_status("bake_pairing_checked", "FAIL")
+            return
+
+        high_by_key: Dict[str, List[str]] = {}
+        low_by_key: Dict[str, List[str]] = {}
+        invalid_high_suffix: List[str] = []
+        invalid_low_suffix: List[str] = []
+        for mesh in high_meshes:
+            key, has_suffix = self._bake_pair_key(mesh, high_root, "_high")
+            high_by_key.setdefault(key, []).append(mesh)
+            if not has_suffix:
+                invalid_high_suffix.append(mesh)
+        for mesh in low_meshes:
+            key, has_suffix = self._bake_pair_key(mesh, low_root, "_low")
+            low_by_key.setdefault(key, []).append(mesh)
+            if not has_suffix:
+                invalid_low_suffix.append(mesh)
+
+        all_keys = sorted(set(high_by_key.keys()) | set(low_by_key.keys()))
+        orphan_high_keys = [k for k in all_keys if k in high_by_key and k not in low_by_key]
+        orphan_low_keys = [k for k in all_keys if k in low_by_key and k not in high_by_key]
+        duplicate_high = {k: v for k, v in high_by_key.items() if len(v) > 1}
+        duplicate_low = {k: v for k, v in low_by_key.items() if len(v) > 1}
+
+        self.log("INFO", "BakePairing", f"Paires détectées : {len(all_keys)}")
+        self.log("INFO" if not invalid_high_suffix else "FAIL", "BakePairing", f"Naming _high cohérent = {'OK' if not invalid_high_suffix else 'FAIL'}", invalid_high_suffix[:120])
+        self.log("INFO" if not invalid_low_suffix else "FAIL", "BakePairing", f"Naming _low cohérent = {'OK' if not invalid_low_suffix else 'FAIL'}", invalid_low_suffix[:120])
+        self.log("INFO" if not orphan_high_keys else "FAIL", "BakePairing", f"Orphelins HIGH = {len(orphan_high_keys)}", sum([high_by_key[k] for k in orphan_high_keys], [])[:120])
+        self.log("INFO" if not orphan_low_keys else "FAIL", "BakePairing", f"Orphelins LOW = {len(orphan_low_keys)}", sum([low_by_key[k] for k in orphan_low_keys], [])[:120])
+        self.log("INFO" if not duplicate_high else "FAIL", "BakePairing", f"Doublons HIGH = {len(duplicate_high)}")
+        self.log("INFO" if not duplicate_low else "FAIL", "BakePairing", f"Doublons LOW = {len(duplicate_low)}")
+
+        ok = not any([invalid_high_suffix, invalid_low_suffix, orphan_high_keys, orphan_low_keys, duplicate_high, duplicate_low])
+        self.log("INFO" if ok else "FAIL", "BakePairing", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("bake_pairing_checked", "OK" if ok else "FAIL")
+
+    def check_bake_readiness(self) -> None:
+        self._log_step_header(3, "Bake Readiness", category="BakeReady")
+        high_root = self.get_manual_selected_root("bake_ready_high_root_menu")
+        low_root = self.get_manual_selected_root("bake_ready_low_root_menu")
+        if not high_root or not low_root:
+            self.log("FAIL", "BakeReady", "Sélection manuelle requise: Select Bake High Root et Select Bake Low Root.")
+            self.set_check_status("bake_ready_checked", "FAIL")
+            return
+
+        high_meshes = self._collect_mesh_transforms(high_root)
+        low_meshes = self._collect_mesh_transforms(low_root)
+        meshes = high_meshes + low_meshes
+        self.log("INFO", "BakeReady", f"Fichier analysé : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
+        self.log("INFO", "BakeReady", f"Root Bake High : {high_root}", [high_root])
+        self.log("INFO", "BakeReady", f"Root Bake Low : {low_root}", [low_root])
+        self.log("INFO", "BakeReady", f"Meshes analysés High/Low : {len(high_meshes)} / {len(low_meshes)}")
+        if not meshes:
+            self.log("FAIL", "BakeReady", "Aucun mesh dans Bake Scene.")
+            self.set_check_status("bake_ready_checked", "FAIL")
+            return
+
+        high_color_flags: List[bool] = []
+        for mesh in high_meshes:
+            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
+            if not shapes:
+                high_color_flags.append(False)
+                continue
+            high_color_flags.append(bool(cmds.polyColorSet(shapes[0], query=True, allColorSets=True) or []))
+        require_vertex_color = any(high_color_flags)
+        self.log("INFO", "BakeReady", f"Vertex color requis = {'Oui' if require_vertex_color else 'Non'}")
+
+        fail_count = 0
+        for mesh in meshes:
+            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+            shape = shapes[0] if shapes else None
+            uv_sets = cmds.polyUVSet(shape, q=True, allUVSets=True) if shape else []
+            has_uv = bool(uv_sets)
+            vertex_count = int(cmds.polyEvaluate(mesh, vertex=True) or 0)
+            face_count = int(cmds.polyEvaluate(mesh, face=True) or 0)
+            non_manifold = len(cmds.polyInfo(mesh, nonManifoldVertices=True) or []) + len(cmds.polyInfo(mesh, nonManifoldEdges=True) or [])
+            lamina = len(cmds.polyInfo(mesh, laminaFaces=True) or [])
+            has_color = bool(cmds.polyColorSet(shape, query=True, allColorSets=True) or []) if shape else False
+            color_ok = (not require_vertex_color) or has_color
+            non_empty_ok = vertex_count > 0 and face_count > 0
+            healthy_ok = (non_manifold == 0 and lamina == 0)
+            mesh_ok = has_uv and non_empty_ok and healthy_ok and color_ok
+            if not mesh_ok:
+                fail_count += 1
+
+            self.log("INFO", "BakeReadyMesh", f"Mesh = {mesh}")
+            self.log("INFO" if has_uv else "FAIL", "BakeReadyMesh", f"UV sets présents = {'OK' if has_uv else 'FAIL'}")
+            self.log("INFO" if non_empty_ok else "FAIL", "BakeReadyMesh", f"Mesh non vide = {'OK' if non_empty_ok else 'FAIL'} (v={vertex_count}, f={face_count})")
+            self.log("INFO" if healthy_ok else "FAIL", "BakeReadyMesh", f"Mesh sain (non-manifold/lamina) = {'OK' if healthy_ok else 'FAIL'} ({non_manifold}/{lamina})")
+            self.log("INFO" if color_ok else "FAIL", "BakeReadyMesh", f"Vertex color = {'OK' if color_ok else 'FAIL'}")
+            self.log("INFO" if mesh_ok else "FAIL", "BakeReadyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+
+        ok = fail_count == 0
+        self.log("INFO" if ok else "FAIL", "BakeReady", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status("bake_ready_checked", "OK" if ok else "FAIL")
 
     def _collect_low_meshes(self) -> List[str]:
         return self._collect_mesh_transforms_in_namespace(self.context["low_fbx_namespace"], exclude_placeholder_named=True)[0]
