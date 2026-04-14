@@ -1208,7 +1208,7 @@ class HighPolyReviewTool:
 
     def _strip_namespaces_from_name(self, name: str) -> str:
         parts = name.split(":")
-        return parts[-1] if parts else name
+        return (parts[-1] if parts else name).strip()
 
     def _contains_placeholder_token(self, text: str) -> bool:
         return PLACEHOLDER_TOKEN in text.lower()
@@ -2521,11 +2521,10 @@ class HighPolyReviewTool:
 
     def _bake_pair_key(self, mesh: str, root: str, expected_suffix: str) -> Tuple[str, bool]:
         key = self._normalized_relative_mesh_key(mesh, root=root)
-        clean = self._strip_namespaces_from_name(key).lower()
-        has_suffix = clean.endswith(expected_suffix)
-        clean = re.sub(r"_high$", "", clean)
-        clean = re.sub(r"_low$", "", clean)
-        return clean, has_suffix
+        segments = [self._strip_namespaces_from_name(seg).lower() for seg in key.split("/") if seg]
+        has_suffix = bool(segments and segments[-1].endswith(expected_suffix))
+        normalized_segments = [re.sub(r"_(high|low)$", "", seg) for seg in segments]
+        return "/".join(normalized_segments), has_suffix
 
     def check_bake_pairing(self) -> None:
         self._log_step_header(2, "Naming & Pairing", category="BakePairing")
