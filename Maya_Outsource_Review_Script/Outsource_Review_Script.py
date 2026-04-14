@@ -2568,6 +2568,44 @@ class HighPolyReviewTool:
         duplicate_low = {k: v for k, v in low_by_key.items() if len(v) > 1}
         orphan_high_meshes = sum([high_by_key[k] for k in orphan_high_keys], [])
         orphan_low_meshes = sum([low_by_key[k] for k in orphan_low_keys], [])
+        bbox_pivot_mismatch_keys: List[str] = []
+        bbox_pivot_mismatch_meshes: List[str] = []
+
+        shared_unique_keys = [
+            k for k in all_keys
+            if k in high_by_key and k in low_by_key and len(high_by_key[k]) == 1 and len(low_by_key[k]) == 1
+        ]
+        bbox_pivot_pass_count = 0
+        for key in shared_unique_keys:
+            high_mesh = high_by_key[key][0]
+            low_mesh = low_by_key[key][0]
+            bbox_dims_high, bbox_center_high = self._mesh_bbox_dims_and_center_world(high_mesh)
+            bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_mesh)
+            bbox_delta = tuple(abs(bbox_dims_high[i] - bbox_dims_low[i]) for i in range(3))
+            bbox_center_delta = tuple(abs(bbox_center_high[i] - bbox_center_low[i]) for i in range(3))
+            bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+
+            pivot_high = tuple(cmds.xform(high_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+            pivot_low = tuple(cmds.xform(low_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+            pivot_delta = tuple(abs(pivot_high[i] - pivot_low[i]) for i in range(3))
+            pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+
+            self.log(
+                "INFO" if (bbox_ok and pivot_ok) else "FAIL",
+                "BakePairing",
+                f"Pair '{key}' bbox/pivot test = {'OK' if (bbox_ok and pivot_ok) else 'FAIL'} (bbox={'OK' if bbox_ok else 'FAIL'}, pivot={'OK' if pivot_ok else 'FAIL'})",
+                [high_mesh, low_mesh],
+            )
+
+            if not (bbox_ok and pivot_ok):
+                bbox_pivot_mismatch_keys.append(key)
+                bbox_pivot_mismatch_meshes.extend([high_mesh, low_mesh])
+                self.log("FAIL", "BakePairing", f"Pair '{key}' bbox/pivot mismatch", [high_mesh, low_mesh])
+                self.log("INFO", "BakePairing", f"  BBox High/Low = {self._fmt_vec(bbox_dims_high, precision=2)} / {self._fmt_vec(bbox_dims_low, precision=2)}")
+                self.log("INFO", "BakePairing", f"  BBox delta dims/center = {self._fmt_vec(bbox_delta, precision=4)} / {self._fmt_vec(bbox_center_delta, precision=4)}")
+                self.log("INFO", "BakePairing", f"  Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
+            else:
+                bbox_pivot_pass_count += 1
 
         self.log("INFO", "BakePairing", f"Paires détectées : {len(all_keys)}")
         self.log("INFO" if not invalid_high_suffix else "FAIL", "BakePairing", f"Naming _high cohérent = {'OK' if not invalid_high_suffix else 'FAIL'}", invalid_high_suffix[:120])
@@ -2588,8 +2626,19 @@ class HighPolyReviewTool:
         if duplicate_low:
             for key, meshes_for_key in sorted(duplicate_low.items()):
                 self.log("FAIL", "BakePairing", f"Doublon LOW sur '{key}' ({len(meshes_for_key)} meshes)", meshes_for_key[:120])
+        self.log("INFO", "BakePairing", f"Paires bbox/pivot testées = {len(shared_unique_keys)}")
+        self.log("INFO", "BakePairing", f"Paires bbox/pivot conformes = {bbox_pivot_pass_count}")
+        self.log("INFO" if not bbox_pivot_mismatch_keys else "FAIL", "BakePairing", f"Paires bbox/pivot non conformes = {len(bbox_pivot_mismatch_keys)}", bbox_pivot_mismatch_meshes[:120])
 
-        ok = not any([invalid_high_suffix, invalid_low_suffix, orphan_high_keys, orphan_low_keys, duplicate_high, duplicate_low])
+        ok = not any([
+            invalid_high_suffix,
+            invalid_low_suffix,
+            orphan_high_keys,
+            orphan_low_keys,
+            duplicate_high,
+            duplicate_low,
+            bbox_pivot_mismatch_keys,
+        ])
         self.log("INFO" if ok else "FAIL", "BakePairing", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("bake_pairing_checked", "OK" if ok else "FAIL")
 
