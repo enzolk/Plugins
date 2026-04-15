@@ -2395,67 +2395,44 @@ class HighPolyReviewTool:
             self.log("FAIL", "CompareBake", "Sélection manuelle requise: choisir High.ma Root et Bake High Root.")
             self.set_check_status("ma_bake_compared", "FAIL")
             return
-        ma_meshes = self._collect_mesh_transforms(ma_root)
-        bake_meshes = self._collect_mesh_transforms(bake_root)
+
+        if not cmds.objExists(ma_root) or not cmds.objExists(bake_root):
+            self.log("FAIL", "CompareBake", "Compare impossible : un des roots sélectionnés n'existe plus dans la scène.")
+            self.set_check_status("ma_bake_compared", "FAIL")
+            return
 
         self.log("INFO", "CompareBake", f"Source A : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "CompareBake", f"Source B : {self._basename_from_path(self.paths.get('bake_ma', ''))}")
         self.log("INFO", "CompareBake", f"Root High.ma sélectionné : {ma_root}", [ma_root])
         self.log("INFO", "CompareBake", f"Root Bake sélectionné : {bake_root}", [bake_root])
-        self.log("INFO", "CompareBake", f"Meshes analysés High.ma / Bake High : {len(ma_meshes)} / {len(bake_meshes)}")
-        ma_namespace = self.context["ma_namespace"]
-        bake_namespace = self.context["bake_ma_namespace"]
+        ma_data = self._root_aggregate_signature(ma_root)
+        bake_data = self._root_aggregate_signature(bake_root)
+        self.log("INFO", "CompareBake", f"Meshes analysés High.ma / Bake High : {ma_data['mesh_count']} / {bake_data['mesh_count']}")
 
-        ma_by_key = {self._normalized_relative_mesh_key(m, root=ma_root): self._mesh_data_signature(m) for m in ma_meshes}
-        bake_by_key = {self._normalized_relative_mesh_key(m, root=bake_root): self._mesh_data_signature(m) for m in bake_meshes}
-        all_keys = sorted(set(ma_by_key.keys()) | set(bake_by_key.keys()))
-        self.log("INFO", "CompareBake", f"Paires comparées : {len(all_keys)}")
+        presence_ok = bool(ma_data["mesh_count"] > 0 and bake_data["mesh_count"] > 0)
+        mesh_count_ok = ma_data["mesh_count"] == bake_data["mesh_count"]
+        topo_ok = (ma_data["v"], ma_data["e"], ma_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"])
+        uv_ok = bool(ma_data["uv_total"] == bake_data["uv_total"] and ma_data["uv_sets"] == bake_data["uv_sets"])
+        bbox_delta = tuple(abs(ma_data["bbox_dims"][i] - bake_data["bbox_dims"][i]) for i in range(3))
+        bbox_center_delta = tuple(abs(ma_data["bbox_center"][i] - bake_data["bbox_center"][i]) for i in range(3))
+        bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+        pivot_delta = tuple(abs(ma_data["pivot_world"][i] - bake_data["pivot_world"][i]) for i in range(3))
+        pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+        ok = presence_ok and mesh_count_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
 
-        pair_fail_count = 0
-        for key in all_keys:
-            ma_data = ma_by_key.get(key)
-            bake_data = bake_by_key.get(key)
-            ma_name = ma_data["path"] if ma_data else f"{ma_namespace}:{key}"
-            bake_name = bake_data["path"] if bake_data else f"{bake_namespace}:{key}"
-
-            presence_ok = bool(ma_data and bake_data)
-            topo_ok = bool(
-                ma_data and bake_data and
-                (ma_data["v"], ma_data["e"], ma_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"])
-            )
-            uv_ok = bool(
-                ma_data and bake_data and
-                ma_data["uv_total"] == bake_data["uv_total"] and
-                ma_data["uv_sets"] == bake_data["uv_sets"]
-            )
-            bbox_dims_ma = (0.0, 0.0, 0.0)
-            bbox_dims_bake = (0.0, 0.0, 0.0)
-            bbox_delta = (0.0, 0.0, 0.0)
-            bbox_center_delta = (0.0, 0.0, 0.0)
-            bbox_ok = False
-            if presence_ok:
-                bbox_dims_ma, bbox_center_ma = self._mesh_bbox_dims_and_center_world(ma_data["path"])
-                bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
-                bbox_delta = tuple(abs(bbox_dims_ma[i] - bbox_dims_bake[i]) for i in range(3))
-                bbox_center_delta = tuple(abs(bbox_center_ma[i] - bbox_center_bake[i]) for i in range(3))
-                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
-            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
-            if not pair_ok:
-                pair_fail_count += 1
-
-            self.log("INFO", "CompareBakePair", f"High.ma Mesh = {ma_name}")
-            self.log("INFO", "CompareBakePair", f"Bake High Mesh = {bake_name}")
-            self.log("INFO" if presence_ok else "FAIL", "CompareBakePair", f"Mesh presence match = {'OK' if presence_ok else 'FAIL'}")
-            self.log("INFO" if topo_ok else "FAIL", "CompareBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
-            self.log("INFO" if uv_ok else "FAIL", "CompareBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box High.ma = {self._fmt_vec(bbox_dims_ma, precision=2)}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box Bake = {self._fmt_vec(bbox_dims_bake, precision=2)}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
-            self.log("INFO" if bbox_ok else "FAIL", "CompareBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
-            self.log("INFO" if pair_ok else "FAIL", "CompareBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
-
-        ok = pair_fail_count == 0
+        self.log("INFO" if presence_ok else "FAIL", "CompareBake", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+        self.log("INFO" if mesh_count_ok else "FAIL", "CompareBake", f"Mesh count match = {'OK' if mesh_count_ok else 'FAIL'}")
+        self.log("INFO" if topo_ok else "FAIL", "CompareBake", f"Topology match (totaux root) = {'OK' if topo_ok else 'FAIL'}")
+        self.log("INFO" if uv_ok else "FAIL", "CompareBake", f"UV match (totaux root) = {'OK' if uv_ok else 'FAIL'}")
+        self.log("INFO", "CompareBake", f"Bounding Box High.ma (root) = {self._fmt_vec(ma_data['bbox_dims'], precision=2)}")
+        self.log("INFO", "CompareBake", f"Bounding Box Bake (root) = {self._fmt_vec(bake_data['bbox_dims'], precision=2)}")
+        self.log("INFO", "CompareBake", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+        self.log("INFO", "CompareBake", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+        self.log("INFO" if bbox_ok else "FAIL", "CompareBake", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+        self.log("INFO", "CompareBake", f"Pivot High.ma (root) = {self._fmt_vec(ma_data['pivot_world'], precision=4)}")
+        self.log("INFO", "CompareBake", f"Pivot Bake (root) = {self._fmt_vec(bake_data['pivot_world'], precision=4)}")
+        self.log("INFO", "CompareBake", f"Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
+        self.log("INFO" if pivot_ok else "FAIL", "CompareBake", f"Pivot match = {'OK' if pivot_ok else 'FAIL'}")
         self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("ma_bake_compared", "OK" if ok else "FAIL")
 
@@ -3651,63 +3628,81 @@ else
             self.log("FAIL", "CompareLowFinal", "Sélection manuelle requise: Select Low.fbx Root et Select Final Scene Root.")
             self.set_check_status("low_final_compared", "FAIL")
             return
-        low_meshes = self._collect_mesh_transforms(low_root)
-        final_meshes = self._collect_mesh_transforms(final_root)
+
+        if not cmds.objExists(low_root) or not cmds.objExists(final_root):
+            self.log("FAIL", "CompareLowFinal", "Compare impossible : un des roots sélectionnés n'existe plus dans la scène.")
+            self.set_check_status("low_final_compared", "FAIL")
+            return
+
         self.log("INFO", "CompareLowFinal", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
         self.log("INFO", "CompareLowFinal", f"Source B : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
         self.log("INFO", "CompareLowFinal", f"Root Low sélectionné : {low_root}", [low_root])
         self.log("INFO", "CompareLowFinal", f"Root Final sélectionné : {final_root}", [final_root])
-        self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {len(low_meshes)} / {len(final_meshes)}")
-        if not low_meshes or not final_meshes:
-            self.log("FAIL", "CompareLowFinal", "Compare impossible : Low.fbx ou Final Scene non chargé.")
-            self.set_check_status("low_final_compared", "FAIL")
-            return
+        low_data = self._root_aggregate_signature(low_root)
+        final_data = self._root_aggregate_signature(final_root)
+        self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {low_data['mesh_count']} / {final_data['mesh_count']}")
 
-        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=low_root)): self._mesh_data_signature(m) for m in low_meshes}
-        final_by = {self._normalized_relative_mesh_key(m, root=final_root): self._mesh_data_signature(m) for m in final_meshes}
-        all_keys = sorted(set(low_by.keys()) | set(final_by.keys()))
-        self.log("INFO", "CompareLowFinal", f"Paires comparées : {len(all_keys)}")
+        presence_ok = bool(low_data["mesh_count"] > 0 and final_data["mesh_count"] > 0)
+        topo_ok = (low_data["v"], low_data["e"], low_data["f"]) == (final_data["v"], final_data["e"], final_data["f"])
+        uv_ok = bool(low_data["uv_total"] == final_data["uv_total"] and low_data["uv_sets"] == final_data["uv_sets"])
+        bbox_delta = tuple(abs(low_data["bbox_dims"][i] - final_data["bbox_dims"][i]) for i in range(3))
+        bbox_center_delta = tuple(abs(low_data["bbox_center"][i] - final_data["bbox_center"][i]) for i in range(3))
+        bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+        pivot_delta = tuple(abs(low_data["pivot_world"][i] - final_data["pivot_world"][i]) for i in range(3))
+        pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+        ok = presence_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
 
-        pair_fail_count = 0
-        for key in all_keys:
-            low_data = low_by.get(key)
-            final_data = final_by.get(key)
-            low_name = low_data["path"] if low_data else f"{self.context['low_fbx_namespace']}:{key}"
-            final_name = final_data["path"] if final_data else f"{self.context['final_asset_ma_namespace']}:{key}"
-
-            presence_ok = bool(low_data and final_data)
-            topo_ok = bool(low_data and final_data and (low_data["v"], low_data["e"], low_data["f"]) == (final_data["v"], final_data["e"], final_data["f"]))
-            uv_ok = bool(low_data and final_data and low_data["uv_total"] == final_data["uv_total"] and low_data["uv_sets"] == final_data["uv_sets"])
-            bbox_dims_low = (0.0, 0.0, 0.0)
-            bbox_dims_final = (0.0, 0.0, 0.0)
-            bbox_delta = (0.0, 0.0, 0.0)
-            bbox_center_delta = (0.0, 0.0, 0.0)
-            bbox_ok = False
-            if presence_ok:
-                bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_data["path"])
-                bbox_dims_final, bbox_center_final = self._mesh_bbox_dims_and_center_world(final_data["path"])
-                bbox_delta = tuple(abs(bbox_dims_low[i] - bbox_dims_final[i]) for i in range(3))
-                bbox_center_delta = tuple(abs(bbox_center_low[i] - bbox_center_final[i]) for i in range(3))
-                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
-            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
-            if not pair_ok:
-                pair_fail_count += 1
-
-            self.log("INFO", "CompareLowFinalPair", f"Low = {low_name}")
-            self.log("INFO", "CompareLowFinalPair", f"Final = {final_name}")
-            self.log("INFO" if presence_ok else "FAIL", "CompareLowFinalPair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
-            self.log("INFO" if topo_ok else "FAIL", "CompareLowFinalPair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
-            self.log("INFO" if uv_ok else "FAIL", "CompareLowFinalPair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
-            self.log("INFO", "CompareLowFinalPair", f"Bounding Box Low = {self._fmt_vec(bbox_dims_low, precision=2)}")
-            self.log("INFO", "CompareLowFinalPair", f"Bounding Box Final = {self._fmt_vec(bbox_dims_final, precision=2)}")
-            self.log("INFO", "CompareLowFinalPair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
-            self.log("INFO", "CompareLowFinalPair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
-            self.log("INFO" if bbox_ok else "FAIL", "CompareLowFinalPair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
-            self.log("INFO" if pair_ok else "FAIL", "CompareLowFinalPair", f"Result = {'OK' if pair_ok else 'FAIL'}")
-
-        ok = pair_fail_count == 0
+        self.log("INFO" if presence_ok else "FAIL", "CompareLowFinal", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+        self.log("INFO" if topo_ok else "FAIL", "CompareLowFinal", f"Topology match (totaux root) = {'OK' if topo_ok else 'FAIL'}")
+        self.log("INFO" if uv_ok else "FAIL", "CompareLowFinal", f"UV match (totaux root) = {'OK' if uv_ok else 'FAIL'}")
+        self.log("INFO", "CompareLowFinal", f"Bounding Box Low (root) = {self._fmt_vec(low_data['bbox_dims'], precision=2)}")
+        self.log("INFO", "CompareLowFinal", f"Bounding Box Final (root) = {self._fmt_vec(final_data['bbox_dims'], precision=2)}")
+        self.log("INFO", "CompareLowFinal", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+        self.log("INFO", "CompareLowFinal", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+        self.log("INFO" if bbox_ok else "FAIL", "CompareLowFinal", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+        self.log("INFO", "CompareLowFinal", f"Pivot Low (root) = {self._fmt_vec(low_data['pivot_world'], precision=4)}")
+        self.log("INFO", "CompareLowFinal", f"Pivot Final (root) = {self._fmt_vec(final_data['pivot_world'], precision=4)}")
+        self.log("INFO", "CompareLowFinal", f"Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
+        self.log("INFO" if pivot_ok else "FAIL", "CompareLowFinal", f"Pivot match = {'OK' if pivot_ok else 'FAIL'}")
         self.log("INFO" if ok else "FAIL", "CompareLowFinal", f"Résultat final : {'OK' if ok else 'FAIL'}")
         self.set_check_status("low_final_compared", "OK" if ok else "FAIL")
+
+    def _root_aggregate_signature(self, root: str) -> Dict[str, object]:
+        meshes = self._collect_mesh_transforms(root) if root and cmds.objExists(root) else []
+        total_v = 0
+        total_e = 0
+        total_f = 0
+        total_uv = 0
+        uv_sets: Dict[str, Dict[str, int]] = {}
+
+        for mesh in meshes:
+            data = self._mesh_data_signature(mesh, root=root)
+            total_v += int(data.get("v", 0))
+            total_e += int(data.get("e", 0))
+            total_f += int(data.get("f", 0))
+            total_uv += int(data.get("uv_total", 0))
+            for uv_name, uv_data in (data.get("uv_sets", {}) or {}).items():
+                bucket = uv_sets.setdefault(uv_name, {"count": 0, "shells": 0})
+                bucket["count"] += int(uv_data.get("count", 0))
+                bucket["shells"] += int(uv_data.get("shells", 0))
+
+        bbox = self._world_union_bbox(meshes)
+        bbox_dims = self._bbox_dims(bbox) if bbox else (0.0, 0.0, 0.0)
+        bbox_center = self._bbox_center(bbox) if bbox else (0.0, 0.0, 0.0)
+        pivot_world = tuple(cmds.xform(root, q=True, ws=True, rotatePivot=True)) if cmds.objExists(root) else (0.0, 0.0, 0.0)
+
+        return {
+            "mesh_count": len(meshes),
+            "v": total_v,
+            "e": total_e,
+            "f": total_f,
+            "uv_total": total_uv,
+            "uv_sets": uv_sets,
+            "bbox_dims": bbox_dims,
+            "bbox_center": bbox_center,
+            "pivot_world": pivot_world,
+            "meshes": meshes,
+        }
 
     def run_low_review_checks(self) -> None:
         self.log("INFO", "RunAllLow", "----- Run All Low Steps (01 -> 07) -----")
