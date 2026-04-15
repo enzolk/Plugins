@@ -101,6 +101,11 @@ class HighPolyReviewTool:
             "ma_fbx_compared": {"status": "PENDING", "mode": "AUTO"},
             "ma_bake_compared": {"status": "PENDING", "mode": "AUTO"},
             "bake_structure_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_low_topology_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_high_materials_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_low_materials_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_low_uv_map1_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_low_uv_map2_checked": {"status": "PENDING", "mode": "AUTO"},
             "bake_pairing_checked": {"status": "PENDING", "mode": "AUTO"},
             "bake_ready_checked": {"status": "PENDING", "mode": "AUTO"},
             "no_namespaces": {"status": "PENDING", "mode": "AUTO"},
@@ -122,6 +127,11 @@ class HighPolyReviewTool:
             "ma_fbx_compared": "check_ma_fbx",
             "ma_bake_compared": "check_ma_bake",
             "bake_structure_checked": "check_bake_structure",
+            "bake_low_topology_checked": "check_bake_low_topology",
+            "bake_high_materials_checked": "check_bake_high_materials",
+            "bake_low_materials_checked": "check_bake_low_materials",
+            "bake_low_uv_map1_checked": "check_bake_low_uv_map1",
+            "bake_low_uv_map2_checked": "check_bake_low_uv_map2",
             "bake_pairing_checked": "check_bake_pairing",
             "bake_ready_checked": "check_bake_ready",
             "no_namespaces": "check_ns",
@@ -140,10 +150,10 @@ class HighPolyReviewTool:
         }
 
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
-        self.material_sets_by_context: Dict[str, Dict[str, Dict[str, object]]] = {"high": {}, "low": {}}
+        self.material_sets_by_context: Dict[str, Dict[str, Dict[str, object]]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}}
         self.texture_set_visibility: Dict[str, bool] = {}
-        self.texture_set_label_to_key_by_context: Dict[str, Dict[str, str]] = {"high": {}, "low": {}}
-        self.texture_set_section_headers_by_context: Dict[str, Set[str]] = {"high": set(), "low": set()}
+        self.texture_set_label_to_key_by_context: Dict[str, Dict[str, str]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}}
+        self.texture_set_section_headers_by_context: Dict[str, Set[str]] = {"high": set(), "low": set(), "bake_high": set(), "bake_low": set()}
         self.material_isolation_state: Dict[str, str] = {"context": "", "material_key": ""}
         self.last_scanned_namespaces: List[str] = []
         self.detected_assets: List[str] = []
@@ -417,7 +427,44 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
         cmds.separator(style="in")
-        cmds.text(label="Step 02 — Naming & Pairing", align="left")
+        cmds.text(label="Step 02 — Low Topology Check", align="left")
+        self._build_manual_root_selector("bake_low_topology_root_menu", "Select Bake Low Root for Topology Check", "bake_low")
+        self._build_check_row("check_bake_low_topology", "Low Topology Check", self.run_bake_low_topology_checks)
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 03 — Materials on Bake High", align="left")
+        self._build_manual_root_selector("bake_high_materials_root_menu", "Select Bake High Root for Materials / Texture Sets", "bake_high")
+        self._build_check_row("check_bake_high_materials", "Analyze Materials", self.analyze_bake_high_materials)
+        self.ui["bake_high_texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=130,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed("bake_high"),
+        )
+        cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("bake_high"))
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 04 — Materials on Bake Low", align="left")
+        self._build_manual_root_selector("bake_low_materials_root_menu", "Select Bake Low Root for Materials / Texture Sets", "bake_low")
+        self._build_check_row("check_bake_low_materials", "Analyze Materials", self.analyze_bake_low_materials)
+        self.ui["bake_low_texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=130,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed("bake_low"),
+        )
+        cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("bake_low"))
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 05 — UV Check Map 1 on Bake Low", align="left")
+        self._build_manual_root_selector("bake_low_uv1_root_menu", "Select Bake Low Root for UV map1 Check", "bake_low")
+        self._build_check_row("check_bake_low_uv_map1", "UV Map1 Check", self.run_bake_low_uv_map1_check)
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 06 — UV Check Map 2 on Bake Low", align="left")
+        self._build_manual_root_selector("bake_low_uv2_root_menu", "Select Bake Low Root for UV map2 / TD Check", "bake_low")
+        self._build_check_row("check_bake_low_uv_map2", "UV Map2 Check", self.run_bake_low_uv_map2_check)
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 07 — Naming & Pairing", align="left")
         self._build_manual_root_selector("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -427,7 +474,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
         cmds.separator(style="in")
-        cmds.text(label="Step 03 — Bake Readiness", align="left")
+        cmds.text(label="Step 08 — Bake Readiness", align="left")
         self._build_manual_root_selector("bake_ready_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -778,11 +825,13 @@ class HighPolyReviewTool:
                 self.check_states[key]["status"] = "PENDING"
         self.refresh_checklist_ui()
         self.detected_texture_sets = {}
-        self.material_sets_by_context = {"high": {}, "low": {}}
+        self.material_sets_by_context = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}}
         self.texture_set_visibility = {}
         self._disable_material_isolation()
         self._refresh_texture_sets_list_ui("high")
         self._refresh_texture_sets_list_ui("low")
+        self._refresh_texture_sets_list_ui("bake_high")
+        self._refresh_texture_sets_list_ui("bake_low")
         self.log("INFO", "Asset", f"Active Asset: {self.active_asset}")
 
     def scan_delivery_folder(self) -> None:
@@ -1718,7 +1767,13 @@ class HighPolyReviewTool:
         return sources
 
     def _list_ui_key_for_context(self, context_key: str) -> str:
-        return "texture_sets_list" if context_key == "high" else "low_texture_sets_list"
+        if context_key == "high":
+            return "texture_sets_list"
+        if context_key == "bake_high":
+            return "bake_high_texture_sets_list"
+        if context_key == "bake_low":
+            return "bake_low_texture_sets_list"
+        return "low_texture_sets_list"
 
     def _refresh_texture_sets_list_ui(self, context_key: str = "high") -> None:
         list_ui_key = self._list_ui_key_for_context(context_key)
@@ -2714,20 +2769,28 @@ class HighPolyReviewTool:
             return roots
         return self.detected_roots.get("low", [])
 
-    def run_low_topology_checks(self) -> None:
-        self._log_step_header(1, "Topology Check", category="LowTopology")
-        root = self.get_manual_selected_root("low_topology_root_menu")
+    def run_low_topology_checks(
+        self,
+        root_menu_key: str = "low_topology_root_menu",
+        check_state_key: str = "low_topology_checked",
+        category: str = "LowTopology",
+        step_index: int = 1,
+        step_label: str = "Topology Check",
+        source_file_key: str = "low_fbx",
+    ) -> None:
+        self._log_step_header(step_index, step_label, category=category)
+        root = self.get_manual_selected_root(root_menu_key)
         if not root:
-            self.log("FAIL", "LowTopology", "Sélection manuelle requise: Select Low Root for Topology Check.")
-            self.set_check_status("low_topology_checked", "FAIL")
+            self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for Topology Check.")
+            self.set_check_status(check_state_key, "FAIL")
             return
         meshes = self._collect_mesh_transforms(root)
-        self.log("INFO", "LowTopology", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowTopology", f"Root analysé : {root}", [root])
-        self.log("INFO", "LowTopology", f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
+        self.log("INFO", category, f"Root analysé : {root}", [root])
+        self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
-            self.log("FAIL", "LowTopology", "Aucun mesh LOW chargé.")
-            self.set_check_status("low_topology_checked", "FAIL")
+            self.log("FAIL", category, "Aucun mesh LOW chargé.")
+            self.set_check_status(check_state_key, "FAIL")
             return
 
         ok_count = 0
@@ -2756,8 +2819,8 @@ class HighPolyReviewTool:
 
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
-        self.log("INFO" if ok else "FAIL", "LowTopology", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
-        self.set_check_status("low_topology_checked", "OK" if ok else "FAIL")
+        self.log("INFO" if ok else "FAIL", category, f"Résultat final : {ok_count} OK / {fail_count} FAIL")
+        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
 
     def _scan_namespaces_with_allowed(self, allowed: List[str]) -> List[str]:
         dag_ns: Set[str] = set()
@@ -2803,20 +2866,29 @@ class HighPolyReviewTool:
                 self.log("WARNING", "LowNamespace", f"Suppression impossible pour {ns}: {exc}")
         self.scan_low_namespaces()
 
-    def analyze_low_materials(self) -> None:
-        self._log_step_header(3, "Materials Check", category="LowMaterials")
-        root = self.get_manual_selected_root("low_materials_root_menu")
+    def analyze_low_materials(
+        self,
+        root_menu_key: str = "low_materials_root_menu",
+        check_state_key: str = "low_materials_checked",
+        category: str = "LowMaterials",
+        step_index: int = 3,
+        step_label: str = "Materials Check",
+        source_file_key: str = "low_fbx",
+        material_context_key: str = "low",
+    ) -> None:
+        self._log_step_header(step_index, step_label, category=category)
+        root = self.get_manual_selected_root(root_menu_key)
         if not root:
-            self.log("FAIL", "LowMaterials", "Sélection manuelle requise: Select Low Root for Materials / Texture Sets.")
-            self.set_check_status("low_materials_checked", "FAIL")
+            self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for Materials / Texture Sets.")
+            self.set_check_status(check_state_key, "FAIL")
             return
         meshes = self._collect_mesh_transforms(root)
-        self.log("INFO", "LowMaterials", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowMaterials", f"Root analysé : {root}", [root])
-        self.log("INFO", "LowMaterials", f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
+        self.log("INFO", category, f"Root analysé : {root}", [root])
+        self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
-            self.log("FAIL", "LowMaterials", "Aucun mesh LOW chargé.")
-            self.set_check_status("low_materials_checked", "FAIL")
+            self.log("FAIL", category, "Aucun mesh LOW chargé.")
+            self.set_check_status(check_state_key, "FAIL")
             return
 
         mat_faces: Dict[str, int] = {}
@@ -2829,7 +2901,7 @@ class HighPolyReviewTool:
             total_faces += fcount
             shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
             if not shapes:
-                self.log("WARNING", "LowMaterials", f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
+                self.log("WARNING", category, f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
                 continue
             shape = shapes[0]
             sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
@@ -2848,15 +2920,15 @@ class HighPolyReviewTool:
                 else:
                     mat_components.setdefault(mat, set()).update(component_faces)
 
-        self.material_sets_by_context["low"] = {}
+        self.material_sets_by_context[material_context_key] = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
-        self.log("INFO", "LowMaterials", f"Matériaux détectés : {len(sorted_mats)}")
+        self.log("INFO", category, f"Matériaux détectés : {len(sorted_mats)}")
         for mat, count in sorted_mats:
             pct = (count / float(total_faces) * 100.0) if total_faces else 0.0
             display = self._strip_namespaces_from_name(mat)
             has_prefix = display.startswith("QDS_")
             key = f"MAT::{mat}"
-            self.material_sets_by_context["low"][key] = {
+            self.material_sets_by_context[material_context_key][key] = {
                 "name": mat,
                 "display_name": display,
                 "objects": sorted(set(mat_objects.get(mat, []))),
@@ -2866,14 +2938,85 @@ class HighPolyReviewTool:
                 "face_count": count,
                 "is_qds": has_prefix,
             }
-            self.log("INFO" if has_prefix else "FAIL", "LowMaterials", f"{display} | {pct:.2f}% faces ({count}/{total_faces})", self.material_sets_by_context["low"][key]["objects"][:80])
+            self.log("INFO" if has_prefix else "FAIL", category, f"{display} | {pct:.2f}% faces ({count}/{total_faces})", self.material_sets_by_context[material_context_key][key]["objects"][:80])
         if not sorted_mats:
-            self.log("FAIL", "LowMaterials", "Aucun material valide trouvé.")
-        self.detected_texture_sets = self.material_sets_by_context["low"]
-        self._refresh_texture_sets_list_ui("low")
-        ok = bool(self.material_sets_by_context["low"])
-        self.log("INFO" if ok else "FAIL", "LowMaterials", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("low_materials_checked", "OK" if ok else "FAIL")
+            self.log("FAIL", category, "Aucun material valide trouvé.")
+        self.detected_texture_sets = self.material_sets_by_context[material_context_key]
+        self._refresh_texture_sets_list_ui(material_context_key)
+        ok = bool(self.material_sets_by_context[material_context_key])
+        self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+
+    def run_bake_low_topology_checks(self) -> None:
+        self.run_low_topology_checks(
+            root_menu_key="bake_low_topology_root_menu",
+            check_state_key="bake_low_topology_checked",
+            category="BakeLowTopology",
+            step_index=2,
+            step_label="Low Topology Check",
+            source_file_key="bake_ma",
+        )
+
+    def analyze_bake_high_materials(self) -> None:
+        self._log_step_header(3, "Bake High Materials", category="BakeHighMaterials")
+        root = self.get_manual_selected_root("bake_high_materials_root_menu")
+        if not root:
+            self.log("FAIL", "BakeHighMaterials", "Sélection manuelle requise: Select Bake High Root for Materials / Texture Sets.")
+            self.set_check_status("bake_high_materials_checked", "FAIL")
+            return
+
+        original_menu = None
+        if "materials_high_root_menu" in self.ui:
+            original_menu = self.get_manual_selected_root("materials_high_root_menu")
+            self.manual_root_overrides["materials_high_root_menu"] = [root]
+            self.refresh_manual_root_menus()
+        try:
+            self.analyze_texture_sets(mode="materials")
+        finally:
+            if "materials_high_root_menu" in self.ui:
+                if original_menu:
+                    self.manual_root_overrides["materials_high_root_menu"] = [original_menu]
+                else:
+                    self.manual_root_overrides.pop("materials_high_root_menu", None)
+                self.refresh_manual_root_menus()
+
+        self.material_sets_by_context["bake_high"] = dict(self.material_sets_by_context.get("high", {}))
+        self.detected_texture_sets = self.material_sets_by_context["bake_high"]
+        self._refresh_texture_sets_list_ui("bake_high")
+        status = self.check_states.get("texture_sets_analyzed", {}).get("status", "PENDING")
+        self.set_check_status("bake_high_materials_checked", status)
+        self.log("INFO" if status == "OK" else "FAIL", "BakeHighMaterials", f"Résultat final : {status}")
+
+    def analyze_bake_low_materials(self) -> None:
+        self.analyze_low_materials(
+            root_menu_key="bake_low_materials_root_menu",
+            check_state_key="bake_low_materials_checked",
+            category="BakeLowMaterials",
+            step_index=4,
+            step_label="Bake Low Materials",
+            source_file_key="bake_ma",
+            material_context_key="bake_low",
+        )
+
+    def run_bake_low_uv_map1_check(self) -> None:
+        self.run_low_uv_map1_check(
+            root_menu_key="bake_low_uv1_root_menu",
+            check_state_key="bake_low_uv_map1_checked",
+            category="BakeLowUV1",
+            step_index=5,
+            step_label="UV Check Map 1 on Bake Low",
+            source_file_key="bake_ma",
+        )
+
+    def run_bake_low_uv_map2_check(self) -> None:
+        self.run_low_map2_density_check(
+            root_menu_key="bake_low_uv2_root_menu",
+            check_state_key="bake_low_uv_map2_checked",
+            category="BakeLowUV2",
+            step_index=6,
+            step_label="UV Check Map 2 on Bake Low",
+            source_file_key="bake_ma",
+        )
 
     def scan_namespaces(self) -> None:
         self._log_step_header(6, "Namespace Check", category="Namespace")
@@ -3438,20 +3581,28 @@ else
             return None
         return sum(ratios) / float(len(ratios))
 
-    def run_low_uv_map1_check(self) -> None:
-        self._log_step_header(4, "UV Map1 Check", category="LowUV1")
-        root = self.get_manual_selected_root("low_uv1_root_menu")
+    def run_low_uv_map1_check(
+        self,
+        root_menu_key: str = "low_uv1_root_menu",
+        check_state_key: str = "low_uv_map1_checked",
+        category: str = "LowUV1",
+        step_index: int = 4,
+        step_label: str = "UV Map1 Check",
+        source_file_key: str = "low_fbx",
+    ) -> None:
+        self._log_step_header(step_index, step_label, category=category)
+        root = self.get_manual_selected_root(root_menu_key)
         if not root:
-            self.log("FAIL", "LowUV1", "Sélection manuelle requise: Select Low Root for UV map1 Check.")
-            self.set_check_status("low_uv_map1_checked", "FAIL")
+            self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for UV map1 Check.")
+            self.set_check_status(check_state_key, "FAIL")
             return
         meshes = self._collect_mesh_transforms(root)
-        self.log("INFO", "LowUV1", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowUV1", f"Root analysé : {root}", [root])
-        self.log("INFO", "LowUV1", f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
+        self.log("INFO", category, f"Root analysé : {root}", [root])
+        self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
-            self.log("FAIL", "LowUV1", "Aucun mesh LOW chargé.")
-            self.set_check_status("low_uv_map1_checked", "FAIL")
+            self.log("FAIL", category, "Aucun mesh LOW chargé.")
+            self.set_check_status(check_state_key, "FAIL")
             return
 
         fail_count = 0
@@ -3481,10 +3632,10 @@ else
             self.log("INFO" if distortion_ok else "WARNING", "LowUV1Mesh", f"Distortion = {'OK' if distortion_ok else f'WARNING ({ratio:.3f})'}")
             self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
-        self.log("INFO", "LowUV1", f"Seuil distortion utilisé : {LOW_UV_DISTORTION_THRESHOLD:.2f}")
+        self.log("INFO", category, f"Seuil distortion utilisé : {LOW_UV_DISTORTION_THRESHOLD:.2f}")
         ok = fail_count == 0
-        self.log("INFO" if ok else "FAIL", "LowUV1", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("low_uv_map1_checked", "OK" if ok else "FAIL")
+        self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
 
     def _low_asset_key(self, mesh: str) -> str:
         name = self._strip_namespaces_from_name(self._short_name(mesh)).lower()
@@ -3530,21 +3681,29 @@ else
             except RuntimeError:
                 pass
 
-    def run_low_map2_density_check(self) -> None:
-        self._log_step_header(5, "UV Map2 Check", category="LowUV2")
-        root = self.get_manual_selected_root("low_uv2_root_menu")
+    def run_low_map2_density_check(
+        self,
+        root_menu_key: str = "low_uv2_root_menu",
+        check_state_key: str = "low_uv_map2_checked",
+        category: str = "LowUV2",
+        step_index: int = 5,
+        step_label: str = "UV Map2 Check",
+        source_file_key: str = "low_fbx",
+    ) -> None:
+        self._log_step_header(step_index, step_label, category=category)
+        root = self.get_manual_selected_root(root_menu_key)
         if not root:
-            self.log("FAIL", "LowUV2", "Sélection manuelle requise: Select Low Root for UV map2 / TD Check.")
-            self.set_check_status("low_uv_map2_checked", "FAIL")
+            self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for UV map2 / TD Check.")
+            self.set_check_status(check_state_key, "FAIL")
             return
         meshes = self._collect_mesh_transforms(root)
-        self.log("INFO", "LowUV2", f"Fichier analysé : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
-        self.log("INFO", "LowUV2", f"Root analysé : {root}", [root])
-        self.log("INFO", "LowUV2", f"Meshes analysés : {len(meshes)}")
-        self.log("INFO", "LowUV2", "Map analysée : map2")
+        self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
+        self.log("INFO", category, f"Root analysé : {root}", [root])
+        self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", category, "Map analysée : map2")
         if not meshes:
-            self.log("FAIL", "LowUV2", "Aucun mesh LOW chargé.")
-            self.set_check_status("low_uv_map2_checked", "FAIL")
+            self.log("FAIL", category, "Aucun mesh LOW chargé.")
+            self.set_check_status(check_state_key, "FAIL")
             return
 
         valid_values: List[float] = []
@@ -3571,11 +3730,11 @@ else
             self.log("INFO" if mesh_ok else "FAIL", "LowUV2Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
         mean_td = (sum(valid_values) / len(valid_values)) if valid_values else 0.0
-        self.log("INFO", "LowUV2", f"Texel density moyenne mesurée : {mean_td:.2f}")
-        self.log("INFO", "LowUV2", f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
+        self.log("INFO", category, f"Texel density moyenne mesurée : {mean_td:.2f}")
+        self.log("INFO", category, f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
         ok = bool(valid_values) and pair_fail_count == 0
-        self.log("INFO" if ok else "FAIL", "LowUV2", f"Résultat global : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("low_uv_map2_checked", "OK" if ok else "FAIL")
+        self.log("INFO" if ok else "FAIL", category, f"Résultat global : {'OK' if ok else 'FAIL'}")
+        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
 
     def compare_low_vs_bake_low(self) -> None:
         self._log_step_header(6, "Compare Low vs Bake Low", category="LowCompareBake")
