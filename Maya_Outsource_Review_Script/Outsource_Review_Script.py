@@ -89,6 +89,7 @@ class HighPolyReviewTool:
             "low_fbx_namespace": "Low_FBX_File",
             "final_asset_ma_namespace": "Final_Asset_MA_File",
             "final_asset_fbx_namespace": "Final_Asset_FBX_File",
+            "final_asset_fbx_namespaces": [],
             "fbx_nodes": [],
             "fbx_meshes": [],
             "ma_nodes": [],
@@ -748,8 +749,19 @@ class HighPolyReviewTool:
 
     def set_check_status(self, check_key: str, status: str) -> None:
         self.check_states[check_key]["status"] = status
-        self.log_summary("INFO" if status == "OK" else "FAIL", "Checklist", f"{check_key}: {status}")
         self.refresh_checklist_ui()
+
+    def log_check_result(
+        self,
+        check_key: str,
+        level: str,
+        short_title: str,
+        reason: str,
+        objects: Optional[List[str]] = None,
+    ) -> None:
+        status = "OK" if level == "INFO" else "FAIL"
+        self.set_check_status(check_key, status)
+        self.log_summary(level, short_title, reason, objects)
 
     def on_manual_check_toggle(self, check_key: str) -> None:
         ui_key = self.check_ui_map.get(check_key)
@@ -1083,6 +1095,11 @@ class HighPolyReviewTool:
             return self._find_root_candidates("low", namespace=self.context["bake_ma_namespace"])
         if source_key == "final_ma":
             return self._find_root_candidates("final", namespace=self.context["final_asset_ma_namespace"])
+        if source_key == "final_fbx":
+            roots: Set[str] = set()
+            for namespace in self._final_asset_fbx_namespaces():
+                roots.update(self._find_root_candidates("final", namespace=namespace))
+            return sorted(roots, key=lambda x: self._candidate_root_score(x), reverse=True)
         return []
 
     def refresh_manual_root_menus(self) -> None:
@@ -1315,6 +1332,7 @@ class HighPolyReviewTool:
         elif import_key == "final_asset_fbx":
             namespace = self.context["final_asset_fbx_namespace"]
             self.detected_roots["final_asset_fbx"] = self._find_root_candidates("final", namespace=namespace)
+            self.context["final_asset_fbx_namespaces"] = [namespace]
 
         self.refresh_root_ui()
 
@@ -1573,6 +1591,7 @@ class HighPolyReviewTool:
     def _roots_from_scope_meshes(self, scope_key: str, scope_meshes: List[str]) -> List[str]:
         roots: List[str] = []
         namespace = ""
+        namespace_list: List[str] = []
         if scope_key == "high_fbx":
             namespace = self.context["fbx_namespace"]
         elif scope_key == "high_ma":
@@ -1586,7 +1605,7 @@ class HighPolyReviewTool:
         elif scope_key == "final_asset_ma":
             namespace = self.context["final_asset_ma_namespace"]
         elif scope_key == "final_asset_fbx":
-            namespace = self.context["final_asset_fbx_namespace"]
+            namespace_list = self._final_asset_fbx_namespaces()
 
         if scope_key == "placeholder":
             placeholder_root = self.get_placeholder_root()
@@ -1596,7 +1615,14 @@ class HighPolyReviewTool:
         for mesh in scope_meshes:
             if not cmds.objExists(mesh):
                 continue
-            root = self._find_namespace_root_for_node(mesh, namespace) if namespace else None
+            root = None
+            if namespace_list:
+                for candidate_ns in namespace_list:
+                    root = self._find_namespace_root_for_node(mesh, candidate_ns)
+                    if root:
+                        break
+            elif namespace:
+                root = self._find_namespace_root_for_node(mesh, namespace)
             if not root:
                 ancestors = self._path_ancestors(mesh)
                 root = ancestors[0] if ancestors else None
@@ -1735,9 +1761,13 @@ class HighPolyReviewTool:
                     meshes = self._collect_mesh_transforms(root=final_fbx_root)
                     roots_by_scope[key] = [final_fbx_root]
                 else:
-                    meshes, _ = self._collect_mesh_transforms_in_namespace(self.context["final_asset_fbx_namespace"])
-                    meshes = [m for m in meshes if self._matches_asset_kind(m, "final")]
-                    roots_by_scope[key] = [self.context["final_asset_fbx_namespace"]]
+                    merged_meshes: List[str] = []
+                    namespaces = self._final_asset_fbx_namespaces()
+                    for ns in namespaces:
+                        ns_meshes, _ = self._collect_mesh_transforms_in_namespace(ns)
+                        merged_meshes.extend(ns_meshes)
+                    meshes = [m for m in sorted(set(merged_meshes)) if self._matches_asset_kind(m, "final")]
+                    roots_by_scope[key] = namespaces
             per_scope[key] = sorted(set(meshes))
         merged = sorted(set([m for meshes in per_scope.values() for m in meshes]))
         return {
@@ -1863,9 +1893,20 @@ class HighPolyReviewTool:
             str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v
         }))
         for allowed in allowed_namespaces:
-            if namespace == allowed or namespace.startswith(allowed + ":"):
+            if (
+                namespace == allowed
+                or namespace.startswith(allowed + ":")
+                or namespace.startswith(allowed + "__")
+            ):
                 return True
         return False
+
+    def _final_asset_fbx_namespaces(self) -> List[str]:
+        namespaces = self.context.get("final_asset_fbx_namespaces", [])
+        if namespaces:
+            return [ns for ns in namespaces if isinstance(ns, str) and ns]
+        fallback = self.context.get("final_asset_fbx_namespace", "")
+        return [fallback] if isinstance(fallback, str) and fallback else []
 
     def _get_scan_namespaces(self) -> List[str]:
         all_nodes = cmds.ls(long=True) or []
@@ -2225,7 +2266,6 @@ class HighPolyReviewTool:
             ("fbx_namespace", "High.fbx"),
             ("bake_ma_namespace", "Bake.ma"),
             ("final_asset_ma_namespace", "Final Scene.ma"),
-            ("final_asset_fbx_namespace", "Final Asset.fbx"),
         ]
         unloaded_labels = []
         for ns_key, label in unload_map:
@@ -2233,6 +2273,10 @@ class HighPolyReviewTool:
             if ns and cmds.namespace(exists=ns):
                 if self._unload_namespace_references(ns):
                     unloaded_labels.append(label)
+        for ns in self._final_asset_fbx_namespaces():
+            if ns and cmds.namespace(exists=ns):
+                if self._unload_namespace_references(ns):
+                    unloaded_labels.append(f"Final Asset.fbx ({ns})")
         self.log("INFO", "LoadLow", f"Références déchargées avant chargement : {', '.join(unloaded_labels) if unloaded_labels else 'Aucune'}")
 
         namespace = self.context["low_fbx_namespace"]
@@ -2354,11 +2398,90 @@ class HighPolyReviewTool:
         self.context["final_asset_fbx_nodes"] = new_nodes
         self.context["final_asset_fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
         self.detected_roots["final_asset_fbx"] = self._find_root_candidates("final", namespace=namespace)
+        self.context["final_asset_fbx_namespaces"] = [namespace]
         self.log("INFO", "LoadFinal", f"Final Asset FBX référencé : {self._basename_from_path(path)}")
         self.log("INFO", "LoadFinal", f"Namespace utilisé : {namespace}")
         self.log("INFO", "LoadFinal", f"Meshes importés : {len(self.context['final_asset_fbx_meshes'])}")
         self._log_root_detection("final_asset_fbx", "Final Asset FBX")
         self.refresh_root_ui()
+
+    def load_all_final_asset_fbx_scenes(self) -> None:
+        files = [p for p in self.detected_files.get("final_asset_fbx", []) if p]
+        if not files:
+            single = self.paths.get("final_asset_fbx", "")
+            files = [single] if single else []
+        total = len(files)
+        if total == 0:
+            self.log("WARNING", "LoadFinal", "Aucun Final Asset FBX détecté pour chargement multiple.")
+            self.log_summary("FAIL", "Final Asset FBX Load", "0/0 files referenced, no final FBX detected")
+            return
+
+        subgroup = self._ensure_review_subgroup("final_asset_fbx")
+        base_namespace = self.context.get("final_asset_fbx_namespace", "Final_Asset_FBX_File")
+        loaded_namespaces: List[str] = []
+        aggregated_nodes: List[str] = []
+        aggregated_meshes: List[str] = []
+        aggregated_roots: Set[str] = set()
+        failed_paths: List[str] = []
+        referenced_count = 0
+
+        for index, path in enumerate(files, start=1):
+            if not os.path.isfile(path):
+                failed_paths.append(path)
+                self.log("FAIL", "LoadFinal", f"Final Asset FBX introuvable: {path}")
+                continue
+
+            namespace = f"{base_namespace}__{index:03d}"
+            if cmds.namespace(exists=namespace):
+                self._unload_namespace_references(namespace)
+                try:
+                    cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+                except RuntimeError:
+                    pass
+
+            before = set(cmds.ls(long=True) or [])
+            try:
+                cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+            except RuntimeError as exc:
+                failed_paths.append(path)
+                self.log("FAIL", "LoadFinal", f"Référence impossible ({self._basename_from_path(path)}): {exc}")
+                continue
+
+            after = set(cmds.ls(long=True) or [])
+            new_nodes = sorted(list(after - before))
+            new_meshes = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
+            top_nodes = cmds.ls(new_nodes, assemblies=True, long=True) or []
+            stored_nodes: List[str] = []
+            for node in top_nodes:
+                if not cmds.objExists(node):
+                    continue
+                try:
+                    cmds.parent(node, subgroup)
+                    stored_nodes.append(node)
+                except RuntimeError:
+                    self.log("WARNING", "LoadFinal", f"Impossible de parent {node} -> {subgroup}")
+
+            roots = self._find_root_candidates("final", namespace=namespace)
+            aggregated_nodes.extend(new_nodes)
+            aggregated_meshes.extend(new_meshes)
+            aggregated_roots.update(roots)
+            loaded_namespaces.append(namespace)
+            referenced_count += 1
+            self.log("INFO", "LoadFinal", f"Final Asset FBX référencé : {self._basename_from_path(path)} (ns={namespace}, meshes={len(new_meshes)})")
+            self.log("INFO", "LoadFinal", f"Top nodes parentés sous {subgroup}: {len(stored_nodes)}")
+
+        self.context["final_asset_fbx_nodes"] = sorted(set(aggregated_nodes))
+        self.context["final_asset_fbx_meshes"] = sorted(set(aggregated_meshes))
+        self.context["final_asset_fbx_namespaces"] = loaded_namespaces
+        self.detected_roots["final_asset_fbx"] = sorted(aggregated_roots, key=lambda x: self._candidate_root_score(x), reverse=True)
+        self.review_group_contents["final_asset_fbx"] = cmds.listRelatives(subgroup, children=True, fullPath=True) or []
+        self._log_root_detection("final_asset_fbx", "Final Asset FBX")
+        self.refresh_root_ui()
+
+        if referenced_count == total:
+            self.log_summary("INFO", "Final Asset FBX Load", f"{referenced_count} files referenced into Final_Asset_FBX_GRP")
+        else:
+            self.log_summary("FAIL", "Final Asset FBX Load", f"{referenced_count}/{total} files referenced, {len(failed_paths)} failed", failed_paths[:40])
 
     def load_everything(self) -> None:
         self.log("INFO", "Load", "Action: Load Everything")
@@ -2382,7 +2505,6 @@ class HighPolyReviewTool:
             ("low_fbx", "Low_FBX_File"),
             ("bake_ma", "Bake_MA_File"),
             ("final_scene_ma", "Final_Asset_MA_File"),
-            ("final_asset_fbx", "Final_Asset_FBX_File"),
         ]
         for file_key, _ in load_plan:
             self._ensure_review_subgroup(file_key)
@@ -2444,6 +2566,8 @@ class HighPolyReviewTool:
                 f"{self._preview_list(stored_nodes, max_items=8)}",
             )
 
+        self.load_all_final_asset_fbx_scenes()
+
         total_parented = sum(len(nodes) for nodes in self.review_group_contents.values())
         self.log(
             "INFO",
@@ -2501,7 +2625,7 @@ class HighPolyReviewTool:
         fbx_root = self.get_manual_selected_root("compare_fbx_root_menu")
         if not ma_root or not fbx_root:
             self.log("FAIL", "Compare", "Sélection manuelle requise: choisir High.ma Root et High.fbx Root.")
-            self.set_check_status("ma_fbx_compared", "FAIL")
+            self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", "manual root selection missing")
             return
         ma_meshes = self._collect_mesh_transforms(ma_root)
         fbx_meshes = self._collect_mesh_transforms(fbx_root)
@@ -2511,7 +2635,7 @@ class HighPolyReviewTool:
 
         if not ma_meshes or not fbx_meshes:
             self.log("FAIL", "Compare", "Résultat : compare impossible (au moins une source sans mesh).")
-            self.set_check_status("ma_fbx_compared", "FAIL")
+            self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", "compare aborted: one root has no meshes")
             return
 
         ma_by_key = {self._normalized_relative_mesh_key(m, root=ma_root): self._mesh_data_signature(m) for m in ma_meshes}
@@ -2565,7 +2689,10 @@ class HighPolyReviewTool:
 
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "Compare", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("ma_fbx_compared", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("ma_fbx_compared", "INFO", "Compare High vs FBX", "aggregated topology, UVs and bbox match")
+        else:
+            self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", f"{pair_fail_count}/{len(all_keys)} mesh pairs mismatched")
 
     def _unload_namespace_references(self, namespace: str) -> bool:
         if not cmds.namespace(exists=namespace):
@@ -2599,7 +2726,7 @@ class HighPolyReviewTool:
         bake_root = self.get_manual_selected_root("compare_bake_high_root_menu")
         if not ma_root or not bake_root:
             self.log("FAIL", "CompareBake", "Sélection manuelle requise: choisir High.ma Root et Bake High Root.")
-            self.set_check_status("ma_bake_compared", "FAIL")
+            self.log_check_result("ma_bake_compared", "FAIL", "Compare High vs Bake", "manual root selection missing")
             return
         ma_meshes = self._collect_mesh_transforms(ma_root)
         bake_meshes = self._collect_mesh_transforms(bake_root)
@@ -2663,7 +2790,10 @@ class HighPolyReviewTool:
 
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("ma_bake_compared", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("ma_bake_compared", "INFO", "Compare High vs Bake", "aggregated topology, UVs and bbox match")
+        else:
+            self.log_check_result("ma_bake_compared", "FAIL", "Compare High vs Bake", f"{pair_fail_count}/{len(all_keys)} mesh pairs mismatched")
 
     def check_bake_scene_structure(self) -> None:
         self._log_step_header(1, "Bake Scene Structure", category="BakeStructure")
@@ -2685,7 +2815,7 @@ class HighPolyReviewTool:
 
         if not high_root or not low_root:
             self.log("FAIL", "BakeStructure", "Bake High et/ou Bake Low introuvable(s).")
-            self.set_check_status("bake_structure_checked", "FAIL")
+            self.log_check_result("bake_structure_checked", "FAIL", "Bake Structure", "missing Bake High or Bake Low root")
             return
 
         self.log("INFO", "BakeStructure", f"Root Bake High : {high_root}", [high_root])
@@ -2723,7 +2853,15 @@ class HighPolyReviewTool:
 
         ok = high_ok and low_ok and namespace_ok and overlap_ok and naming_split_ok
         self.log("INFO" if ok else "FAIL", "BakeStructure", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("bake_structure_checked", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("bake_structure_checked", "INFO", "Bake Structure", "high/low roots valid, separated and namespace-consistent")
+        else:
+            self.log_check_result(
+                "bake_structure_checked",
+                "FAIL",
+                "Bake Structure",
+                f"issues: high={len(high_meshes)}, low={len(low_meshes)}, overlap={len(overlap_objects)}, mixed={len(mixed_low_in_high) + len(mixed_high_in_low)}",
+            )
 
     def _bake_pair_key(self, mesh: str, root: str, expected_suffix: str) -> Tuple[str, bool]:
         key = self._normalized_relative_mesh_key(mesh, root=root)
@@ -2738,7 +2876,7 @@ class HighPolyReviewTool:
         low_root = self.get_manual_selected_root("bake_pairing_low_root_menu")
         if not high_root or not low_root:
             self.log("FAIL", "BakePairing", "Sélection manuelle requise: Select Bake High Root et Select Bake Low Root.")
-            self.set_check_status("bake_pairing_checked", "FAIL")
+            self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", "manual root selection missing")
             return
 
         high_meshes = self._collect_mesh_transforms(high_root)
@@ -2749,7 +2887,7 @@ class HighPolyReviewTool:
         self.log("INFO", "BakePairing", f"Meshes High/Low : {len(high_meshes)} / {len(low_meshes)}")
         if not high_meshes or not low_meshes:
             self.log("FAIL", "BakePairing", "Pairing impossible: Bake High ou Bake Low vide.")
-            self.set_check_status("bake_pairing_checked", "FAIL")
+            self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", "pairing aborted: one root has no meshes")
             return
 
         high_by_key: Dict[str, List[str]] = {}
@@ -2846,7 +2984,14 @@ class HighPolyReviewTool:
             bbox_pivot_mismatch_keys,
         ])
         self.log("INFO" if ok else "FAIL", "BakePairing", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("bake_pairing_checked", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("bake_pairing_checked", "INFO", "Bake Pairing", f"{len(shared_unique_keys)} pairs matched, suffix/pivot/bbox valid")
+        else:
+            total_fail = (
+                len(invalid_high_suffix) + len(invalid_low_suffix) + len(orphan_high_keys) + len(orphan_low_keys)
+                + len(duplicate_high) + len(duplicate_low) + len(bbox_pivot_mismatch_keys)
+            )
+            self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", f"{total_fail} pairing issue(s) detected")
 
     def check_bake_readiness(self) -> None:
         self._log_step_header(3, "Bake Readiness", category="BakeReady")
@@ -2854,7 +2999,7 @@ class HighPolyReviewTool:
         low_root = self.get_manual_selected_root("bake_ready_low_root_menu")
         if not high_root or not low_root:
             self.log("FAIL", "BakeReady", "Sélection manuelle requise: Select Bake High Root et Select Bake Low Root.")
-            self.set_check_status("bake_ready_checked", "FAIL")
+            self.log_check_result("bake_ready_checked", "FAIL", "Bake Readiness", "manual root selection missing")
             return
 
         high_meshes = self._collect_mesh_transforms(high_root)
@@ -2866,7 +3011,7 @@ class HighPolyReviewTool:
         self.log("INFO", "BakeReady", f"Meshes analysés High/Low : {len(high_meshes)} / {len(low_meshes)}")
         if not meshes:
             self.log("FAIL", "BakeReady", "Aucun mesh dans Bake Scene.")
-            self.set_check_status("bake_ready_checked", "FAIL")
+            self.log_check_result("bake_ready_checked", "FAIL", "Bake Readiness", "no meshes found in Bake scene")
             return
 
         high_color_flags: List[bool] = []
@@ -2908,7 +3053,10 @@ class HighPolyReviewTool:
 
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "BakeReady", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("bake_ready_checked", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("bake_ready_checked", "INFO", "Bake Readiness", f"{len(meshes)} meshes pass UV/topology/vertex-color requirements")
+        else:
+            self.log_check_result("bake_ready_checked", "FAIL", "Bake Readiness", f"{fail_count}/{len(meshes)} meshes failed readiness checks")
 
     def _collect_low_meshes(self) -> List[str]:
         return self._collect_mesh_transforms_in_namespace(self.context["low_fbx_namespace"], exclude_placeholder_named=True)[0]
@@ -2933,7 +3081,7 @@ class HighPolyReviewTool:
         root = self.get_manual_selected_root(root_menu_key)
         if not root:
             self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for Topology Check.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "Low Topology Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
@@ -2941,7 +3089,7 @@ class HighPolyReviewTool:
         self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", category, "Aucun mesh LOW chargé.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "Low Topology Check", "no low meshes found on selected root")
             return
 
         ok_count = 0
@@ -2971,7 +3119,10 @@ class HighPolyReviewTool:
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {ok_count} OK / {fail_count} FAIL")
-        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result(check_state_key, "INFO", "Low Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold or lamina")
+        else:
+            self.log_check_result(check_state_key, "FAIL", "Low Topology Check", f"{fail_count}/{len(meshes)} meshes have topology issues")
 
     def _scan_namespaces_with_allowed(self, allowed: List[str]) -> List[str]:
         dag_ns: Set[str] = set()
@@ -3007,7 +3158,10 @@ class HighPolyReviewTool:
             self.log("WARNING", "LowNamespace", f"Liste : {', '.join(invalid)}")
         ok = not invalid
         self.log("INFO" if ok else "FAIL", "LowNamespace", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("low_namespaces_checked", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("low_namespaces_checked", "INFO", "Low Namespace Scan", "only authorized namespaces found")
+        else:
+            self.log_check_result("low_namespaces_checked", "FAIL", "Low Namespace Scan", f"{len(invalid)} unauthorized namespace(s) detected", invalid[:30])
 
     def remove_low_namespaces(self) -> None:
         allowed = set(self.allowed_review_namespaces).union({
@@ -3035,7 +3189,7 @@ class HighPolyReviewTool:
         root = self.get_manual_selected_root(root_menu_key)
         if not root:
             self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for Materials / Texture Sets.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "Low Materials Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
@@ -3043,7 +3197,7 @@ class HighPolyReviewTool:
         self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", category, "Aucun mesh LOW chargé.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "Low Materials Check", "no low meshes found on selected root")
             return
 
         mat_faces: Dict[str, int] = {}
@@ -3100,7 +3254,10 @@ class HighPolyReviewTool:
         self._refresh_texture_sets_list_ui(material_context_key)
         ok = bool(self.material_sets_by_context[material_context_key])
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result(check_state_key, "INFO", "Low Materials Check", f"{len(sorted_mats)} materials detected, assignments validated")
+        else:
+            self.log_check_result(check_state_key, "FAIL", "Low Materials Check", "no valid material assignment detected")
 
     def run_bake_low_topology_checks(self) -> None:
         self.run_low_topology_checks(
@@ -3182,8 +3339,7 @@ class HighPolyReviewTool:
 
         if not user_ns:
             self.log("INFO", "Namespace", "Résultat : OK (aucun namespace indésirable).")
-            self.log_summary("INFO", "Namespace Scan", "only authorized namespaces found")
-            self.set_check_status("no_namespaces", "OK")
+            self.log_check_result("no_namespaces", "INFO", "Namespace Scan", "only authorized namespaces found")
             return
 
         total_objs: List[str] = []
@@ -3195,8 +3351,7 @@ class HighPolyReviewTool:
             self.log("WARNING", "Namespace", f"Namespace détecté: {ns} ({len(objs)} objets)", objs[:50])
 
         self.log("FAIL", "Namespace", f"Résultat : FAIL ({len(user_ns)} namespace(s) utilisateur détecté(s)).", total_objs[:200])
-        self.log_summary("FAIL", "Namespace Scan", f"{len(user_ns)} unauthorized namespace(s) detected", total_objs[:30])
-        self.set_check_status("no_namespaces", "FAIL")
+        self.log_check_result("no_namespaces", "FAIL", "Namespace Scan", f"{len(user_ns)} unauthorized namespace(s) detected", total_objs[:30])
 
     def remove_namespaces(self) -> None:
         self._log_step_header(6, "Namespace Check", category="Namespace")
@@ -3247,7 +3402,7 @@ class HighPolyReviewTool:
         placeholder_root = self.get_manual_selected_root("placeholder_placeholder_root_menu")
         if not high_root or not placeholder_root:
             self.log("FAIL", "Placeholder", "Sélection manuelle requise: Select High Root et Select Placeholder Root.")
-            self.set_check_status("placeholder_checked", "FAIL")
+            self.log_check_result("placeholder_checked", "FAIL", "Placeholder Check", "manual root selection missing")
             return
         high_meshes = self._collect_mesh_transforms(high_root)
         placeholder_meshes = self._collect_mesh_transforms(placeholder_root)
@@ -3256,7 +3411,7 @@ class HighPolyReviewTool:
         self.log("INFO", "Placeholder", f"Meshes analysés High/Placeholder : {len(high_meshes)}/{len(placeholder_meshes)}")
         if not high_meshes or not placeholder_meshes:
             self.log("FAIL", "Placeholder", "High/Placeholder non détectés dans High.ma.")
-            self.set_check_status("placeholder_checked", "FAIL")
+            self.log_check_result("placeholder_checked", "FAIL", "Placeholder Check", "high or placeholder root has no meshes")
             return
 
         tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
@@ -3298,7 +3453,16 @@ class HighPolyReviewTool:
         ok_count = 1 if pair_ok else 0
         fail_count = 0 if pair_ok else 1
         self.log("INFO" if fail_count == 0 else "FAIL", "Placeholder", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
-        self.set_check_status("placeholder_checked", "OK" if fail_count == 0 else "FAIL")
+        if pair_ok:
+            self.log_check_result("placeholder_checked", "INFO", "Placeholder Check", "aggregated bbox and pivot are within tolerance")
+        else:
+            self.log_check_result(
+                "placeholder_checked",
+                "FAIL",
+                "Placeholder Check",
+                f"bbox/pivot mismatch (max bbox delta {max(bbox_delta):.2f}, max pivot delta {max(pivot_delta):.4f})",
+                [high_root, placeholder_root],
+            )
 
     def run_topology_checks(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
@@ -3306,7 +3470,7 @@ class HighPolyReviewTool:
         root = self.get_manual_selected_root("topology_high_root_menu")
         if not root:
             self.log("FAIL", "Topology", "Sélection manuelle requise: Select High Root for Topology Check.")
-            self.set_check_status("topology_checked", "FAIL")
+            self.log_check_result("topology_checked", "FAIL", "Topology Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "Topology", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
@@ -3314,7 +3478,7 @@ class HighPolyReviewTool:
         self.log("INFO", "Topology", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "Topology", "Aucun mesh High.ma trouvé.")
-            self.set_check_status("topology_checked", "FAIL")
+            self.log_check_result("topology_checked", "FAIL", "Topology Check", "no high meshes found on selected root")
             return
 
         ok_count = 0
@@ -3347,7 +3511,10 @@ class HighPolyReviewTool:
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "Topology", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
-        self.set_check_status("topology_checked", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("topology_checked", "INFO", "Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold or lamina")
+        else:
+            self.log_check_result("topology_checked", "FAIL", "Topology Check", f"{fail_count}/{len(meshes)} meshes have topology defects")
 
     def _count_faces_assigned_to_mesh(
         self,
@@ -3481,7 +3648,7 @@ else
         root = self.get_manual_selected_root("materials_high_root_menu")
         if not root:
             self.log("FAIL", "Materials", "Sélection manuelle requise: Select High Root for Materials / Texture Sets.")
-            self.set_check_status("texture_sets_analyzed", "FAIL")
+            self.log_check_result("texture_sets_analyzed", "FAIL", "Materials Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "Materials", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
@@ -3489,7 +3656,7 @@ else
         self.log("INFO", "Materials", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "Materials", "Aucun mesh High.ma trouvé.")
-            self.set_check_status("texture_sets_analyzed", "FAIL")
+            self.log_check_result("texture_sets_analyzed", "FAIL", "Materials Check", "no high meshes found on selected root")
             return
 
         mat_faces: Dict[str, int] = {}
@@ -3567,7 +3734,10 @@ else
         self._refresh_texture_sets_list_ui("high")
         ok = bool(self.material_sets_by_context["high"])
         self.log("INFO" if ok else "FAIL", "Materials", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("texture_sets_analyzed", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("texture_sets_analyzed", "INFO", "Materials Check", f"{len(sorted_mats)} material slots detected, assignments validated")
+        else:
+            self.log_check_result("texture_sets_analyzed", "FAIL", "Materials Check", "no valid material assignment detected")
 
     def check_vertex_colors(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
         _ = (scope_keys, source_label)
@@ -3575,7 +3745,7 @@ else
         root = self.get_manual_selected_root("vertex_high_root_menu")
         if not root:
             self.log("FAIL", "VertexColor", "Sélection manuelle requise: Select High Root for Vertex Color Check.")
-            self.set_check_status("vertex_colors_checked", "FAIL")
+            self.log_check_result("vertex_colors_checked", "FAIL", "Vertex Color Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", "VertexColor", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
@@ -3583,7 +3753,7 @@ else
         self.log("INFO", "VertexColor", f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", "VertexColor", "Aucun mesh High.ma trouvé.")
-            self.set_check_status("vertex_colors_checked", "FAIL")
+            self.log_check_result("vertex_colors_checked", "FAIL", "Vertex Color Check", "no high meshes found on selected root")
             return
 
         ok_count = 0
@@ -3628,7 +3798,10 @@ else
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "VertexColor", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
-        self.set_check_status("vertex_colors_checked", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("vertex_colors_checked", "INFO", "Vertex Color Check", "vertex colors present on all checked meshes")
+        else:
+            self.log_check_result("vertex_colors_checked", "FAIL", "Vertex Color Check", f"{fail_count}/{len(meshes)} meshes missing vertex colors")
 
     def display_vertex_colors(self) -> None:
         shapes = self._collect_all_review_mesh_shapes()
@@ -3770,7 +3943,7 @@ else
         root = self.get_manual_selected_root(root_menu_key)
         if not root:
             self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for UV map1 Check.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
@@ -3778,7 +3951,7 @@ else
         self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
             self.log("FAIL", category, "Aucun mesh LOW chargé.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", "no low meshes found on selected root")
             return
 
         fail_count = 0
@@ -3807,8 +3980,10 @@ else
 
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.log_summary("INFO", "UV Map1 Check", "UV Map1 Check complete: no distortion analysis, visual confirmation requested in UV Editor")
-        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result(check_state_key, "INFO", "UV Map1 Check", "UVs valid in 0-1 with no overlap; visual confirmation requested")
+        else:
+            self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", f"{fail_count}/{len(meshes)} meshes have overlap or shells outside 0-1")
         self._open_uv_editor_floating()
 
     def _low_asset_key(self, mesh: str) -> str:
@@ -3868,7 +4043,7 @@ else
         root = self.get_manual_selected_root(root_menu_key)
         if not root:
             self.log("FAIL", category, "Sélection manuelle requise: Select Low Root for UV map2 / TD Check.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "UV Map2 Check", "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
         self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
@@ -3877,7 +4052,7 @@ else
         self.log("INFO", category, "Map analysée : map2")
         if not meshes:
             self.log("FAIL", category, "Aucun mesh LOW chargé.")
-            self.set_check_status(check_state_key, "FAIL")
+            self.log_check_result(check_state_key, "FAIL", "UV Map2 Check", "no low meshes found on selected root")
             return
 
         valid_values: List[float] = []
@@ -3908,8 +4083,10 @@ else
         self.log("INFO", category, f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
         ok = bool(valid_values) and pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat global : {'OK' if ok else 'FAIL'}")
-        self.log_summary("INFO", "UV Map2 Check", "UV Map2 Check complete: no distortion analysis, visual confirmation requested in UV Editor")
-        self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result(check_state_key, "INFO", "UV Map2 Check", f"texel density in tolerance on {len(valid_values)} meshes (mean {mean_td:.2f})")
+        else:
+            self.log_check_result(check_state_key, "FAIL", "UV Map2 Check", f"texel density out of tolerance on {pair_fail_count}/{len(meshes)} meshes")
         self._open_uv_editor_floating()
 
     def compare_low_vs_bake_low(self) -> None:
@@ -3918,7 +4095,7 @@ else
         bake_root = self.get_manual_selected_root("compare_low_bake_bake_root_menu")
         if not low_root or not bake_root:
             self.log("FAIL", "CompareLowBake", "Sélection manuelle requise: Select Low.fbx Root et Select Bake Low Root.")
-            self.set_check_status("low_bake_compared", "FAIL")
+            self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", "manual root selection missing")
             return
         low_meshes = self._collect_mesh_transforms(low_root)
         bake_meshes = self._collect_mesh_transforms(bake_root)
@@ -3929,7 +4106,7 @@ else
         self.log("INFO", "CompareLowBake", f"Meshes analysés Low/BakeLow : {len(low_meshes)} / {len(bake_meshes)}")
         if not low_meshes or not bake_meshes:
             self.log("FAIL", "CompareLowBake", "Compare impossible : Low.fbx ou Bake Low non chargé.")
-            self.set_check_status("low_bake_compared", "FAIL")
+            self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", "compare aborted: one root has no meshes")
             return
 
         low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=low_root)): self._mesh_data_signature(m) for m in low_meshes}
@@ -3976,7 +4153,10 @@ else
 
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareLowBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("low_bake_compared", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("low_bake_compared", "INFO", "Compare Low vs Bake", "aggregated topology, UVs and bbox match")
+        else:
+            self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", f"{pair_fail_count}/{len(all_keys)} mesh pairs mismatched")
 
     def compare_low_vs_final_asset(self) -> None:
         self._log_step_header(7, "Compare Low vs Final Asset", category="LowCompareFinal")
@@ -3984,12 +4164,12 @@ else
         final_root = self.get_manual_selected_root("compare_low_final_final_root_menu")
         if not low_root or not final_root:
             self.log("FAIL", "CompareLowFinal", "Sélection manuelle requise: Select Low.fbx Root et Select Final Scene Root.")
-            self.set_check_status("low_final_compared", "FAIL")
+            self.log_check_result("low_final_compared", "FAIL", "Compare Low vs Final", "manual root selection missing")
             return
 
         if not cmds.objExists(low_root) or not cmds.objExists(final_root):
             self.log("FAIL", "CompareLowFinal", "Compare impossible : un des roots sélectionnés n'existe plus dans la scène.")
-            self.set_check_status("low_final_compared", "FAIL")
+            self.log_check_result("low_final_compared", "FAIL", "Compare Low vs Final", "compare aborted: one selected root no longer exists")
             return
 
         self.log("INFO", "CompareLowFinal", f"Source A : {self._basename_from_path(self.paths.get('low_fbx', ''))}")
@@ -4023,7 +4203,11 @@ else
         self.log("INFO", "CompareLowFinal", f"Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
         self.log("INFO" if pivot_ok else "FAIL", "CompareLowFinal", f"Pivot match = {'OK' if pivot_ok else 'FAIL'}")
         self.log("INFO" if ok else "FAIL", "CompareLowFinal", f"Résultat final : {'OK' if ok else 'FAIL'}")
-        self.set_check_status("low_final_compared", "OK" if ok else "FAIL")
+        if ok:
+            self.log_check_result("low_final_compared", "INFO", "Compare Low vs Final", "aggregated root matches on topology, UVs, bbox and pivot")
+        else:
+            mismatch_flags = int(not presence_ok) + int(not topo_ok) + int(not uv_ok) + int(not bbox_ok) + int(not pivot_ok)
+            self.log_check_result("low_final_compared", "FAIL", "Compare Low vs Final", f"{mismatch_flags} aggregated mismatch type(s) detected")
 
     def _root_aggregate_signature(self, root: str) -> Dict[str, object]:
         meshes = self._collect_mesh_transforms(root) if root and cmds.objExists(root) else []
