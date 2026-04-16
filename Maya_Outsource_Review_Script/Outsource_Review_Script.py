@@ -514,10 +514,22 @@ class HighPolyReviewTool:
         cmds.text(label="Step 07 — Naming & Pairing", align="left")
         self._build_manual_root_selector("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.rowLayout(
+            numberOfColumns=5,
+            adjustableColumn=2,
+            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)],
+        )
         self.ui["check_bake_pairing"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("bake_pairing_checked"))
         cmds.text(label="High ↔ Low pairing", align="left")
         cmds.button(label="Check Pairing", height=26, command=lambda *_: self.check_bake_pairing())
+        cmds.text(label="BBox Scale", align="right")
+        self.ui["bake_pairing_bbox_scale"] = cmds.floatField(
+            minValue=1.0,
+            value=1.05,
+            precision=3,
+            step=0.01,
+            width=70,
+        )
         cmds.setParent("..")
 
         cmds.separator(style="in")
@@ -3039,6 +3051,10 @@ class HighPolyReviewTool:
         self._log_step_header(2, "Naming & Pairing", category="BakePairing")
         high_root = self.get_manual_selected_root("bake_pairing_high_root_menu")
         low_root = self.get_manual_selected_root("bake_pairing_low_root_menu")
+        bbox_scale = 1.05
+        if "bake_pairing_bbox_scale" in self.ui:
+            bbox_scale = max(1.0, float(cmds.floatField(self.ui["bake_pairing_bbox_scale"], q=True, value=True)))
+        self.log("INFO", "BakePairing", f"BBox scale utilisée : {bbox_scale:.3f}")
         if not high_root or not low_root:
             self.log("FAIL", "BakePairing", "Sélection manuelle requise: Select Bake High Root et Select Bake Low Root.")
             self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", "manual root selection missing")
@@ -3092,7 +3108,9 @@ class HighPolyReviewTool:
             bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_mesh)
             bbox_delta = tuple(abs(bbox_dims_high[i] - bbox_dims_low[i]) for i in range(3))
             bbox_center_delta = tuple(abs(bbox_center_high[i] - bbox_center_low[i]) for i in range(3))
-            bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+            max_bbox_dim = max(max(bbox_dims_high), max(bbox_dims_low), 1e-6)
+            bbox_tolerance = max(1e-4, max_bbox_dim * (bbox_scale - 1.0))
+            bbox_ok = all(v <= bbox_tolerance for v in bbox_delta) and all(v <= bbox_tolerance for v in bbox_center_delta)
 
             pivot_high = tuple(cmds.xform(high_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
             pivot_low = tuple(cmds.xform(low_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
@@ -3111,7 +3129,11 @@ class HighPolyReviewTool:
                 bbox_pivot_mismatch_meshes.extend([high_mesh, low_mesh])
                 self.log("FAIL", "BakePairing", f"Pair '{key}' bbox/pivot mismatch", [high_mesh, low_mesh])
                 self.log("INFO", "BakePairing", f"  BBox High/Low = {self._fmt_vec(bbox_dims_high, precision=2)} / {self._fmt_vec(bbox_dims_low, precision=2)}")
-                self.log("INFO", "BakePairing", f"  BBox delta dims/center = {self._fmt_vec(bbox_delta, precision=4)} / {self._fmt_vec(bbox_center_delta, precision=4)}")
+                self.log(
+                    "INFO",
+                    "BakePairing",
+                    f"  BBox delta dims/center = {self._fmt_vec(bbox_delta, precision=4)} / {self._fmt_vec(bbox_center_delta, precision=4)} (tol={bbox_tolerance:.4f}, scale={bbox_scale:.3f})",
+                )
                 self.log("INFO", "BakePairing", f"  Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
             else:
                 bbox_pivot_pass_count += 1
@@ -3138,6 +3160,7 @@ class HighPolyReviewTool:
         self.log("INFO", "BakePairing", f"Paires bbox/pivot testées = {len(shared_unique_keys)}")
         self.log("INFO", "BakePairing", f"Paires bbox/pivot conformes = {bbox_pivot_pass_count}")
         self.log("INFO" if not bbox_pivot_mismatch_keys else "FAIL", "BakePairing", f"Paires bbox/pivot non conformes = {len(bbox_pivot_mismatch_keys)}", bbox_pivot_mismatch_meshes[:120])
+        self.log("INFO", "BakePairing", f"Résumé pairing avec bbox scale {bbox_scale:.3f} : {bbox_pivot_pass_count}/{len(shared_unique_keys)} paires conformes")
 
         ok = not any([
             invalid_high_suffix,
@@ -3150,13 +3173,13 @@ class HighPolyReviewTool:
         ])
         self.log("INFO" if ok else "FAIL", "BakePairing", f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
-            self.log_check_result("bake_pairing_checked", "INFO", "Bake Pairing", f"{len(shared_unique_keys)} pairs matched, suffix/pivot/bbox valid")
+            self.log_check_result("bake_pairing_checked", "INFO", "Bake Pairing", f"{len(shared_unique_keys)} pairs matched, suffix/pivot/bbox valid with bbox scale {bbox_scale:.3f}")
         else:
             total_fail = (
                 len(invalid_high_suffix) + len(invalid_low_suffix) + len(orphan_high_keys) + len(orphan_low_keys)
                 + len(duplicate_high) + len(duplicate_low) + len(bbox_pivot_mismatch_keys)
             )
-            self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", f"{total_fail} pairing issue(s) detected")
+            self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", f"{total_fail} pairing issue(s) detected with bbox scale {bbox_scale:.3f}")
 
     def check_bake_readiness(self) -> None:
         self._log_step_header(3, "Bake Readiness", category="BakeReady")
