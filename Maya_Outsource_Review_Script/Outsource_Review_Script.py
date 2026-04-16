@@ -146,6 +146,12 @@ class HighPolyReviewTool:
             "low_uv_map2_checked": {"status": "PENDING", "mode": "AUTO"},
             "low_bake_compared": {"status": "PENDING", "mode": "AUTO"},
             "low_final_compared": {"status": "PENDING", "mode": "AUTO"},
+            "final_topology_checked": {"status": "PENDING", "mode": "AUTO"},
+            "final_namespaces_checked": {"status": "PENDING", "mode": "AUTO"},
+            "final_materials_checked": {"status": "PENDING", "mode": "AUTO"},
+            "final_uv_map1_checked": {"status": "PENDING", "mode": "AUTO"},
+            "final_uv_map2_checked": {"status": "PENDING", "mode": "AUTO"},
+            "final_ma_fbx_compared": {"status": "PENDING", "mode": "AUTO"},
         }
 
         self.check_ui_map = {
@@ -172,13 +178,19 @@ class HighPolyReviewTool:
             "low_uv_map2_checked": "check_low_uv_map2",
             "low_bake_compared": "check_low_bake",
             "low_final_compared": "check_low_final",
+            "final_topology_checked": "check_final_topology",
+            "final_namespaces_checked": "check_final_ns",
+            "final_materials_checked": "check_final_materials",
+            "final_uv_map1_checked": "check_final_uv_map1",
+            "final_uv_map2_checked": "check_final_uv_map2",
+            "final_ma_fbx_compared": "check_final_compare",
         }
 
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
-        self.material_sets_by_context: Dict[str, Dict[str, Dict[str, object]]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}}
+        self.material_sets_by_context: Dict[str, Dict[str, Dict[str, object]]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}, "final_asset": {}}
         self.texture_set_visibility: Dict[str, bool] = {}
-        self.texture_set_label_to_key_by_context: Dict[str, Dict[str, str]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}}
-        self.texture_set_section_headers_by_context: Dict[str, Set[str]] = {"high": set(), "low": set(), "bake_high": set(), "bake_low": set()}
+        self.texture_set_label_to_key_by_context: Dict[str, Dict[str, str]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}, "final_asset": {}}
+        self.texture_set_section_headers_by_context: Dict[str, Set[str]] = {"high": set(), "low": set(), "bake_high": set(), "bake_low": set(), "final_asset": set()}
         self.material_isolation_state: Dict[str, str] = {"context": "", "material_key": ""}
         self.last_scanned_namespaces: List[str] = []
         self.detected_assets: List[str] = []
@@ -370,6 +382,10 @@ class HighPolyReviewTool:
         self._build_guided_bake_review_section()
         cmds.setParent("..")
 
+        final_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_guided_final_asset_review_section()
+        cmds.setParent("..")
+
         cmds.tabLayout(
             tabs,
             edit=True,
@@ -377,6 +393,7 @@ class HighPolyReviewTool:
                 (high_tab, "Review 01 — High"),
                 (low_tab, "Review 02 — Low"),
                 (bake_tab, "Review 03 — Bake Scene"),
+                (final_tab, "Review 04 — Final Asset"),
             ),
         )
         cmds.setParent("..")
@@ -516,6 +533,57 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.setParent("..")
 
+    def _build_guided_final_asset_review_section(self) -> None:
+        cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=8)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        self._build_tab_visibility_controls("final_asset")
+        cmds.text(label="Guided review of the Final Asset delivery.", align="left")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 01 — Topology Check", align="left")
+        self._build_manual_root_selector("final_topology_root_menu", "Select Final Asset MA Root for Topology Check", "final_ma")
+        self._build_check_row("check_final_topology", "final_topology_checked", "Topology", self.run_final_asset_topology_checks)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 02 — Namespaces", align="left")
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui["check_final_ns"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("final_namespaces_checked"))
+        cmds.text(label="Only final asset review namespaces should remain", align="left")
+        cmds.button(label="Run Namespace Check", height=26, command=lambda *_: self.scan_final_asset_namespaces())
+        cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_final_asset_namespaces())
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 03 — Materials / Texture Sets", align="left")
+        self._build_manual_root_selector("final_materials_root_menu", "Select Final Asset MA Root for Materials / Texture Sets", "final_ma")
+        self._build_check_row("check_final_materials", "final_materials_checked", "Analyze Materials", self.analyze_final_asset_materials)
+        self.ui["final_texture_sets_list"] = cmds.textScrollList(
+            allowMultiSelection=True,
+            height=130,
+            selectCommand=lambda *_: self.on_texture_set_selection_changed("final_asset"),
+        )
+        cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("final_asset"))
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 04 — UV Check Map 1", align="left")
+        self._build_manual_root_selector("final_uv1_root_menu", "Select Final Asset MA Root for UV map1 Check", "final_ma")
+        self._build_check_row("check_final_uv_map1", "final_uv_map1_checked", "UV Map1 Check", self.run_final_asset_uv_map1_check)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 05 — UV Check Map 2", align="left")
+        self._build_manual_root_selector("final_uv2_root_menu", "Select Final Asset MA Root for UV map2 / TD Check", "final_ma")
+        self._build_check_row("check_final_uv_map2", "final_uv_map2_checked", "UV Map2 Check", self.run_final_asset_uv_map2_check)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 06 — Compare Final Asset .ma vs Final Asset .fbx", align="left")
+        self._build_manual_root_selector("compare_final_ma_root_menu", "Select Final Asset .ma Root", "final_ma")
+        self._build_manual_root_selector("compare_final_fbx_root_menu", "Select Final Asset .fbx Root", "final_fbx")
+        self.ui["check_final_compare"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("final_ma_fbx_compared"))
+        cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_final_asset_ma_vs_fbx())
+
+        cmds.setParent("..")
+        cmds.setParent("..")
+
     def _build_check_row(self, check_key_ui: str, check_key: str, label: str, command) -> None:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
@@ -528,6 +596,7 @@ class HighPolyReviewTool:
             "high": [("High_MA_GRP", "High MA"), ("High_FBX_GRP", "High FBX")],
             "low": [("Low_FBX_GRP", "Low FBX"), ("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
             "bake": [("Bake_MA_GRP", "Bake MA")],
+            "final_asset": [("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
         }.get(context_key, [])
         if not groups:
             return
@@ -1048,13 +1117,14 @@ class HighPolyReviewTool:
                 self.check_states[key]["status"] = "PENDING"
         self.refresh_checklist_ui()
         self.detected_texture_sets = {}
-        self.material_sets_by_context = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}}
+        self.material_sets_by_context = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}, "final_asset": {}}
         self.texture_set_visibility = {}
         self._disable_material_isolation()
         self._refresh_texture_sets_list_ui("high")
         self._refresh_texture_sets_list_ui("low")
         self._refresh_texture_sets_list_ui("bake_high")
         self._refresh_texture_sets_list_ui("bake_low")
+        self._refresh_texture_sets_list_ui("final_asset")
         self.log("INFO", "Asset", f"Active Asset: {self.active_asset}")
 
     def scan_delivery_folder(self) -> None:
@@ -2031,6 +2101,8 @@ class HighPolyReviewTool:
             return "bake_high_texture_sets_list"
         if context_key == "bake_low":
             return "bake_low_texture_sets_list"
+        if context_key == "final_asset":
+            return "final_texture_sets_list"
         return "low_texture_sets_list"
 
     def _refresh_texture_sets_list_ui(self, context_key: str = "high") -> None:
@@ -3352,6 +3424,91 @@ class HighPolyReviewTool:
         else:
             self.log_check_result(check_state_key, "FAIL", "Low Materials Check", "no valid material assignment detected")
 
+    def run_final_asset_topology_checks(self) -> None:
+        self.run_low_topology_checks(
+            root_menu_key="final_topology_root_menu",
+            check_state_key="final_topology_checked",
+            category="FinalAssetTopology",
+            step_index=1,
+            step_label="Final Asset Topology Check",
+            source_file_key="final_scene_ma",
+        )
+        root = self.get_manual_selected_root("final_topology_root_menu")
+        meshes = self._collect_mesh_transforms(root) if root and cmds.objExists(root) else []
+        ngon_total = 0
+        for mesh in meshes:
+            face_count = int(cmds.polyEvaluate(mesh, face=True) or 0)
+            for face_idx in range(face_count):
+                vtx = cmds.polyInfo(f"{mesh}.f[{face_idx}]", faceToVertex=True) or []
+                tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
+                if len(tokens) > 5:
+                    ngon_total += 1
+        self.log("INFO", "FinalAssetTopology", f"Final Asset Topology Check: {ngon_total} ngon found")
+
+    def scan_final_asset_namespaces(self) -> None:
+        self._log_step_header(2, "Namespace Check", category="FinalAssetNamespace")
+        allowed = sorted(set(self.allowed_review_namespaces).union({
+            str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v
+        }))
+        invalid = self._scan_namespaces_with_allowed(allowed)
+        self.last_scanned_namespaces = invalid[:]
+        meshes = self._collect_mesh_transforms(self.get_manual_selected_root("final_topology_root_menu") or "")
+        self.log("INFO", "FinalAssetNamespace", f"Fichier analysé : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
+        self.log("INFO", "FinalAssetNamespace", f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", "FinalAssetNamespace", f"Namespaces parasites détectés : {len(invalid)}")
+        if invalid:
+            self.log("WARNING", "FinalAssetNamespace", f"Liste : {', '.join(invalid)}")
+            self.log_check_result("final_namespaces_checked", "FAIL", "Final Asset Namespace Scan", f"{len(invalid)} unauthorized namespace(s) detected", invalid[:30])
+        else:
+            self.log_check_result("final_namespaces_checked", "INFO", "Final Asset Namespace Scan", "only authorized namespaces found")
+
+    def remove_final_asset_namespaces(self) -> None:
+        allowed = set(self.allowed_review_namespaces).union({
+            str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v
+        })
+        removable = [ns for ns in self.last_scanned_namespaces[:] if ns not in allowed]
+        for ns in sorted(removable, key=lambda n: n.count(":"), reverse=True):
+            try:
+                cmds.namespace(removeNamespace=ns, mergeNamespaceWithRoot=True)
+            except RuntimeError as exc:
+                self.log("WARNING", "FinalAssetNamespace", f"Suppression impossible pour {ns}: {exc}")
+        self.scan_final_asset_namespaces()
+
+    def analyze_final_asset_materials(self) -> None:
+        self.analyze_low_materials(
+            root_menu_key="final_materials_root_menu",
+            check_state_key="final_materials_checked",
+            category="FinalAssetMaterials",
+            step_index=3,
+            step_label="Final Asset Materials Check",
+            source_file_key="final_scene_ma",
+            material_context_key="final_asset",
+        )
+        mat_count = len(self.material_sets_by_context.get("final_asset", {}))
+        self.log("INFO", "FinalAssetMaterials", f"Final Asset Materials Check: {mat_count} materials detected")
+
+    def run_final_asset_uv_map1_check(self) -> None:
+        self.run_low_uv_map1_check(
+            root_menu_key="final_uv1_root_menu",
+            check_state_key="final_uv_map1_checked",
+            category="FinalAssetUV1",
+            step_index=4,
+            step_label="Final Asset UV Check Map 1",
+            source_file_key="final_scene_ma",
+        )
+        self.log("INFO", "FinalAssetUV1", "Final Asset UV Map1 Check complete: visual confirmation required")
+
+    def run_final_asset_uv_map2_check(self) -> None:
+        self.run_low_map2_density_check(
+            root_menu_key="final_uv2_root_menu",
+            check_state_key="final_uv_map2_checked",
+            category="FinalAssetUV2",
+            step_index=5,
+            step_label="Final Asset UV Check Map 2",
+            source_file_key="final_scene_ma",
+        )
+        self.log("INFO", "FinalAssetUV2", "Final Asset UV Map2 Check complete: visual confirmation required")
+
     def run_bake_low_topology_checks(self) -> None:
         self.run_low_topology_checks(
             root_menu_key="bake_low_topology_root_menu",
@@ -4301,6 +4458,60 @@ else
         else:
             mismatch_flags = int(not presence_ok) + int(not topo_ok) + int(not uv_ok) + int(not bbox_ok) + int(not pivot_ok)
             self.log_check_result("low_final_compared", "FAIL", "Compare Low vs Final", f"{mismatch_flags} aggregated mismatch type(s) detected")
+
+    def compare_final_asset_ma_vs_fbx(self) -> None:
+        self._log_step_header(6, "Compare Final Asset MA vs FBX", category="FinalAssetCompare")
+        ma_root = self.get_manual_selected_root("compare_final_ma_root_menu")
+        fbx_root = self.get_manual_selected_root("compare_final_fbx_root_menu")
+        if not ma_root or not fbx_root:
+            self.log("FAIL", "FinalAssetCompare", "Sélection manuelle requise: Select Final Asset .ma Root et Select Final Asset .fbx Root.")
+            self.log_check_result("final_ma_fbx_compared", "FAIL", "Compare Final Asset MA vs FBX", "manual root selection missing")
+            return
+
+        if not cmds.objExists(ma_root) or not cmds.objExists(fbx_root):
+            self.log("FAIL", "FinalAssetCompare", "Compare impossible : un des roots sélectionnés n'existe plus dans la scène.")
+            self.log_check_result("final_ma_fbx_compared", "FAIL", "Compare Final Asset MA vs FBX", "compare aborted: one selected root no longer exists")
+            return
+
+        self.log("INFO", "FinalAssetCompare", f"Source A : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
+        self.log("INFO", "FinalAssetCompare", f"Source B : {self._basename_from_path(self.paths.get('final_asset_fbx', ''))}")
+        self.log("INFO", "FinalAssetCompare", f"Root Final Asset MA sélectionné : {ma_root}", [ma_root])
+        self.log("INFO", "FinalAssetCompare", f"Root Final Asset FBX sélectionné : {fbx_root}", [fbx_root])
+
+        ma_data = self._root_aggregate_signature(ma_root)
+        fbx_data = self._root_aggregate_signature(fbx_root)
+        self.log("INFO", "FinalAssetCompare", f"Meshes analysés MA/FBX : {ma_data['mesh_count']} / {fbx_data['mesh_count']}")
+
+        presence_ok = bool(ma_data["mesh_count"] > 0 and fbx_data["mesh_count"] > 0)
+        topo_ok = (ma_data["v"], ma_data["e"], ma_data["f"]) == (fbx_data["v"], fbx_data["e"], fbx_data["f"])
+        uv_ok = bool(ma_data["uv_total"] == fbx_data["uv_total"] and ma_data["uv_sets"] == fbx_data["uv_sets"])
+        bbox_delta = tuple(abs(ma_data["bbox_dims"][i] - fbx_data["bbox_dims"][i]) for i in range(3))
+        bbox_center_delta = tuple(abs(ma_data["bbox_center"][i] - fbx_data["bbox_center"][i]) for i in range(3))
+        bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+        pivot_delta = tuple(abs(ma_data["pivot_world"][i] - fbx_data["pivot_world"][i]) for i in range(3))
+        pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+        ok = presence_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
+
+        self.log("INFO" if presence_ok else "FAIL", "FinalAssetCompare", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+        self.log("INFO" if topo_ok else "FAIL", "FinalAssetCompare", f"Topology match (totaux root) = {'OK' if topo_ok else 'FAIL'}")
+        self.log("INFO" if uv_ok else "FAIL", "FinalAssetCompare", f"UV match (totaux root) = {'OK' if uv_ok else 'FAIL'}")
+        self.log("INFO", "FinalAssetCompare", f"Bounding Box MA (root) = {self._fmt_vec(ma_data['bbox_dims'], precision=2)}")
+        self.log("INFO", "FinalAssetCompare", f"Bounding Box FBX (root) = {self._fmt_vec(fbx_data['bbox_dims'], precision=2)}")
+        self.log("INFO", "FinalAssetCompare", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+        self.log("INFO", "FinalAssetCompare", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+        self.log("INFO" if bbox_ok else "FAIL", "FinalAssetCompare", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+        self.log("INFO", "FinalAssetCompare", f"Pivot MA (root) = {self._fmt_vec(ma_data['pivot_world'], precision=4)}")
+        self.log("INFO", "FinalAssetCompare", f"Pivot FBX (root) = {self._fmt_vec(fbx_data['pivot_world'], precision=4)}")
+        self.log("INFO", "FinalAssetCompare", f"Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
+        self.log("INFO" if pivot_ok else "FAIL", "FinalAssetCompare", f"Pivot match = {'OK' if pivot_ok else 'FAIL'}")
+        self.log("INFO" if ok else "FAIL", "FinalAssetCompare", f"Résultat final : {'OK' if ok else 'FAIL'}")
+        if ok:
+            self.log("INFO", "FinalAssetCompare", "Final Asset Compare: aggregated root match between MA and FBX")
+            self.log_check_result("final_ma_fbx_compared", "INFO", "Compare Final Asset MA vs FBX", "aggregated root matches on topology, UVs, bbox and pivot")
+        else:
+            self.log("FAIL", "FinalAssetCompare", "Final Asset Compare: aggregated root mismatch between MA and FBX")
+            mismatch_flags = int(not presence_ok) + int(not topo_ok) + int(not uv_ok) + int(not bbox_ok) + int(not pivot_ok)
+            self.log_check_result("final_ma_fbx_compared", "FAIL", "Compare Final Asset MA vs FBX", f"{mismatch_flags} aggregated mismatch type(s) detected")
 
     def _root_aggregate_signature(self, root: str) -> Dict[str, object]:
         meshes = self._collect_mesh_transforms(root) if root and cmds.objExists(root) else []
