@@ -60,6 +60,7 @@ class HighPolyReviewTool:
             "bake_ma": "",
             "low_fbx": "",
             "final_scene_ma": "",
+            "final_asset_fbx": "",
         }
 
         self.detected_files: Dict[str, List[str]] = {
@@ -68,6 +69,7 @@ class HighPolyReviewTool:
             "bake_ma": [],
             "low_fbx": [],
             "final_scene_ma": [],
+            "final_asset_fbx": [],
         }
 
         self.detected_roots: Dict[str, List[str]] = {
@@ -77,6 +79,7 @@ class HighPolyReviewTool:
             "bake_high": [],
             "bake_low": [],
             "final_asset_ma": [],
+            "final_asset_fbx": [],
         }
 
         self.context = {
@@ -85,6 +88,7 @@ class HighPolyReviewTool:
             "bake_ma_namespace": "Bake_MA_File",
             "low_fbx_namespace": "Low_FBX_File",
             "final_asset_ma_namespace": "Final_Asset_MA_File",
+            "final_asset_fbx_namespace": "Final_Asset_FBX_File",
             "fbx_nodes": [],
             "fbx_meshes": [],
             "ma_nodes": [],
@@ -95,6 +99,25 @@ class HighPolyReviewTool:
             "low_fbx_meshes": [],
             "final_asset_ma_nodes": [],
             "final_asset_ma_meshes": [],
+            "final_asset_fbx_nodes": [],
+            "final_asset_fbx_meshes": [],
+        }
+        self.allowed_review_namespaces: Set[str] = {
+            "High_Ma_File",
+            "High_FBX_File",
+            "Low_FBX_File",
+            "Bake_MA_File",
+            "Final_Asset_MA",
+            "Final_Asset_MA_File",
+            "Final_Asset_FBX_File",
+        }
+        self.review_subgroups_by_file = {
+            "high_ma": "High_MA_GRP",
+            "high_fbx": "High_FBX_GRP",
+            "low_fbx": "Low_FBX_GRP",
+            "bake_ma": "Bake_MA_GRP",
+            "final_scene_ma": "Final_Asset_MA_GRP",
+            "final_asset_fbx": "Final_Asset_FBX_GRP",
         }
 
         self.check_states = {
@@ -168,7 +191,9 @@ class HighPolyReviewTool:
             "low_fbx": [],
             "bake_ma": [],
             "final_scene_ma": [],
+            "final_asset_fbx": [],
         }
+        self.summary_items: List[ReviewIssue] = []
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
@@ -248,13 +273,14 @@ class HighPolyReviewTool:
     def _build_technical_checks_section(self) -> None:
         cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        self._build_tab_visibility_controls("high")
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
         cmds.separator(style="in")
         cmds.text(label="Step 01 — Placeholder Match", align="left")
         self._build_manual_root_selector("placeholder_high_root_menu", "Select High Root", "high_ma")
         self._build_manual_root_selector("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma")
         cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
-        self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("placeholder_checked"))
         cmds.text(label="Verify that each high matches its placeholder", align="left")
         cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match())
         cmds.text(label="Tolerance %", align="right")
@@ -274,7 +300,7 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 03 — Topology Check", align="left")
         self._build_manual_root_selector("topology_high_root_menu", "Select High Root for Topology Check", "high_ma")
-        self._build_check_row("check_topology", "Topology", self.run_topology_checks)
+        self._build_check_row("check_topology", "topology_checked", "Topology", self.run_topology_checks)
         cmds.separator(style="in")
         cmds.text(label="Step 04 — Vertex Colors", align="left")
         self._build_manual_root_selector("vertex_high_root_menu", "Select High Root for Vertex Color Check", "high_ma")
@@ -283,7 +309,7 @@ class HighPolyReviewTool:
             adjustableColumn=2,
             columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)],
         )
-        self.ui["check_vtx"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_vtx"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("vertex_colors_checked"))
         cmds.text(label="Vertex Colors", align="left")
         cmds.button(label="Run Vertex Color Check", height=26, command=lambda *_: self.check_vertex_colors())
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
@@ -293,7 +319,7 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 05 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        self.ui["check_ns"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_ns"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("no_namespaces"))
         cmds.text(label="Only tool namespaces should remain", align="left")
         cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_namespaces())
@@ -301,7 +327,7 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 06 — Materials / Texture Sets", align="left")
         self._build_manual_root_selector("materials_high_root_menu", "Select High Root for Materials / Texture Sets", "high_ma")
-        self._build_check_row("check_texturesets", "Analyze Materials", lambda: self.analyze_texture_sets(mode="materials"))
+        self._build_check_row("check_texturesets", "texture_sets_analyzed", "Analyze Materials", lambda: self.analyze_texture_sets(mode="materials"))
         self.ui["texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
@@ -312,13 +338,13 @@ class HighPolyReviewTool:
         cmds.text(label="Step 07 — Compare High.ma vs High.fbx", align="left")
         self._build_manual_root_selector("compare_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_fbx_root_menu", "Select High.fbx Root", "high_fbx")
-        self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("ma_fbx_compared"))
         cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_ma_vs_fbx())
         cmds.separator(style="in")
         cmds.text(label="Step 08 — Compare High.ma vs Bake Scene High", align="left")
         self._build_manual_root_selector("compare_bake_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_bake_high_root_menu", "Select Bake High Root", "bake_high")
-        self.ui["check_ma_bake"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_ma_bake"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("ma_bake_compared"))
         cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_ma_vs_bake_high())
         cmds.setParent("..")
         cmds.setParent("..")
@@ -357,16 +383,17 @@ class HighPolyReviewTool:
     def _build_guided_low_review_section(self) -> None:
         cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        self._build_tab_visibility_controls("low")
         cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
         cmds.separator(style="in")
         cmds.text(label="Step 01 — Topology Check", align="left")
         self._build_manual_root_selector("low_topology_root_menu", "Select Low Root for Topology Check", "low_fbx")
-        self._build_check_row("check_low_topology", "Topology", self.run_low_topology_checks)
+        self._build_check_row("check_low_topology", "low_topology_checked", "Topology", self.run_low_topology_checks)
         cmds.separator(style="in")
 
         cmds.text(label="Step 02 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        self.ui["check_low_ns"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_low_ns"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("low_namespaces_checked"))
         cmds.text(label="Only low review namespaces should remain", align="left")
         cmds.button(label="Run Namespace Check", height=26, command=lambda *_: self.scan_low_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_low_namespaces())
@@ -375,7 +402,7 @@ class HighPolyReviewTool:
 
         cmds.text(label="Step 03 — Materials / Texture Sets", align="left")
         self._build_manual_root_selector("low_materials_root_menu", "Select Low Root for Materials / Texture Sets", "low_fbx")
-        self._build_check_row("check_low_materials", "Analyze Materials", self.analyze_low_materials)
+        self._build_check_row("check_low_materials", "low_materials_checked", "Analyze Materials", self.analyze_low_materials)
         self.ui["low_texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
@@ -386,25 +413,25 @@ class HighPolyReviewTool:
 
         cmds.text(label="Step 04 — UV Check map1", align="left")
         self._build_manual_root_selector("low_uv1_root_menu", "Select Low Root for UV map1 Check", "low_fbx")
-        self._build_check_row("check_low_uv_map1", "UV Map1 Check", self.run_low_uv_map1_check)
+        self._build_check_row("check_low_uv_map1", "low_uv_map1_checked", "UV Map1 Check", self.run_low_uv_map1_check)
         cmds.separator(style="in")
 
         cmds.text(label="Step 05 — UV map2 / Texel Density", align="left")
         self._build_manual_root_selector("low_uv2_root_menu", "Select Low Root for UV map2 / TD Check", "low_fbx")
-        self._build_check_row("check_low_uv_map2", "UV Map2 Check", self.run_low_map2_density_check)
+        self._build_check_row("check_low_uv_map2", "low_uv_map2_checked", "UV Map2 Check", self.run_low_map2_density_check)
         cmds.separator(style="in")
 
         cmds.text(label="Step 06 — Compare Low.fbx vs Bake Scene Low", align="left")
         self._build_manual_root_selector("compare_low_bake_low_root_menu", "Select Low.fbx Root", "low_fbx")
         self._build_manual_root_selector("compare_low_bake_bake_root_menu", "Select Bake Low Root", "bake_low")
-        self.ui["check_low_bake"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_low_bake"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("low_bake_compared"))
         cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_low_vs_bake_low())
         cmds.separator(style="in")
 
         cmds.text(label="Step 07 — Compare Low.fbx vs Final Scene Asset", align="left")
         self._build_manual_root_selector("compare_low_final_low_root_menu", "Select Low.fbx Root", "low_fbx")
         self._build_manual_root_selector("compare_low_final_final_root_menu", "Select Final Scene Root", "final_ma")
-        self.ui["check_low_final"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_low_final"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("low_final_compared"))
         cmds.button(label="Run Compare Final Asset", height=26, command=lambda *_: self.compare_low_vs_final_asset())
 
         cmds.setParent("..")
@@ -413,6 +440,7 @@ class HighPolyReviewTool:
     def _build_guided_bake_review_section(self) -> None:
         cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        self._build_tab_visibility_controls("bake")
 
         cmds.text(label="Guided review of the Bake Scene.", align="left")
         cmds.separator(style="in")
@@ -421,7 +449,7 @@ class HighPolyReviewTool:
         self._build_manual_root_selector("bake_structure_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_structure_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_bake_structure"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_bake_structure"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("bake_structure_checked"))
         cmds.text(label="Bake High / Low structure", align="left")
         cmds.button(label="Run Structure Check", height=26, command=lambda *_: self.check_bake_scene_structure())
         cmds.setParent("..")
@@ -429,12 +457,12 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 02 — Low Topology Check", align="left")
         self._build_manual_root_selector("bake_low_topology_root_menu", "Select Bake Low Root for Topology Check", "bake_low")
-        self._build_check_row("check_bake_low_topology", "Low Topology Check", self.run_bake_low_topology_checks)
+        self._build_check_row("check_bake_low_topology", "bake_low_topology_checked", "Low Topology Check", self.run_bake_low_topology_checks)
 
         cmds.separator(style="in")
         cmds.text(label="Step 03 — Materials on Bake High", align="left")
         self._build_manual_root_selector("bake_high_materials_root_menu", "Select Bake High Root for Materials / Texture Sets", "bake_high")
-        self._build_check_row("check_bake_high_materials", "Analyze Materials", self.analyze_bake_high_materials)
+        self._build_check_row("check_bake_high_materials", "bake_high_materials_checked", "Analyze Materials", self.analyze_bake_high_materials)
         self.ui["bake_high_texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
@@ -445,7 +473,7 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 04 — Materials on Bake Low", align="left")
         self._build_manual_root_selector("bake_low_materials_root_menu", "Select Bake Low Root for Materials / Texture Sets", "bake_low")
-        self._build_check_row("check_bake_low_materials", "Analyze Materials", self.analyze_bake_low_materials)
+        self._build_check_row("check_bake_low_materials", "bake_low_materials_checked", "Analyze Materials", self.analyze_bake_low_materials)
         self.ui["bake_low_texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
@@ -456,19 +484,19 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 05 — UV Check Map 1 on Bake Low", align="left")
         self._build_manual_root_selector("bake_low_uv1_root_menu", "Select Bake Low Root for UV map1 Check", "bake_low")
-        self._build_check_row("check_bake_low_uv_map1", "UV Map1 Check", self.run_bake_low_uv_map1_check)
+        self._build_check_row("check_bake_low_uv_map1", "bake_low_uv_map1_checked", "UV Map1 Check", self.run_bake_low_uv_map1_check)
 
         cmds.separator(style="in")
         cmds.text(label="Step 06 — UV Check Map 2 on Bake Low", align="left")
         self._build_manual_root_selector("bake_low_uv2_root_menu", "Select Bake Low Root for UV map2 / TD Check", "bake_low")
-        self._build_check_row("check_bake_low_uv_map2", "UV Map2 Check", self.run_bake_low_uv_map2_check)
+        self._build_check_row("check_bake_low_uv_map2", "bake_low_uv_map2_checked", "UV Map2 Check", self.run_bake_low_uv_map2_check)
 
         cmds.separator(style="in")
         cmds.text(label="Step 07 — Naming & Pairing", align="left")
         self._build_manual_root_selector("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_bake_pairing"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_bake_pairing"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("bake_pairing_checked"))
         cmds.text(label="High ↔ Low pairing", align="left")
         cmds.button(label="Check Pairing", height=26, command=lambda *_: self.check_bake_pairing())
         cmds.setParent("..")
@@ -478,7 +506,7 @@ class HighPolyReviewTool:
         self._build_manual_root_selector("bake_ready_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_bake_ready"] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui["check_bake_ready"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("bake_ready_checked"))
         cmds.text(label="Bake validation", align="left")
         cmds.button(label="Run Bake Validation", height=26, command=lambda *_: self.check_bake_readiness())
         cmds.setParent("..")
@@ -486,11 +514,31 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.setParent("..")
 
-    def _build_check_row(self, check_key_ui: str, label: str, command) -> None:
+    def _build_check_row(self, check_key_ui: str, check_key: str, label: str, command) -> None:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, enable=False)
+        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
         cmds.text(label=label, align="left")
         cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
+        cmds.setParent("..")
+
+    def _build_tab_visibility_controls(self, context_key: str) -> None:
+        groups = {
+            "high": [("High_MA_GRP", "High MA"), ("High_FBX_GRP", "High FBX")],
+            "low": [("Low_FBX_GRP", "Low FBX"), ("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
+            "bake": [("Bake_MA_GRP", "Bake MA")],
+        }.get(context_key, [])
+        if not groups:
+            return
+        cmds.frameLayout(label="Scene Visibility", collapsable=True, collapse=False, marginWidth=6)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
+        for group_name, label in groups:
+            checkbox_key = f"vis_{context_key}_{group_name}"
+            self.ui[checkbox_key] = cmds.checkBox(
+                label=f"Show/Hide {label}",
+                value=False,
+                changeCommand=lambda val, grp=group_name: self._set_group_visibility(grp, bool(val)),
+            )
+        cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
@@ -523,6 +571,13 @@ class HighPolyReviewTool:
     def _build_results_section(self) -> None:
         cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.text(label="Quick Summary", align="left")
+        self.ui["summary_results_list"] = cmds.textScrollList(
+            allowMultiSelection=False,
+            height=120,
+        )
+        cmds.separator(style="in")
+        cmds.text(label="Detailed Logs", align="left")
         self.ui["results_list"] = cmds.textScrollList(
             allowMultiSelection=False,
             height=260,
@@ -575,6 +630,47 @@ class HighPolyReviewTool:
     def _log_step_header(self, step_number: int, title: str, category: str = "Step") -> None:
         self.log("INFO", category, f"-- Step {step_number:02d}: {title} --")
 
+    def _ensure_outsourcing_review_group(self) -> str:
+        if not cmds.objExists("Outsourcing_Review"):
+            cmds.group(empty=True, name="Outsourcing_Review")
+            self.log("INFO", "Load", "Groupe Outsourcing_Review créé.")
+        try:
+            cmds.setAttr("Outsourcing_Review.visibility", 1)
+        except RuntimeError:
+            pass
+        return "Outsourcing_Review"
+
+    def _ensure_review_subgroup(self, file_key: str) -> str:
+        parent = self._ensure_outsourcing_review_group()
+        group_name = self.review_subgroups_by_file.get(file_key, f"{file_key}_GRP")
+        if not cmds.objExists(group_name):
+            cmds.group(empty=True, name=group_name, parent=parent)
+            self.log("INFO", "Load", f"Sous-groupe créé: {group_name}")
+        else:
+            parent_current = (cmds.listRelatives(group_name, parent=True, fullPath=False) or [""])[0]
+            if parent_current != parent:
+                try:
+                    cmds.parent(group_name, parent)
+                except RuntimeError:
+                    pass
+        self._set_group_visibility(group_name, False)
+        return group_name
+
+    def _set_group_visibility(self, group_name: str, visible: bool) -> None:
+        if not cmds.objExists(group_name):
+            self.log("WARNING", "Visibility", f"Groupe introuvable: {group_name}")
+            return
+        try:
+            cmds.setAttr(group_name + ".visibility", 1 if visible else 0)
+        except RuntimeError:
+            return
+
+    def _toggle_group_visibility(self, group_name: str) -> None:
+        if not cmds.objExists(group_name):
+            return
+        current = bool(cmds.getAttr(group_name + ".visibility"))
+        self._set_group_visibility(group_name, not current)
+
     def _scalar_from_maya_result(self, value: Any, default: float = 0.0) -> float:
         raw = value
         if isinstance(raw, list):
@@ -601,10 +697,21 @@ class HighPolyReviewTool:
         cmds.textScrollList(self.ui["results_list"], e=True, append=display)
         self.result_index_to_objects[idx + 1] = issue.objects
 
+    def log_summary(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
+        issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
+        self.summary_items.append(issue)
+        if "summary_results_list" not in self.ui:
+            return
+        prefix = {"INFO": "[INFO]", "WARNING": "[WARN]", "FAIL": "[FAIL]"}.get(level, "[INFO]")
+        cmds.textScrollList(self.ui["summary_results_list"], e=True, append=f"{prefix} {category}: {message}")
+
     def clear_results(self) -> None:
         self.result_items = []
+        self.summary_items = []
         self.result_index_to_objects = {}
         cmds.textScrollList(self.ui["results_list"], e=True, removeAll=True)
+        if "summary_results_list" in self.ui:
+            cmds.textScrollList(self.ui["summary_results_list"], e=True, removeAll=True)
         self.refresh_summary()
 
     def refresh_summary(self) -> None:
@@ -641,6 +748,17 @@ class HighPolyReviewTool:
 
     def set_check_status(self, check_key: str, status: str) -> None:
         self.check_states[check_key]["status"] = status
+        self.log_summary("INFO" if status == "OK" else "FAIL", "Checklist", f"{check_key}: {status}")
+        self.refresh_checklist_ui()
+
+    def on_manual_check_toggle(self, check_key: str) -> None:
+        ui_key = self.check_ui_map.get(check_key)
+        if not ui_key or ui_key not in self.ui:
+            return
+        checked = cmds.checkBox(self.ui[ui_key], q=True, value=True)
+        status = "OK" if checked else "PENDING"
+        self.check_states[check_key]["status"] = status
+        self.log_summary("INFO", "Manual", f"{check_key} défini manuellement à {status}")
         self.refresh_checklist_ui()
 
     def on_result_selected(self) -> None:
@@ -780,7 +898,7 @@ class HighPolyReviewTool:
         # Fallback: token extraction from shared files.
         if not assets:
             all_paths = []
-            for key in ["final_asset_ma", "high_ma", "bake_ma", "low_fbx"]:
+            for key in ["final_scene_ma", "high_ma", "bake_ma", "low_fbx", "final_asset_fbx"]:
                 all_paths.extend(self.detected_files.get(key, []))
             tokens: Set[str] = set()
             for path in all_paths:
@@ -850,6 +968,7 @@ class HighPolyReviewTool:
             "bake_ma": [],
             "low_fbx": [],
             "final_scene_ma": [],
+            "final_asset_fbx": [],
         }
 
         for dirpath, _, filenames in os.walk(root):
@@ -864,6 +983,8 @@ class HighPolyReviewTool:
                     found_files["high_fbx"].append(full_path)
                 elif name_lower.endswith("_high.ma"):
                     found_files["high_ma"].append(full_path)
+                elif name_lower.endswith(".fbx"):
+                    found_files["final_asset_fbx"].append(full_path)
                 elif name_lower.endswith(".ma"):
                     found_files["final_scene_ma"].append(full_path)
 
@@ -875,7 +996,7 @@ class HighPolyReviewTool:
 
         # Toujours synchroniser les chemins utilisables par les loaders,
         # même si les optionMenu ne sont pas présents dans l'UI courante.
-        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
+        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma", "final_asset_fbx"]:
             files = self.detected_files[file_key]
             previous = self.paths.get(file_key, "")
             if previous and previous in files:
@@ -885,7 +1006,7 @@ class HighPolyReviewTool:
             else:
                 self.paths[file_key] = ""
 
-        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma"]:
+        for file_key in ["high_ma", "high_fbx", "bake_ma", "low_fbx", "final_scene_ma", "final_asset_fbx"]:
             if f"{file_key}_menu" in self.ui:
                 self._populate_file_option_menu(file_key)
                 current = self.paths.get(file_key, "")
@@ -906,6 +1027,7 @@ class HighPolyReviewTool:
             ("bake_ma", "Aucun fichier Bake MA (*_BAKE.ma) trouvé."),
             ("low_fbx", "Aucun fichier Low FBX (*_LOW.fbx) trouvé."),
             ("final_scene_ma", "Aucune final scene MA (fichier .ma sans suffixe) trouvée."),
+            ("final_asset_fbx", "Aucun Final Asset FBX (fichier .fbx sans suffixe _high/_low) trouvé."),
         ]
         for file_key, warning_msg in scan_logs:
             count = len(found_files[file_key])
@@ -1737,7 +1859,9 @@ class HighPolyReviewTool:
         return found
 
     def _is_allowed_namespace(self, namespace: str) -> bool:
-        allowed_namespaces = [self.context["fbx_namespace"], self.context["ma_namespace"]]
+        allowed_namespaces = sorted(set(self.allowed_review_namespaces).union({
+            str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v
+        }))
         for allowed in allowed_namespaces:
             if namespace == allowed or namespace.startswith(allowed + ":"):
                 return True
@@ -2101,6 +2225,7 @@ class HighPolyReviewTool:
             ("fbx_namespace", "High.fbx"),
             ("bake_ma_namespace", "Bake.ma"),
             ("final_asset_ma_namespace", "Final Scene.ma"),
+            ("final_asset_fbx_namespace", "Final Asset.fbx"),
         ]
         unloaded_labels = []
         for ns_key, label in unload_map:
@@ -2208,19 +2333,39 @@ class HighPolyReviewTool:
         self.refresh_root_ui()
 
     def load_final_asset_fbx_scene(self) -> None:
-        self.log("INFO", "Workflow", "Final review désactivée dans cette version High-only.")
+        path = self.paths.get("final_asset_fbx", "")
+        if not path:
+            self.log("FAIL", "LoadFinal", "Aucun fichier Final Asset FBX sélectionné (scan requis).")
+            return
+        if not os.path.isfile(path):
+            self.log("FAIL", "LoadFinal", f"Fichier Final Asset FBX introuvable: {path}")
+            return
+        namespace = self.context["final_asset_fbx_namespace"]
+        if cmds.namespace(exists=namespace):
+            self._unload_namespace_references(namespace)
+            try:
+                cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+            except RuntimeError:
+                pass
+        before = set(cmds.ls(long=True) or [])
+        cmds.file(path, reference=True, type="FBX", ignoreVersion=True, mergeNamespacesOnClash=False, namespace=namespace)
+        after = set(cmds.ls(long=True) or [])
+        new_nodes = sorted(list(after - before))
+        self.context["final_asset_fbx_nodes"] = new_nodes
+        self.context["final_asset_fbx_meshes"] = [n for n in new_nodes if cmds.nodeType(n) == "mesh"]
+        self.detected_roots["final_asset_fbx"] = self._find_root_candidates("final", namespace=namespace)
+        self.log("INFO", "LoadFinal", f"Final Asset FBX référencé : {self._basename_from_path(path)}")
+        self.log("INFO", "LoadFinal", f"Namespace utilisé : {namespace}")
+        self.log("INFO", "LoadFinal", f"Meshes importés : {len(self.context['final_asset_fbx_meshes'])}")
+        self._log_root_detection("final_asset_fbx", "Final Asset FBX")
+        self.refresh_root_ui()
 
     def load_everything(self) -> None:
         self.log("INFO", "Load", "Action: Load Everything")
         self.log("INFO", "Load", f"Root courant: {self.paths.get('root', '') or '-- non défini --'}")
 
-        if not cmds.objExists("Outsourcing_Review"):
-            cmds.group(empty=True, name="Outsourcing_Review")
-            self.log("INFO", "Load", "Groupe Outsourcing_Review créé.")
-        else:
-            self.log("INFO", "Load", "Groupe Outsourcing_Review déjà présent.")
-        cmds.setAttr("Outsourcing_Review.visibility", 0)
-        self.log("INFO", "Load", "Groupe Outsourcing_Review masqué (visibility=0).")
+        self._ensure_outsourcing_review_group()
+        self.log("INFO", "Load", "Groupe Outsourcing_Review visible (visibility=1).")
 
         self.review_group_contents = {
             "high_ma": [],
@@ -2228,6 +2373,7 @@ class HighPolyReviewTool:
             "low_fbx": [],
             "bake_ma": [],
             "final_scene_ma": [],
+            "final_asset_fbx": [],
         }
 
         load_plan = [
@@ -2236,7 +2382,10 @@ class HighPolyReviewTool:
             ("low_fbx", "Low_FBX_File"),
             ("bake_ma", "Bake_MA_File"),
             ("final_scene_ma", "Final_Asset_MA_File"),
+            ("final_asset_fbx", "Final_Asset_FBX_File"),
         ]
+        for file_key, _ in load_plan:
+            self._ensure_review_subgroup(file_key)
 
         attempted = 0
         skipped = 0
@@ -2275,22 +2424,23 @@ class HighPolyReviewTool:
                 )
 
             stored_nodes: List[str] = []
+            subgroup = self._ensure_review_subgroup(file_key)
             for node in top_nodes:
                 if not cmds.objExists(node):
                     self.log("WARNING", "Load", f"Node ignoré (inexistant): {node}")
                     continue
                 try:
-                    cmds.parent(node, "Outsourcing_Review")
+                    cmds.parent(node, subgroup)
                     stored_nodes.append(node)
                 except RuntimeError:
-                    self.log("WARNING", "Load", f"Impossible de parent {node} -> Outsourcing_Review")
+                    self.log("WARNING", "Load", f"Impossible de parent {node} -> {subgroup}")
                     continue
             self.review_group_contents[file_key] = stored_nodes
             loaded_or_reused += 1
             self.log(
                 "INFO",
                 "Load",
-                f"[{file_key}] top nodes parentés: {len(stored_nodes)} | "
+                f"[{file_key}] top nodes parentés sous {subgroup}: {len(stored_nodes)} | "
                 f"{self._preview_list(stored_nodes, max_items=8)}",
             )
 
@@ -2307,6 +2457,7 @@ class HighPolyReviewTool:
                 "Load",
                 "Aucune référence chargée: vérifier le scan, la sélection des fichiers et l'existence des chemins.",
             )
+        self.log_summary("INFO", "Load Everything", f"Loaded/reused {loaded_or_reused}, parented nodes {total_parented}")
 
     def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
         left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
@@ -2839,7 +2990,9 @@ class HighPolyReviewTool:
 
     def scan_low_namespaces(self) -> None:
         self._log_step_header(3, "Namespace Check", category="LowNamespace")
-        allowed = sorted({str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v})
+        allowed = sorted(set(self.allowed_review_namespaces).union({
+            str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v
+        }))
         invalid = self._scan_namespaces_with_allowed(allowed)
         roots = self._resolve_low_roots_for_logs()
         meshes = self._collect_low_meshes()
@@ -2857,7 +3010,9 @@ class HighPolyReviewTool:
         self.set_check_status("low_namespaces_checked", "OK" if ok else "FAIL")
 
     def remove_low_namespaces(self) -> None:
-        allowed = {str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v}
+        allowed = set(self.allowed_review_namespaces).union({
+            str(v) for k, v in self.context.items() if k.endswith("_namespace") and isinstance(v, str) and v
+        })
         removable = [ns for ns in self.last_scanned_namespaces[:] if ns not in allowed]
         for ns in sorted(removable, key=lambda n: n.count(":"), reverse=True):
             try:
@@ -3027,6 +3182,7 @@ class HighPolyReviewTool:
 
         if not user_ns:
             self.log("INFO", "Namespace", "Résultat : OK (aucun namespace indésirable).")
+            self.log_summary("INFO", "Namespace Scan", "only authorized namespaces found")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -3039,6 +3195,7 @@ class HighPolyReviewTool:
             self.log("WARNING", "Namespace", f"Namespace détecté: {ns} ({len(objs)} objets)", objs[:50])
 
         self.log("FAIL", "Namespace", f"Résultat : FAIL ({len(user_ns)} namespace(s) utilisateur détecté(s)).", total_objs[:200])
+        self.log_summary("FAIL", "Namespace Scan", f"{len(user_ns)} unauthorized namespace(s) detected", total_objs[:30])
         self.set_check_status("no_namespaces", "FAIL")
 
     def remove_namespaces(self) -> None:
@@ -3049,6 +3206,7 @@ class HighPolyReviewTool:
         self.log("INFO", "Namespace", f"Namespaces à supprimer : {len(removable)}")
         if not removable:
             self.log("INFO", "Namespace", "Résultat : OK (rien à supprimer).")
+            self.log_summary("INFO", "Namespace Cleanup", "nothing to remove")
             self.set_check_status("no_namespaces", "OK")
             return
 
@@ -3076,6 +3234,7 @@ class HighPolyReviewTool:
             self.set_check_status("no_namespaces", "FAIL")
         else:
             self.log("INFO", "Namespace", "Résultat : OK (suppression terminée).")
+            self.log_summary("INFO", "Namespace Cleanup", f"removed {len(removed)} namespace(s)")
             self.set_check_status("no_namespaces", "OK")
         self.last_scanned_namespaces = self._get_scan_namespaces()
 
@@ -3472,37 +3631,42 @@ else
         self.set_check_status("vertex_colors_checked", "OK" if ok else "FAIL")
 
     def display_vertex_colors(self) -> None:
-        targets, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        self.log("INFO", "VertexColor", f"Display: Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        if not targets:
-            self.log("WARNING", "VertexColor", "Aucun high mesh High.ma trouvé.")
+        shapes = self._collect_all_review_mesh_shapes()
+        self.log("INFO", "VertexColor", "Display: portée scène review complète.")
+        if not shapes:
+            self.log("WARNING", "VertexColor", "Aucun mesh trouvé dans Outsourcing_Review.")
             return
-        for tr in targets:
-            shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            for shape in shapes:
-                try:
-                    cmds.setAttr(shape + ".displayColors", 1)
-                except RuntimeError:
-                    pass
+        for shape in shapes:
+            try:
+                cmds.setAttr(shape + ".displayColors", 1)
+            except RuntimeError:
+                pass
         cmds.polyOptions(colorShadedDisplay=True)
-        self.log("INFO", "VertexColor", f"Display: Meshes affectés : {len(targets)}")
+        self.log("INFO", "VertexColor", f"Display: Shapes affectés : {len(shapes)}")
         self.log("INFO", "VertexColor", "Display: Résultat : OK")
+        self.log_summary("INFO", "Vertex Colors", f"display enabled on {len(shapes)} mesh shapes (scene-wide)")
 
     def hide_vertex_colors(self) -> None:
-        targets, _ = self._collect_mesh_transforms_in_namespace(self.context["ma_namespace"], exclude_placeholder_named=True)
-        self.log("INFO", "VertexColor", f"Hide: Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        if not targets:
-            self.log("WARNING", "VertexColor", "Aucun high mesh High.ma trouvé.")
+        shapes = self._collect_all_review_mesh_shapes()
+        self.log("INFO", "VertexColor", "Hide: portée scène review complète.")
+        if not shapes:
+            self.log("WARNING", "VertexColor", "Aucun mesh trouvé dans Outsourcing_Review.")
             return
-        for tr in targets:
-            shapes = cmds.listRelatives(tr, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
-            for shape in shapes:
-                try:
-                    cmds.setAttr(shape + ".displayColors", 0)
-                except RuntimeError:
-                    pass
-        self.log("INFO", "VertexColor", f"Hide: Meshes affectés : {len(targets)}")
+        for shape in shapes:
+            try:
+                cmds.setAttr(shape + ".displayColors", 0)
+            except RuntimeError:
+                pass
+        self.log("INFO", "VertexColor", f"Hide: Shapes affectés : {len(shapes)}")
         self.log("INFO", "VertexColor", "Hide: Résultat : OK")
+        self.log_summary("INFO", "Vertex Colors", f"display disabled on {len(shapes)} mesh shapes (scene-wide)")
+
+    def _collect_all_review_mesh_shapes(self) -> List[str]:
+        if not cmds.objExists("Outsourcing_Review"):
+            return []
+        descendants = cmds.listRelatives("Outsourcing_Review", allDescendents=True, fullPath=True) or []
+        shapes = [n for n in descendants if cmds.nodeType(n) == "mesh"]
+        return sorted(set(shapes))
 
     def isolate_meshes_without_vertex_color(self) -> None:
         high_root = self.get_high_root()
@@ -3556,6 +3720,18 @@ else
     def _uv_set_on_shape(self, shape: str, uv_set: str) -> bool:
         sets = cmds.polyUVSet(shape, q=True, allUVSets=True) or []
         return uv_set in sets
+
+    def _open_uv_editor_floating(self) -> None:
+        try:
+            mel.eval("TextureViewWindow;")
+            panels = cmds.getPanel(scriptType="polyTexturePlacementPanel") or []
+            if panels:
+                panel = panels[-1]
+                win = cmds.panel(panel, q=True, control=True)
+                if win and cmds.window(win, exists=True):
+                    cmds.window(win, e=True, sizeable=True, widthHeight=(900, 700))
+        except RuntimeError as exc:
+            self.log("WARNING", "UV", f"Impossible d'ouvrir UV Editor flottant: {exc}")
 
     def _mesh_uv_distortion_ratio(self, mesh: str, uv_set: str = "map1") -> Optional[float]:
         shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
@@ -3620,8 +3796,6 @@ else
             except RuntimeError:
                 pass
             outside_ok = outside_count == 0
-            ratio = self._mesh_uv_distortion_ratio(mesh, uv_set="map1")
-            distortion_ok = (ratio is None) or ratio <= LOW_UV_DISTORTION_THRESHOLD
             mesh_ok = overlap_ok and outside_ok
             if not mesh_ok:
                 fail_count += 1
@@ -3629,13 +3803,13 @@ else
             self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
             self.log("INFO" if outside_ok else "FAIL", "LowUV1Mesh", f"UV shells hors 0-1 = {outside_count}")
             self.log("INFO" if overlap_ok else "FAIL", "LowUV1Mesh", f"UV overlap = {overlap_count}")
-            self.log("INFO" if distortion_ok else "WARNING", "LowUV1Mesh", f"Distortion = {'OK' if distortion_ok else f'WARNING ({ratio:.3f})'}")
             self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
-        self.log("INFO", category, f"Seuil distortion utilisé : {LOW_UV_DISTORTION_THRESHOLD:.2f}")
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self.log_summary("INFO", "UV Map1 Check", "UV Map1 Check complete: no distortion analysis, visual confirmation requested in UV Editor")
         self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+        self._open_uv_editor_floating()
 
     def _low_asset_key(self, mesh: str) -> str:
         name = self._strip_namespaces_from_name(self._short_name(mesh)).lower()
@@ -3734,7 +3908,9 @@ else
         self.log("INFO", category, f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
         ok = bool(valid_values) and pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat global : {'OK' if ok else 'FAIL'}")
+        self.log_summary("INFO", "UV Map2 Check", "UV Map2 Check complete: no distortion analysis, visual confirmation requested in UV Editor")
         self.set_check_status(check_state_key, "OK" if ok else "FAIL")
+        self._open_uv_editor_floating()
 
     def compare_low_vs_bake_low(self) -> None:
         self._log_step_header(6, "Compare Low vs Bake Low", category="LowCompareBake")
