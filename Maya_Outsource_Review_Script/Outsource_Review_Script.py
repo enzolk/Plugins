@@ -4393,6 +4393,12 @@ else
             self.log_check_result(check_state_key, "INFO", "UV Map2 Check", f"texel density in tolerance on {len(valid_values)} meshes (mean {mean_td:.2f})")
         else:
             self.log_check_result(check_state_key, "FAIL", "UV Map2 Check", f"texel density out of tolerance on {pair_fail_count}/{len(meshes)} meshes")
+        self._set_uv_set_on_meshes(meshes, "map2")
+        try:
+            cmds.select(meshes, replace=True)
+        except RuntimeError:
+            pass
+        self.log("INFO", category, "Affichage UV Editor forcé sur map2")
         self._open_uv_editor_floating()
 
     def compare_low_vs_bake_low(self) -> None:
