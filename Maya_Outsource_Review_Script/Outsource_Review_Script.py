@@ -4152,6 +4152,19 @@ else
         sets = cmds.polyUVSet(shape, q=True, allUVSets=True) or []
         return uv_set in sets
 
+    def _set_uv_set_on_meshes(self, meshes: List[str], uv_set: str) -> List[str]:
+        switched: List[str] = []
+        for mesh in meshes:
+            shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
+            if not shape or not self._uv_set_on_shape(shape, uv_set):
+                continue
+            try:
+                cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+                switched.append(mesh)
+            except RuntimeError:
+                continue
+        return switched
+
     def _open_uv_editor_floating(self) -> None:
         try:
             mel.eval("TextureViewWindow;")
@@ -4207,13 +4220,40 @@ else
         self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
         self.log("INFO", category, f"Root analysé : {root}", [root])
         self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", category, "Map analysée : map1")
         if not meshes:
             self.log("FAIL", category, "Aucun mesh LOW chargé.")
             self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", "no low meshes found on selected root")
             return
 
         fail_count = 0
+        map1_missing_count = 0
         for mesh in meshes:
+            shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
+            if not shape:
+                fail_count += 1
+                map1_missing_count += 1
+                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                self.log("FAIL", "LowUV1Mesh", "Shape introuvable")
+                self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
+                continue
+            if not self._uv_set_on_shape(shape, "map1"):
+                fail_count += 1
+                map1_missing_count += 1
+                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                self.log("FAIL", "LowUV1Mesh", "UV set map1 manquant")
+                self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
+                continue
+            try:
+                cmds.polyUVSet(shape, currentUVSet=True, uvSet="map1")
+            except RuntimeError:
+                fail_count += 1
+                map1_missing_count += 1
+                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                self.log("FAIL", "LowUV1Mesh", "Impossible de forcer map1")
+                self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
+                continue
+
             overlap_data = cmds.polyUVOverlap(mesh, oc=True) or []
             overlap_count = len(overlap_data) if isinstance(overlap_data, list) else int(bool(overlap_data))
             overlap_ok = overlap_count == 0
@@ -4238,10 +4278,18 @@ else
 
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
+        self._set_uv_set_on_meshes(meshes, "map1")
+        try:
+            cmds.select(meshes, replace=True)
+        except RuntimeError:
+            pass
         if ok:
-            self.log_check_result(check_state_key, "INFO", "UV Map1 Check", "UVs valid in 0-1 with no overlap; visual confirmation requested")
+            self.log_check_result(check_state_key, "INFO", "UV Map1 Check", "UV Map1 Check: map1 validated, visual confirmation requested")
         else:
-            self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", f"{fail_count}/{len(meshes)} meshes have overlap or shells outside 0-1")
+            fail_message = f"UV Map1 Check: map1 missing or invalid on {map1_missing_count} meshes"
+            if fail_count > map1_missing_count:
+                fail_message = f"{fail_message}; {fail_count}/{len(meshes)} meshes have overlap or shells outside 0-1"
+            self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", fail_message)
         self._open_uv_editor_floating()
 
     def _low_asset_key(self, mesh: str) -> str:
