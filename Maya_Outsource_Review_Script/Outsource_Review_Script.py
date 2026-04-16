@@ -52,6 +52,7 @@ class HighPolyReviewTool:
         self.ui = {}
         self.result_items: List[ReviewIssue] = []
         self.result_index_to_objects: Dict[int, List[str]] = {}
+        self.result_control_to_objects: Dict[str, List[str]] = {}
 
         self.paths = {
             "root": "",
@@ -579,11 +580,12 @@ class HighPolyReviewTool:
         )
         cmds.separator(style="in")
         cmds.text(label="Detailed Logs", align="left")
-        self.ui["results_list"] = cmds.textScrollList(
-            allowMultiSelection=False,
+        self.ui["results_scroll"] = cmds.scrollLayout(
+            childResizable=True,
             height=260,
-            selectCommand=lambda *_: self.on_result_selected(),
         )
+        self.ui["results_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        cmds.setParent("..")
         cmds.text(label="Tip: clique une ligne liée à des objets pour sélectionner en scène.")
         cmds.setParent("..")
         cmds.setParent("..")
@@ -683,20 +685,111 @@ class HighPolyReviewTool:
         except (TypeError, ValueError):
             return float(default)
 
-    def log(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
-        issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
-        self.result_items.append(issue)
+    def _is_success_info_message(self, message: str) -> bool:
+        text = (message or "").strip().lower()
+        if not text:
+            return False
+
+        success_markers = [
+            " = ok",
+            "result = ok",
+            "result: ok",
+            "only authorized namespaces found",
+            "within tolerance",
+            "pass uv/topology",
+            "meshes clean",
+            "assignments validated",
+            "vertex colors present",
+            "match",
+            "matches",
+            "valid",
+        ]
+        return any(marker in text for marker in success_markers)
+
+    def _get_log_row_style(self, level: str, message: str, style: Optional[str] = None) -> str:
+        normalized = (style or "").strip().lower()
+        if normalized in {"neutral", "success", "warning", "fail"}:
+            return normalized
+        if level == "FAIL":
+            return "fail"
+        if level == "WARNING":
+            return "warning"
+        if level == "INFO" and self._is_success_info_message(message):
+            return "success"
+        return "neutral"
+
+    def _append_detailed_log_row(
+        self,
+        level: str,
+        category: str,
+        message: str,
+        objects: Optional[List[str]] = None,
+        style: Optional[str] = None,
+    ) -> None:
+        if "results_column" not in self.ui:
+            return
 
         prefix = {
             "INFO": "[INFO]",
             "WARNING": "[WARN]",
             "FAIL": "[FAIL]",
         }.get(level, "[INFO]")
-
         display = f"{prefix} {category}: {message}"
-        idx = cmds.textScrollList(self.ui["results_list"], q=True, numberOfItems=True) or 0
-        cmds.textScrollList(self.ui["results_list"], e=True, append=display)
-        self.result_index_to_objects[idx + 1] = issue.objects
+        row_style = self._get_log_row_style(level, message, style=style)
+        style_to_color = {
+            "fail": (0.35, 0.18, 0.18),
+            "success": (0.16, 0.32, 0.20),
+            "warning": (0.35, 0.28, 0.16),
+        }
+        row_color = style_to_color.get(row_style)
+        row_objects = list(objects or [])
+
+        cmds.setParent(self.ui["results_column"])
+        cmds.rowLayout(
+            numberOfColumns=2,
+            adjustableColumn=1,
+            columnAttach=[(1, "both", 0), (2, "both", 6)],
+        )
+        text_kwargs: Dict[str, Any] = {
+            "label": display,
+            "align": "left",
+            "wordWrap": True,
+            "height": 24,
+        }
+        if row_color:
+            text_kwargs["backgroundColor"] = row_color
+            text_kwargs["enableBackground"] = True
+        else:
+            text_kwargs["enableBackground"] = False
+        row_control = cmds.text(**text_kwargs)
+        self.result_control_to_objects[row_control] = row_objects
+
+        select_enabled = bool(row_objects)
+        cmds.button(
+            label="Select",
+            height=22,
+            enable=select_enabled,
+            command=lambda *_: self.on_result_selected_from_control(row_control),
+        )
+        cmds.setParent("..")
+
+    def log(
+        self,
+        level: str,
+        category: str,
+        message: str,
+        objects: Optional[List[str]] = None,
+        style: Optional[str] = None,
+    ) -> None:
+        issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
+        self.result_items.append(issue)
+
+        idx = len(self.result_items)
+        self.result_index_to_objects[idx] = issue.objects
+        self._append_detailed_log_row(level, category, message, objects=issue.objects, style=style)
+
+    def log_success(self, category: str, message: str, objects: Optional[List[str]] = None) -> None:
+        self.log("INFO", category, message, objects=objects, style="success")
 
     def log_summary(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
@@ -710,7 +803,11 @@ class HighPolyReviewTool:
         self.result_items = []
         self.summary_items = []
         self.result_index_to_objects = {}
-        cmds.textScrollList(self.ui["results_list"], e=True, removeAll=True)
+        self.result_control_to_objects = {}
+        rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
+        for row in rows:
+            if cmds.control(row, exists=True):
+                cmds.deleteUI(row)
         if "summary_results_list" in self.ui:
             cmds.textScrollList(self.ui["summary_results_list"], e=True, removeAll=True)
         self.refresh_summary()
@@ -773,12 +870,8 @@ class HighPolyReviewTool:
         self.log_summary("INFO", "Manual", f"{check_key} défini manuellement à {status}")
         self.refresh_checklist_ui()
 
-    def on_result_selected(self) -> None:
-        selected = cmds.textScrollList(self.ui["results_list"], q=True, selectIndexedItem=True) or []
-        if not selected:
-            return
-        idx = selected[0]
-        targets = [o for o in self.result_index_to_objects.get(idx, []) if cmds.objExists(o)]
+    def on_result_selected_from_control(self, control_name: str) -> None:
+        targets = [o for o in self.result_control_to_objects.get(control_name, []) if cmds.objExists(o)]
         if targets:
             cmds.select(targets, replace=True)
 
