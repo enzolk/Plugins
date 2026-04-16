@@ -4013,12 +4013,18 @@ else
                 continue
             shape = shapes[0]
             sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
-            fcount = int(cmds.polyEvaluate(shape, face=True) or 0)
+            fcount = int(cmds.polyEvaluate(m, face=True) or 0)
             missing = fcount
             colored_faces = 0
+            unqueryable_faces = 0
             distinct_colors: Set[Tuple[float, float, float]] = set()
             for face_idx in range(fcount):
-                rgb = cmds.polyColorPerVertex(f"{shape}.f[{face_idx}]", query=True, rgb=True) or []
+                face_component = f"{m}.f[{face_idx}]"
+                try:
+                    rgb = cmds.polyColorPerVertex(face_component, query=True, rgb=True) or []
+                except RuntimeError:
+                    unqueryable_faces += 1
+                    rgb = []
                 if not rgb:
                     continue
                 colored_faces += 1
@@ -4040,6 +4046,8 @@ else
             self.log("INFO", "VertexColorMesh", f"Faces total = {fcount}")
             self.log("INFO", "VertexColorMesh", f"Faces avec vertex color = {colored_faces}")
             self.log("INFO", "VertexColorMesh", f"Faces sans vertex color = {missing}")
+            if unqueryable_faces:
+                self.log("WARNING", "VertexColorMesh", f"{unqueryable_faces} faces could not be queried on {m}")
             self.log("INFO", "VertexColorMesh", f"Groupes de vertex colors distincts = {len(distinct_colors)}")
             if not has_color_set:
                 self.log("FAIL", "VertexColorMesh", "Aucun color set trouvé.")
