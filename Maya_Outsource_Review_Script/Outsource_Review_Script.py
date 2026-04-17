@@ -666,7 +666,6 @@ class HighPolyReviewTool:
         self.ui["results_scroll"] = cmds.scrollLayout(
             childResizable=True,
             height=260,
-            verticalScrollBarThickness=16,
         )
         self.ui["results_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         cmds.setParent("..")
@@ -916,13 +915,6 @@ class HighPolyReviewTool:
             command=lambda *_: self.on_result_selected_from_control(row_control),
         )
         cmds.setParent("..")
-        cmds.columnLayout(self.ui["results_column"], edit=True, adjustableColumn=True)
-        cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollAreaHeight=1)
-        cmds.refresh()
-        scroll_area_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, scrollAreaHeight=True) or 0
-        viewport_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, height=True) or 0
-        scroll_delta = max(int(scroll_area_height - viewport_height), 1)
-        cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("down", scroll_delta))
 
     def log(
         self,
