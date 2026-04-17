@@ -53,10 +53,6 @@ class HighPolyReviewTool:
         self.result_items: List[ReviewIssue] = []
         self.result_index_to_objects: Dict[int, List[str]] = {}
         self.result_control_to_objects: Dict[str, List[str]] = {}
-        self.result_row_controls: List[str] = []
-        self.summary_index_to_detail_controls: Dict[int, List[str]] = {}
-        self.summary_cycle_state: Dict[int, int] = {}
-        self.last_summary_detail_index: int = 0
 
         self.paths = {
             "root": "",
@@ -664,8 +660,6 @@ class HighPolyReviewTool:
         self.ui["summary_results_list"] = cmds.textScrollList(
             allowMultiSelection=False,
             height=120,
-            selectCommand=lambda *_: self.on_summary_selected(),
-            doubleClickCommand=lambda *_: self.on_summary_selected(),
         )
         cmds.separator(style="in")
         cmds.text(label="Detailed Logs", align="left")
@@ -903,6 +897,7 @@ class HighPolyReviewTool:
             "label": display,
             "align": "left",
             "wordWrap": True,
+            "height": 24,
         }
         if row_color:
             text_kwargs["backgroundColor"] = row_color
@@ -920,25 +915,6 @@ class HighPolyReviewTool:
             command=lambda *_: self.on_result_selected_from_control(row_control),
         )
         cmds.setParent("..")
-        self.result_row_controls.append(row_control)
-
-    def _capture_new_detail_controls_since(self, start_index: int) -> List[str]:
-        if start_index < 0:
-            start_index = 0
-        return self.result_row_controls[start_index:]
-
-    def _scroll_to_detailed_control(self, control_name: str) -> None:
-        if "results_scroll" not in self.ui or not cmds.control(control_name, exists=True):
-            return
-
-        try:
-            _, y_pos = cmds.control(control_name, q=True, position=True)
-            control_height = cmds.control(control_name, q=True, height=True)
-            visible_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, height=True)
-            target_y = max(0, int(y_pos - max(0, (visible_height - control_height) * 0.5)))
-            cmds.scrollLayout(self.ui["results_scroll"], e=True, scrollAreaValue=(0, target_y))
-        except (RuntimeError, TypeError):
-            return
 
     def log(
         self,
@@ -971,10 +947,6 @@ class HighPolyReviewTool:
         self.summary_items = []
         self.result_index_to_objects = {}
         self.result_control_to_objects = {}
-        self.result_row_controls = []
-        self.summary_index_to_detail_controls = {}
-        self.summary_cycle_state = {}
-        self.last_summary_detail_index = 0
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
             if cmds.control(row, exists=True):
@@ -1027,16 +999,9 @@ class HighPolyReviewTool:
         reason: str,
         objects: Optional[List[str]] = None,
     ) -> None:
-        start_index = self.last_summary_detail_index
-        detail_controls = self._capture_new_detail_controls_since(start_index)
-        self.last_summary_detail_index = len(self.result_row_controls)
-
         status = "OK" if level == "INFO" else "FAIL"
         self.set_check_status(check_key, status)
         self.log_summary(level, short_title, reason, objects)
-        summary_index = len(self.summary_items)
-        self.summary_index_to_detail_controls[summary_index] = detail_controls
-        self.summary_cycle_state[summary_index] = 0
 
     def on_manual_check_toggle(self, check_key: str) -> None:
         ui_key = self.check_ui_map.get(check_key)
@@ -1052,27 +1017,6 @@ class HighPolyReviewTool:
         targets = [o for o in self.result_control_to_objects.get(control_name, []) if cmds.objExists(o)]
         if targets:
             cmds.select(targets, replace=True)
-
-    def on_summary_selected(self) -> None:
-        if "summary_results_list" not in self.ui:
-            return
-        selected = cmds.textScrollList(self.ui["summary_results_list"], q=True, selectIndexedItem=True) or []
-        if not selected:
-            return
-
-        summary_index = int(selected[0])
-        detail_controls = [
-            control
-            for control in self.summary_index_to_detail_controls.get(summary_index, [])
-            if cmds.control(control, exists=True)
-        ]
-        if not detail_controls:
-            return
-
-        current_cycle = self.summary_cycle_state.get(summary_index, 0)
-        target_control = detail_controls[current_cycle % len(detail_controls)]
-        self._scroll_to_detailed_control(target_control)
-        self.summary_cycle_state[summary_index] = (current_cycle + 1) % len(detail_controls)
 
     def on_manual_design_toggle(self) -> None:
         checked = cmds.checkBox(self.ui["check_design"], q=True, value=True)
