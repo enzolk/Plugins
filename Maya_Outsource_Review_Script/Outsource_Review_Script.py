@@ -1289,7 +1289,10 @@ class HighPolyReviewTool:
 
     def _populate_root_option_menu(self, root_key: str) -> None:
         menu = self.ui[f"{root_key}_root_menu"]
-        items = self.detected_roots[root_key]
+        items = [n for n in self.detected_roots[root_key] if cmds.objExists(n)]
+        preferred_group = self._preferred_group_root_for_detected(root_key)
+        items = self._inject_preferred_root(items, preferred_group)
+        self.detected_roots[root_key] = items
         self._clear_option_menu(menu)
 
         if not items:
@@ -1339,6 +1342,51 @@ class HighPolyReviewTool:
             return sorted(roots, key=lambda x: self._candidate_root_score(x), reverse=True)
         return []
 
+    def _preferred_group_root_for_source(self, source_key: str) -> Optional[str]:
+        preferred_by_source = {
+            "high_ma": "High_MA_GRP",
+            "high_fbx": "High_FBX_GRP",
+            "placeholder_ma": "Placeholder_GRP",
+            "low_fbx": "Low_FBX_GRP",
+            "bake_high": "Bake_MA_GRP",
+            "bake_low": "Bake_MA_GRP",
+            "final_ma": "Final_Asset_MA_GRP",
+            "final_fbx": "Final_Asset_FBX_GRP",
+        }
+        return self._resolve_existing_group_node(preferred_by_source.get(source_key, ""))
+
+    def _preferred_group_root_for_detected(self, root_key: str) -> Optional[str]:
+        source_by_root_key = {
+            "high": "high_ma",
+            "placeholder": "placeholder_ma",
+            "low": "low_fbx",
+            "bake_high": "bake_high",
+            "bake_low": "bake_low",
+            "final_asset_ma": "final_ma",
+            "final_asset_fbx": "final_fbx",
+        }
+        source_key = source_by_root_key.get(root_key, "")
+        if not source_key:
+            return None
+        return self._preferred_group_root_for_source(source_key)
+
+    def _resolve_existing_group_node(self, group_name: str) -> Optional[str]:
+        if not group_name:
+            return None
+        if not cmds.objExists(group_name):
+            return None
+        long_names = cmds.ls(group_name, long=True, type="transform") or []
+        return long_names[0] if long_names else group_name
+
+    def _inject_preferred_root(self, values: List[str], preferred: Optional[str]) -> List[str]:
+        ordered: List[str] = []
+        if preferred and cmds.objExists(preferred):
+            ordered.append(preferred)
+        for node in values:
+            if node and cmds.objExists(node) and node not in ordered:
+                ordered.append(node)
+        return ordered
+
     def refresh_manual_root_menus(self) -> None:
         for menu_key, source_key in self.manual_root_menu_sources.items():
             menu = self.ui.get(menu_key)
@@ -1347,10 +1395,8 @@ class HighPolyReviewTool:
             current = self.get_manual_selected_root(menu_key)
             overrides = [n for n in self.manual_root_overrides.get(menu_key, []) if cmds.objExists(n)]
             detected = [n for n in self._manual_root_candidates(source_key) if cmds.objExists(n)]
-            values: List[str] = []
-            for node in overrides + detected:
-                if node not in values:
-                    values.append(node)
+            preferred_group = self._preferred_group_root_for_source(source_key)
+            values = self._inject_preferred_root(overrides + detected, preferred_group)
             self.manual_root_overrides[menu_key] = overrides
             self.manual_root_menu_values[menu_key] = values
             self._clear_option_menu(menu)
