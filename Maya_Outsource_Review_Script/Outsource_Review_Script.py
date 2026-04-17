@@ -1818,9 +1818,98 @@ class HighPolyReviewTool:
     def _normalized_mesh_leaf_key(self, mesh_transform: str) -> str:
         short_name = self._short_name(mesh_transform)
         leaf = self._strip_namespaces_from_name(short_name).lower().strip()
-        leaf = re.sub(r"[\s_]+", "_", leaf)
-        leaf = re.sub(r"_high$", "", leaf)
+        leaf = re.sub(r"[\s_\-]+", "_", leaf)
+        leaf = re.sub(r"(_high|_low|_placeholder)$", "", leaf)
         return leaf.strip("_")
+
+    def _build_mesh_match_pairs(
+        self,
+        source_meshes_a: List[str],
+        source_meshes_b: List[str],
+        label_a: str,
+        label_b: str,
+    ) -> Dict[str, object]:
+        grouped_a: Dict[str, List[str]] = {}
+        grouped_b: Dict[str, List[str]] = {}
+        for mesh in source_meshes_a:
+            key = self._normalized_mesh_leaf_key(mesh)
+            grouped_a.setdefault(key, []).append(mesh)
+            self.log("INFO", "MeshMatch", f"Matching key {label_a} = {key} | {mesh}")
+        for mesh in source_meshes_b:
+            key = self._normalized_mesh_leaf_key(mesh)
+            grouped_b.setdefault(key, []).append(mesh)
+            self.log("INFO", "MeshMatch", f"Matching key {label_b} = {key} | {mesh}")
+
+        all_keys = sorted(set(grouped_a.keys()) | set(grouped_b.keys()))
+        pairs: List[Tuple[str, str]] = []
+        unmatched_a: List[str] = []
+        unmatched_b: List[str] = []
+        ambiguous_keys: List[str] = []
+
+        for key in all_keys:
+            a_candidates = grouped_a.get(key, [])
+            b_candidates = grouped_b.get(key, [])
+            if len(a_candidates) == 1 and len(b_candidates) == 1:
+                pairs.append((a_candidates[0], b_candidates[0]))
+                continue
+
+            if len(a_candidates) > 1 or len(b_candidates) > 1:
+                ambiguous_keys.append(key)
+                self.log(
+                    "WARNING",
+                    "MeshMatch",
+                    f"Ambiguous leaf key: {key} ({label_a}={len(a_candidates)}, {label_b}={len(b_candidates)}).",
+                )
+
+            remaining_b: Set[str] = set(b_candidates)
+            for mesh_a in a_candidates:
+                a_data = self._mesh_data_signature(mesh_a)
+                a_dims, a_center = self._mesh_bbox_dims_and_center_world(mesh_a)
+                scored: List[Tuple[Tuple[float, float, float, float], str]] = []
+                for mesh_b in remaining_b:
+                    b_data = self._mesh_data_signature(mesh_b)
+                    b_dims, b_center = self._mesh_bbox_dims_and_center_world(mesh_b)
+                    topo_delta = float(
+                        abs(int(a_data["v"]) - int(b_data["v"])) +
+                        abs(int(a_data["e"]) - int(b_data["e"])) +
+                        abs(int(a_data["f"]) - int(b_data["f"]))
+                    )
+                    bbox_delta = tuple(abs(a_dims[i] - b_dims[i]) for i in range(3))
+                    center_delta = tuple(abs(a_center[i] - b_center[i]) for i in range(3))
+                    score = (
+                        topo_delta,
+                        sum(bbox_delta) + sum(center_delta),
+                        max(bbox_delta),
+                        max(center_delta),
+                    )
+                    scored.append((score, mesh_b))
+
+                if not scored:
+                    unmatched_a.append(mesh_a)
+                    continue
+
+                scored.sort(key=lambda item: item[0])
+                best_score, best_mesh_b = scored[0]
+                if len(scored) > 1 and scored[1][0] == best_score:
+                    self.log("WARNING", "MeshMatch", f"Ambiguous mesh match for key: {key}. Unable to match meshes despite similar leaf names.")
+                    unmatched_a.append(mesh_a)
+                    continue
+
+                if best_score[0] == 0.0:
+                    self.log("INFO", "MeshMatch", f"Fallback by bbox/topology used for: {key} ({mesh_a} -> {best_mesh_b})")
+                else:
+                    self.log("WARNING", "MeshMatch", f"Fallback pairing with topology delta for key '{key}': {mesh_a} -> {best_mesh_b}")
+                pairs.append((mesh_a, best_mesh_b))
+                remaining_b.remove(best_mesh_b)
+
+            unmatched_b.extend(sorted(remaining_b))
+
+        return {
+            "pairs": pairs,
+            "unmatched_a": unmatched_a,
+            "unmatched_b": unmatched_b,
+            "ambiguous_keys": sorted(set(ambiguous_keys)),
+        }
 
     def _mesh_data_signature(self, mesh_transform: str, root: Optional[str] = None) -> Dict[str, object]:
         shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
@@ -2964,37 +3053,37 @@ class HighPolyReviewTool:
         self.log_summary("INFO", "Load Everything", f"Loaded/reused {loaded_or_reused}, parented nodes {total_parented}")
 
     def _compare_mesh_sets(self, left_meshes: List[str], right_meshes: List[str], left_label: str, right_label: str) -> bool:
-        left_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in left_meshes}
-        right_by_key = {self._normalized_relative_mesh_key(m): self._mesh_data_signature(m) for m in right_meshes}
-        left_keys = set(left_by_key.keys())
-        right_keys = set(right_by_key.keys())
-        missing_in_right = sorted(left_keys - right_keys)
-        missing_in_left = sorted(right_keys - left_keys)
+        match_data = self._build_mesh_match_pairs(left_meshes, right_meshes, left_label, right_label)
+        pairs = match_data["pairs"]
+        unmatched_left = match_data["unmatched_a"]
+        unmatched_right = match_data["unmatched_b"]
         topo_mismatch = []
         uv_mismatch = []
 
-        for key in sorted(left_keys & right_keys):
-            left_data = left_by_key[key]
-            right_data = right_by_key[key]
+        for left_mesh, right_mesh in pairs:
+            left_data = self._mesh_data_signature(left_mesh)
+            right_data = self._mesh_data_signature(right_mesh)
             if (left_data["v"], left_data["e"], left_data["f"]) != (right_data["v"], right_data["e"], right_data["f"]):
-                topo_mismatch.append(key)
+                topo_mismatch.append(left_mesh)
             if left_data["uv_total"] != right_data["uv_total"] or left_data["uv_sets"] != right_data["uv_sets"]:
-                uv_mismatch.append(key)
+                uv_mismatch.append(left_mesh)
 
-        if not missing_in_right and not missing_in_left and not topo_mismatch and not uv_mismatch:
+        if not unmatched_left and not unmatched_right and not topo_mismatch and not uv_mismatch:
             self.log("INFO", "Compare", f"Résultat : OK ({left_label} et {right_label} cohérents).")
             return True
 
-        mismatch_count = len(missing_in_right) + len(missing_in_left) + len(topo_mismatch) + len(uv_mismatch)
+        mismatch_count = len(unmatched_left) + len(unmatched_right) + len(topo_mismatch) + len(uv_mismatch)
         self.log("WARNING", "Compare", f"Résultat : mismatch détecté ({mismatch_count} catégorie(s) en écart).")
-        if missing_in_right:
-            self.log("FAIL", "Compare", f"Présents dans {left_label} mais absents de {right_label}: {len(missing_in_right)}", [left_by_key[k]["path"] for k in missing_in_right][:150])
-        if missing_in_left:
-            self.log("FAIL", "Compare", f"Présents dans {right_label} mais absents de {left_label}: {len(missing_in_left)}", [right_by_key[k]["path"] for k in missing_in_left][:150])
+        if unmatched_left:
+            self.log("FAIL", "Compare", f"Présents dans {left_label} mais absents de {right_label}: {len(unmatched_left)}", unmatched_left[:150])
+            self.log("WARNING", "Compare", "Mesh presence mismatch likely caused by hierarchy/key mismatch.")
+        if unmatched_right:
+            self.log("FAIL", "Compare", f"Présents dans {right_label} mais absents de {left_label}: {len(unmatched_right)}", unmatched_right[:150])
+            self.log("WARNING", "Compare", "Unable to match meshes despite similar leaf names.")
         if topo_mismatch:
-            self.log("FAIL", "Compare", f"Topologie différente: {len(topo_mismatch)}", [left_by_key[k]["path"] for k in topo_mismatch][:150])
+            self.log("FAIL", "Compare", f"Topologie différente: {len(topo_mismatch)}", topo_mismatch[:150])
         if uv_mismatch:
-            self.log("FAIL", "Compare", f"UV différentes: {len(uv_mismatch)}", [left_by_key[k]["path"] for k in uv_mismatch][:150])
+            self.log("FAIL", "Compare", f"UV différentes: {len(uv_mismatch)}", uv_mismatch[:150])
         return False
 
     def compare_ma_vs_fbx(self) -> None:
@@ -3018,17 +3107,26 @@ class HighPolyReviewTool:
             self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", "compare aborted: one root has no meshes")
             return
 
-        ma_by_key = {self._normalized_relative_mesh_key(m, root=ma_root): self._mesh_data_signature(m) for m in ma_meshes}
-        fbx_by_key = {self._normalized_relative_mesh_key(m, root=fbx_root): self._mesh_data_signature(m) for m in fbx_meshes}
-        all_keys = sorted(set(ma_by_key.keys()) | set(fbx_by_key.keys()))
-        self.log("INFO", "Compare", f"Paires comparées : {len(all_keys)}")
+        match_data = self._build_mesh_match_pairs(ma_meshes, fbx_meshes, "High.ma", "High.fbx")
+        matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
+        unmatched_ma: List[str] = match_data["unmatched_a"]
+        unmatched_fbx: List[str] = match_data["unmatched_b"]
+        self.log("INFO", "Compare", f"Paires comparées : {len(matched_pairs) + len(unmatched_ma) + len(unmatched_fbx)}")
+
+        pair_rows: List[Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]]]] = []
+        for ma_mesh, fbx_mesh in matched_pairs:
+            pair_rows.append((self._mesh_data_signature(ma_mesh, root=ma_root), self._mesh_data_signature(fbx_mesh, root=fbx_root)))
+        for ma_mesh in unmatched_ma:
+            pair_rows.append((self._mesh_data_signature(ma_mesh, root=ma_root), None))
+        for fbx_mesh in unmatched_fbx:
+            pair_rows.append((None, self._mesh_data_signature(fbx_mesh, root=fbx_root)))
 
         pair_fail_count = 0
-        for key in all_keys:
-            ma_data = ma_by_key.get(key)
-            fbx_data = fbx_by_key.get(key)
-            ma_name = ma_data["path"] if ma_data else f"{self.context['ma_namespace']}:{key}"
-            fbx_name = fbx_data["path"] if fbx_data else f"{self.context['fbx_namespace']}:{key}"
+        for ma_data, fbx_data in pair_rows:
+            ma_name = ma_data["path"] if ma_data else "UNMATCHED High.ma mesh"
+            fbx_name = fbx_data["path"] if fbx_data else "UNMATCHED High.fbx mesh"
+            ma_key = self._normalized_mesh_leaf_key(ma_data["path"]) if ma_data else "n/a"
+            fbx_key = self._normalized_mesh_leaf_key(fbx_data["path"]) if fbx_data else "n/a"
 
             presence_ok = bool(ma_data and fbx_data)
             topo_ok = bool(
@@ -3057,7 +3155,11 @@ class HighPolyReviewTool:
 
             self.log("INFO", "ComparePair", f"MA Mesh = {ma_name}")
             self.log("INFO", "ComparePair", f"FBX Mesh = {fbx_name}")
+            self.log("INFO", "ComparePair", f"Matching key A = {ma_key}")
+            self.log("INFO", "ComparePair", f"Matching key B = {fbx_key}")
             self.log("INFO" if presence_ok else "FAIL", "ComparePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+            if not presence_ok:
+                self.log("WARNING", "ComparePair", "Mesh presence mismatch likely caused by hierarchy/key mismatch.")
             self.log("INFO" if topo_ok else "FAIL", "ComparePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
             self.log("INFO" if uv_ok else "FAIL", "ComparePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
             self.log("INFO", "ComparePair", f"Bounding Box MA = {self._fmt_vec(bbox_dims_ma, precision=2)}")
@@ -3072,7 +3174,7 @@ class HighPolyReviewTool:
         if ok:
             self.log_check_result("ma_fbx_compared", "INFO", "Compare High vs FBX", "aggregated topology, UVs and bbox match")
         else:
-            self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", f"{pair_fail_count}/{len(all_keys)} mesh pairs mismatched")
+            self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", f"{pair_fail_count}/{len(pair_rows)} mesh pairs mismatched")
 
     def _unload_namespace_references(self, namespace: str) -> bool:
         if not cmds.namespace(exists=namespace):
@@ -3116,75 +3218,27 @@ class HighPolyReviewTool:
         self.log("INFO", "CompareBake", f"Root High.ma sélectionné : {ma_root}", [ma_root])
         self.log("INFO", "CompareBake", f"Root Bake sélectionné : {bake_root}", [bake_root])
         self.log("INFO", "CompareBake", f"Meshes analysés High.ma / Bake High : {len(ma_meshes)} / {len(bake_meshes)}")
-        ma_namespace = self.context["ma_namespace"]
-        bake_namespace = self.context["bake_ma_namespace"]
+        match_data = self._build_mesh_match_pairs(ma_meshes, bake_meshes, "High.ma", "Bake High")
+        matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
+        unmatched_ma: List[str] = match_data["unmatched_a"]
+        unmatched_bake: List[str] = match_data["unmatched_b"]
 
-        ma_by_leaf: Dict[str, List[Dict[str, object]]] = {}
-        for mesh_transform in ma_meshes:
-            leaf_key = self._normalized_mesh_leaf_key(mesh_transform)
-            ma_by_leaf.setdefault(leaf_key, []).append(self._mesh_data_signature(mesh_transform, root=ma_root))
-
-        bake_by_leaf: Dict[str, List[Dict[str, object]]] = {}
-        for mesh_transform in bake_meshes:
-            leaf_key = self._normalized_mesh_leaf_key(mesh_transform)
-            bake_by_leaf.setdefault(leaf_key, []).append(self._mesh_data_signature(mesh_transform, root=bake_root))
-
-        all_leaf_keys = sorted(set(ma_by_leaf.keys()) | set(bake_by_leaf.keys()))
-        pairings: List[Tuple[str, Optional[Dict[str, object]], Optional[Dict[str, object]]]] = []
-        for leaf_key in all_leaf_keys:
-            ma_candidates = ma_by_leaf.get(leaf_key, [])
-            bake_candidates = bake_by_leaf.get(leaf_key, [])
-
-            if len(ma_candidates) == 1 and len(bake_candidates) == 1:
-                pairings.append((leaf_key, ma_candidates[0], bake_candidates[0]))
-                continue
-
-            if len(ma_candidates) > 1 or len(bake_candidates) > 1:
-                self.log(
-                    "WARNING",
-                    "CompareBake",
-                    f"Ambiguous leaf key '{leaf_key}' (High.ma={len(ma_candidates)}, Bake={len(bake_candidates)}), fallback topo+bbox matching.",
-                )
-
-            unmatched_bake = set(range(len(bake_candidates)))
-            for ma_data in ma_candidates:
-                selected_index: Optional[int] = None
-                selected_score: Optional[Tuple[float, float, float]] = None
-                for bake_index in sorted(unmatched_bake):
-                    bake_data = bake_candidates[bake_index]
-                    topo_match = (ma_data["v"], ma_data["e"], ma_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"])
-                    if not topo_match:
-                        continue
-                    ma_dims, ma_center = self._mesh_bbox_dims_and_center_world(ma_data["path"])
-                    bake_dims, bake_center = self._mesh_bbox_dims_and_center_world(bake_data["path"])
-                    bbox_delta = tuple(abs(ma_dims[i] - bake_dims[i]) for i in range(3))
-                    center_delta = tuple(abs(ma_center[i] - bake_center[i]) for i in range(3))
-                    score = (sum(bbox_delta) + sum(center_delta), max(bbox_delta), max(center_delta))
-                    if selected_score is None or score < selected_score:
-                        selected_score = score
-                        selected_index = bake_index
-
-                if selected_index is None and unmatched_bake:
-                    selected_index = sorted(unmatched_bake)[0]
-                    self.log("WARNING", "CompareBake", f"Fallback pairing without topo for leaf key '{leaf_key}'.")
-
-                if selected_index is not None:
-                    pairings.append((leaf_key, ma_data, bake_candidates[selected_index]))
-                    unmatched_bake.remove(selected_index)
-                else:
-                    pairings.append((leaf_key, ma_data, None))
-
-            for bake_index in sorted(unmatched_bake):
-                pairings.append((leaf_key, None, bake_candidates[bake_index]))
+        pairings: List[Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]]]] = []
+        for ma_mesh, bake_mesh in matched_pairs:
+            pairings.append((self._mesh_data_signature(ma_mesh, root=ma_root), self._mesh_data_signature(bake_mesh, root=bake_root)))
+        for ma_mesh in unmatched_ma:
+            pairings.append((self._mesh_data_signature(ma_mesh, root=ma_root), None))
+        for bake_mesh in unmatched_bake:
+            pairings.append((None, self._mesh_data_signature(bake_mesh, root=bake_root)))
 
         self.log("INFO", "CompareBake", f"Paires comparées : {len(pairings)}")
 
         pair_fail_count = 0
-        for leaf_key, ma_data, bake_data in pairings:
-            ma_name = ma_data["path"] if ma_data else f"{ma_namespace}:{leaf_key}"
-            bake_name = bake_data["path"] if bake_data else f"{bake_namespace}:{leaf_key}"
-            high_key = self._normalized_mesh_leaf_key(ma_data["path"]) if ma_data else leaf_key
-            bake_key = self._normalized_mesh_leaf_key(bake_data["path"]) if bake_data else leaf_key
+        for ma_data, bake_data in pairings:
+            ma_name = ma_data["path"] if ma_data else "UNMATCHED High.ma mesh"
+            bake_name = bake_data["path"] if bake_data else "UNMATCHED Bake High mesh"
+            high_key = self._normalized_mesh_leaf_key(ma_data["path"]) if ma_data else "n/a"
+            bake_key = self._normalized_mesh_leaf_key(bake_data["path"]) if bake_data else "n/a"
 
             presence_ok = bool(ma_data and bake_data)
             topo_ok = bool(
@@ -3303,11 +3357,13 @@ class HighPolyReviewTool:
             )
 
     def _bake_pair_key(self, mesh: str, root: str, expected_suffix: str) -> Tuple[str, bool]:
-        key = self._normalized_relative_mesh_key(mesh, root=root)
-        segments = [self._strip_namespaces_from_name(seg).lower() for seg in key.split("/") if seg]
-        has_suffix = bool(segments and segments[-1].endswith(expected_suffix))
-        normalized_segments = [re.sub(r"_(high|low)$", "", seg) for seg in segments]
-        return "/".join(normalized_segments), has_suffix
+        del root
+        key = self._normalized_mesh_leaf_key(mesh)
+        suffix = expected_suffix.lower()
+        has_suffix = key.endswith(suffix)
+        if has_suffix:
+            key = key[: -len(suffix)]
+        return key.strip("_"), has_suffix
 
     def check_bake_pairing(self) -> None:
         self._log_step_header(2, "Naming & Pairing", category="BakePairing")
@@ -4706,17 +4762,25 @@ else
             self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", "compare aborted: one root has no meshes")
             return
 
-        low_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=low_root)): self._mesh_data_signature(m) for m in low_meshes}
-        bake_by = {re.sub(r"_low$", "", self._normalized_relative_mesh_key(m, root=bake_root)): self._mesh_data_signature(m) for m in bake_meshes}
-        all_keys = sorted(set(low_by.keys()) | set(bake_by.keys()))
-        self.log("INFO", "CompareLowBake", f"Paires comparées : {len(all_keys)}")
+        match_data = self._build_mesh_match_pairs(low_meshes, bake_meshes, "Low.fbx", "Bake Low")
+        matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
+        unmatched_low: List[str] = match_data["unmatched_a"]
+        unmatched_bake: List[str] = match_data["unmatched_b"]
+        pair_rows: List[Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]]]] = []
+        for low_mesh, bake_mesh in matched_pairs:
+            pair_rows.append((self._mesh_data_signature(low_mesh, root=low_root), self._mesh_data_signature(bake_mesh, root=bake_root)))
+        for low_mesh in unmatched_low:
+            pair_rows.append((self._mesh_data_signature(low_mesh, root=low_root), None))
+        for bake_mesh in unmatched_bake:
+            pair_rows.append((None, self._mesh_data_signature(bake_mesh, root=bake_root)))
+        self.log("INFO", "CompareLowBake", f"Paires comparées : {len(pair_rows)}")
 
         pair_fail_count = 0
-        for key in all_keys:
-            low_data = low_by.get(key)
-            bake_data = bake_by.get(key)
-            low_name = low_data["path"] if low_data else f"{self.context['low_fbx_namespace']}:{key}"
-            bake_name = bake_data["path"] if bake_data else f"{self.context['bake_ma_namespace']}:{key}"
+        for low_data, bake_data in pair_rows:
+            low_name = low_data["path"] if low_data else "UNMATCHED Low.fbx mesh"
+            bake_name = bake_data["path"] if bake_data else "UNMATCHED Bake Low mesh"
+            low_key = self._normalized_mesh_leaf_key(low_data["path"]) if low_data else "n/a"
+            bake_key = self._normalized_mesh_leaf_key(bake_data["path"]) if bake_data else "n/a"
 
             presence_ok = bool(low_data and bake_data)
             topo_ok = bool(low_data and bake_data and (low_data["v"], low_data["e"], low_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"]))
@@ -4738,7 +4802,11 @@ else
 
             self.log("INFO", "CompareLowBakePair", f"Low = {low_name}")
             self.log("INFO", "CompareLowBakePair", f"Bake Low = {bake_name}")
+            self.log("INFO", "CompareLowBakePair", f"Matching key A = {low_key}")
+            self.log("INFO", "CompareLowBakePair", f"Matching key B = {bake_key}")
             self.log("INFO" if presence_ok else "FAIL", "CompareLowBakePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+            if not presence_ok:
+                self.log("WARNING", "CompareLowBakePair", "Mesh presence mismatch likely caused by hierarchy/key mismatch.")
             self.log("INFO" if topo_ok else "FAIL", "CompareLowBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
             self.log("INFO" if uv_ok else "FAIL", "CompareLowBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
             self.log("INFO", "CompareLowBakePair", f"Bounding Box Low = {self._fmt_vec(bbox_dims_low, precision=2)}")
@@ -4753,7 +4821,7 @@ else
         if ok:
             self.log_check_result("low_bake_compared", "INFO", "Compare Low vs Bake", "aggregated topology, UVs and bbox match")
         else:
-            self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", f"{pair_fail_count}/{len(all_keys)} mesh pairs mismatched")
+            self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", f"{pair_fail_count}/{len(pair_rows)} mesh pairs mismatched")
 
     def compare_low_vs_final_asset(self) -> None:
         self._log_step_header(7, "Compare Low vs Final Asset", category="LowCompareFinal")
