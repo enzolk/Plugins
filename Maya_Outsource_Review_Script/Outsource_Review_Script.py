@@ -116,6 +116,7 @@ class HighPolyReviewTool:
         self.review_subgroups_by_file = {
             "high_ma": "High_MA_GRP",
             "high_fbx": "High_FBX_GRP",
+            "placeholder": "Placeholder_GRP",
             "low_fbx": "Low_FBX_GRP",
             "bake_ma": "Bake_MA_GRP",
             "final_scene_ma": "Final_Asset_MA_GRP",
@@ -202,6 +203,7 @@ class HighPolyReviewTool:
         self.review_group_contents = {
             "high_ma": [],
             "high_fbx": [],
+            "placeholder": [],
             "low_fbx": [],
             "bake_ma": [],
             "final_scene_ma": [],
@@ -605,7 +607,7 @@ class HighPolyReviewTool:
 
     def _build_tab_visibility_controls(self, context_key: str) -> None:
         groups = {
-            "high": [("High_MA_GRP", "High MA"), ("High_FBX_GRP", "High FBX")],
+            "high": [("High_MA_GRP", "High MA"), ("High_FBX_GRP", "High FBX"), ("Placeholder_GRP", "Placeholder")],
             "low": [("Low_FBX_GRP", "Low FBX"), ("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
             "bake": [("Bake_MA_GRP", "Bake MA")],
             "final_asset": [("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
@@ -754,6 +756,48 @@ class HighPolyReviewTool:
             return
         current = bool(cmds.getAttr(group_name + ".visibility"))
         self._set_group_visibility(group_name, not current)
+
+    def _organize_high_ma_loaded_roots(self) -> None:
+        namespace = self.context["ma_namespace"]
+        placeholder_group_name = self.review_subgroups_by_file.get("placeholder", "Placeholder_GRP")
+        placeholder_group_exists = cmds.objExists(placeholder_group_name)
+        high_group = self._ensure_review_subgroup("high_ma")
+        placeholder_group = self._ensure_review_subgroup("placeholder")
+        if not placeholder_group_exists and cmds.objExists(placeholder_group):
+            self.log("INFO", "Load", f"Placeholder group created: {placeholder_group}")
+
+        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
+        self.detected_roots["placeholder"] = self._find_root_candidates("placeholder", namespace=namespace)
+        self._log_root_detection("high", "High")
+        self._log_root_detection("placeholder", "Placeholder")
+
+        high_parented = 0
+        for root in self.detected_roots.get("high", []):
+            if not cmds.objExists(root):
+                continue
+            try:
+                cmds.parent(root, high_group)
+                high_parented += 1
+            except RuntimeError:
+                continue
+
+        placeholder_parented = 0
+        for root in self.detected_roots.get("placeholder", []):
+            if not cmds.objExists(root):
+                continue
+            try:
+                cmds.parent(root, placeholder_group)
+                placeholder_parented += 1
+            except RuntimeError:
+                continue
+
+        self.review_group_contents["high_ma"] = cmds.listRelatives(high_group, children=True, fullPath=True) or []
+        self.review_group_contents["placeholder"] = cmds.listRelatives(placeholder_group, children=True, fullPath=True) or []
+
+        if not self.detected_roots.get("placeholder", []):
+            self.log("INFO", "Load", "No placeholder root detected for High.ma")
+        self.log("INFO", "Load", f"{placeholder_parented} placeholder roots parented under {placeholder_group}")
+        self.log("INFO", "Load", f"{high_parented} high roots kept under {high_group}")
 
     def _scalar_from_maya_result(self, value: Any, default: float = 0.0) -> float:
         raw = value
@@ -2391,10 +2435,7 @@ class HighPolyReviewTool:
         self.log("INFO", "Load", f"High.ma référencé : {self._basename_from_path(path)}")
         self.log("INFO", "Load", f"Namespace utilisé : {namespace}")
         self.log("INFO", "Load", f"Meshes importés : {len(self.context['ma_meshes'])}")
-        self.detected_roots["high"] = self._find_root_candidates("high", namespace=namespace)
-        self.detected_roots["placeholder"] = self._find_root_candidates("placeholder", namespace=namespace)
-        self._log_root_detection("high", "High")
-        self._log_root_detection("placeholder", "Placeholder")
+        self._organize_high_ma_loaded_roots()
 
     def load_fbx_into_scene(self) -> None:
         path = self.paths.get("high_fbx", "")
@@ -2670,6 +2711,7 @@ class HighPolyReviewTool:
         self.review_group_contents = {
             "high_ma": [],
             "high_fbx": [],
+            "placeholder": [],
             "low_fbx": [],
             "bake_ma": [],
             "final_scene_ma": [],
@@ -2742,6 +2784,8 @@ class HighPolyReviewTool:
                 f"[{file_key}] top nodes parentés sous {subgroup}: {len(stored_nodes)} | "
                 f"{self._preview_list(stored_nodes, max_items=8)}",
             )
+            if file_key == "high_ma":
+                self._organize_high_ma_loaded_roots()
 
         self.load_all_final_asset_fbx_scenes()
 
