@@ -211,6 +211,8 @@ class HighPolyReviewTool:
             "final_asset_fbx": [],
         }
         self.summary_items: List[ReviewIssue] = []
+        self.detailed_log_controls: List[Dict[str, str]] = []
+        self.error_navigation_index: Dict[str, int] = {}
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
@@ -658,10 +660,13 @@ class HighPolyReviewTool:
         cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.text(label="Quick Summary", align="left")
-        self.ui["summary_results_list"] = cmds.textScrollList(
-            allowMultiSelection=False,
+        self.ui["summary_scroll"] = cmds.scrollLayout(
+            childResizable=True,
             height=120,
+            verticalScrollBarThickness=16,
         )
+        self.ui["summary_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        cmds.setParent("..")
         cmds.separator(style="in")
         cmds.text(label="Detailed Logs", align="left")
         self.ui["results_scroll"] = cmds.scrollLayout(
@@ -916,6 +921,14 @@ class HighPolyReviewTool:
             text_kwargs["enableBackground"] = False
         row_control = cmds.text(**text_kwargs)
         self.result_control_to_objects[row_control] = row_objects
+        self.detailed_log_controls.append(
+            {
+                "control": row_control,
+                "level": level,
+                "category": category,
+                "message": message,
+            }
+        )
 
         select_enabled = bool(row_objects)
         cmds.button(
@@ -967,22 +980,67 @@ class HighPolyReviewTool:
     def log_summary(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
         self.summary_items.append(issue)
-        if "summary_results_list" not in self.ui:
+        if "summary_column" not in self.ui:
             return
         prefix = {"INFO": "[INFO]", "WARNING": "[WARN]", "FAIL": "[FAIL]"}.get(level, "[INFO]")
-        cmds.textScrollList(self.ui["summary_results_list"], e=True, append=f"{prefix} {category}: {message}")
+        display_text = f"{prefix} {category}: {message}"
+
+        cmds.setParent(self.ui["summary_column"])
+        cmds.rowLayout(
+            numberOfColumns=2,
+            adjustableColumn=1,
+            columnAttach=[(1, "both", 0), (2, "both", 6)],
+        )
+        cmds.text(label=display_text, align="left")
+        if level == "FAIL":
+            cmds.button(
+                label="Go to Error",
+                height=20,
+                command=lambda *_: self.go_to_error(category),
+            )
+        else:
+            cmds.separator(style="none", width=1)
+        cmds.setParent("..")
+
+    def go_to_error(self, category: str) -> None:
+        matches = [
+            item
+            for item in self.detailed_log_controls
+            if item["category"] == category and item["level"] == "FAIL"
+        ]
+        if not matches:
+            return
+
+        idx = self.error_navigation_index.get(category, 0)
+        target = matches[idx % len(matches)]
+        self.error_navigation_index[category] = idx + 1
+        control = target["control"]
+
+        try:
+            cmds.scrollLayout(
+                self.ui["results_scroll"],
+                edit=True,
+                scrollToControl=control,
+            )
+        except RuntimeError:
+            pass
 
     def clear_results(self) -> None:
         self.result_items = []
         self.summary_items = []
         self.result_index_to_objects = {}
         self.result_control_to_objects = {}
+        self.detailed_log_controls = []
+        self.error_navigation_index = {}
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
             if cmds.control(row, exists=True):
                 cmds.deleteUI(row)
-        if "summary_results_list" in self.ui:
-            cmds.textScrollList(self.ui["summary_results_list"], e=True, removeAll=True)
+        if "summary_column" in self.ui:
+            summary_rows = cmds.columnLayout(self.ui["summary_column"], q=True, childArray=True) or []
+            for row in summary_rows:
+                if cmds.control(row, exists=True):
+                    cmds.deleteUI(row)
         self.refresh_summary()
 
     def refresh_summary(self) -> None:
