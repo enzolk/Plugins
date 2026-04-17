@@ -746,10 +746,28 @@ class HighPolyReviewTool:
         if not cmds.objExists(group_name):
             self.log("WARNING", "Visibility", f"Groupe introuvable: {group_name}")
             return
-        try:
-            cmds.setAttr(group_name + ".visibility", 1 if visible else 0)
-        except RuntimeError:
-            return
+        state = 1 if visible else 0
+        targets = [group_name]
+        descendants = cmds.listRelatives(group_name, allDescendents=True, fullPath=True, type="transform") or []
+        targets.extend(descendants)
+
+        updated_count = 0
+        for node in set(targets):
+            if not cmds.objExists(node):
+                continue
+            try:
+                cmds.setAttr(node + ".visibility", state)
+                updated_count += 1
+            except RuntimeError:
+                continue
+
+        child_count = max(0, updated_count - 1)
+        state_label = "visible" if visible else "hidden"
+        self.log(
+            "INFO",
+            "Visibility",
+            f"{group_name} and {child_count} child transforms set to {state_label}",
+        )
 
     def _toggle_group_visibility(self, group_name: str) -> None:
         if not cmds.objExists(group_name):
