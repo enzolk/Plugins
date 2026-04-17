@@ -35,6 +35,7 @@ PLACEHOLDER_TOKEN = "placeholder"
 LOW_UV_DISTORTION_THRESHOLD = 1.6
 LOW_MAP2_TARGET_TD = 20.48
 LOW_MAP2_TOLERANCE = 0.50
+PROGRESS_REFRESH_INTERVAL = 8
 
 
 @dataclass
@@ -213,6 +214,7 @@ class HighPolyReviewTool:
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
+        self._progress_active: bool = False
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -715,6 +717,35 @@ class HighPolyReviewTool:
 
     def _log_step_header(self, step_number: int, title: str, category: str = "Step") -> None:
         self.log("INFO", category, f"-- Step {step_number:02d}: {title} --")
+
+    def _progress_start(self, title: str, status: str, maximum: int) -> None:
+        max_value = max(1, int(maximum))
+        if cmds.progressWindow(query=True, exists=True):
+            try:
+                cmds.progressWindow(endProgress=True)
+            except RuntimeError:
+                pass
+        cmds.progressWindow(title=title, status=status, isInterruptable=False, minValue=0, maxValue=max_value, progress=0)
+        self._progress_active = True
+        cmds.refresh(force=True)
+
+    def _progress_step(self, value: int, status: Optional[str] = None, force_refresh: bool = False) -> None:
+        if not self._progress_active or not cmds.progressWindow(query=True, exists=True):
+            return
+        kwargs: Dict[str, Any] = {"edit": True, "progress": max(0, int(value))}
+        if status is not None:
+            kwargs["status"] = status
+        cmds.progressWindow(**kwargs)
+        if force_refresh or value % PROGRESS_REFRESH_INTERVAL == 0:
+            cmds.refresh(force=True)
+
+    def _progress_end(self) -> None:
+        if self._progress_active and cmds.progressWindow(query=True, exists=True):
+            try:
+                cmds.progressWindow(endProgress=True)
+            except RuntimeError:
+                pass
+        self._progress_active = False
 
     def _ensure_outsourcing_review_group(self) -> str:
         if not cmds.objExists("Outsourcing_Review"):
@@ -1289,7 +1320,9 @@ class HighPolyReviewTool:
 
     def _populate_root_option_menu(self, root_key: str) -> None:
         menu = self.ui[f"{root_key}_root_menu"]
-        items = self.detected_roots[root_key]
+        preferred = self._preferred_group_root_for_detected_key(root_key)
+        items = self._prioritize_root_candidate(self.detected_roots[root_key], preferred)
+        self.detected_roots[root_key] = items
         self._clear_option_menu(menu)
 
         if not items:
@@ -1316,6 +1349,48 @@ class HighPolyReviewTool:
             if f"{root_key}_root_menu" in self.ui:
                 self._populate_root_option_menu(root_key)
         self.refresh_manual_root_menus()
+
+    def _preferred_group_root_for_source(self, source_key: str) -> Optional[str]:
+        source_to_group = {
+            "high_ma": "high_ma",
+            "high_fbx": "high_fbx",
+            "placeholder_ma": "placeholder",
+            "low_fbx": "low_fbx",
+            "bake_high": "bake_ma",
+            "bake_low": "bake_ma",
+            "final_ma": "final_scene_ma",
+            "final_fbx": "final_asset_fbx",
+        }
+        group_key = source_to_group.get(source_key, "")
+        if not group_key:
+            return None
+        group = self.review_subgroups_by_file.get(group_key, "")
+        return group if group and cmds.objExists(group) else None
+
+    def _preferred_group_root_for_detected_key(self, root_key: str) -> Optional[str]:
+        detected_to_group = {
+            "high": "high_ma",
+            "placeholder": "placeholder",
+            "low": "low_fbx",
+            "bake_high": "bake_ma",
+            "bake_low": "bake_ma",
+            "final_asset_ma": "final_scene_ma",
+            "final_asset_fbx": "final_asset_fbx",
+        }
+        group_key = detected_to_group.get(root_key, "")
+        if not group_key:
+            return None
+        group = self.review_subgroups_by_file.get(group_key, "")
+        return group if group and cmds.objExists(group) else None
+
+    def _prioritize_root_candidate(self, candidates: List[str], preferred_root: Optional[str]) -> List[str]:
+        values: List[str] = []
+        if preferred_root and cmds.objExists(preferred_root):
+            values.append(preferred_root)
+        for node in candidates:
+            if cmds.objExists(node) and node not in values:
+                values.append(node)
+        return values
 
     def _manual_root_candidates(self, source_key: str) -> List[str]:
         if source_key == "high_ma":
@@ -1348,7 +1423,8 @@ class HighPolyReviewTool:
             overrides = [n for n in self.manual_root_overrides.get(menu_key, []) if cmds.objExists(n)]
             detected = [n for n in self._manual_root_candidates(source_key) if cmds.objExists(n)]
             values: List[str] = []
-            for node in overrides + detected:
+            preferred = self._preferred_group_root_for_source(source_key)
+            for node in ([preferred] if preferred else []) + overrides + detected:
                 if node not in values:
                     values.append(node)
             self.manual_root_overrides[menu_key] = overrides
@@ -1546,7 +1622,14 @@ class HighPolyReviewTool:
 
         matching_meshes = [m for m in mesh_transforms if self._matches_asset_kind(m, asset_kind) and self._mesh_matches_active_asset(m)]
         roots = [self._resolve_functional_root_from_mesh(mesh, asset_kind) for mesh in matching_meshes]
-        return sorted(set(roots), key=lambda x: self._candidate_root_score(x), reverse=True)
+        sorted_roots = sorted(set(roots), key=lambda x: self._candidate_root_score(x), reverse=True)
+        preferred_by_kind = {
+            "high": self.review_subgroups_by_file.get("high_ma"),
+            "placeholder": self.review_subgroups_by_file.get("placeholder"),
+            "low": self.review_subgroups_by_file.get("low_fbx"),
+            "final": self.review_subgroups_by_file.get("final_scene_ma"),
+        }
+        return self._prioritize_root_candidate(sorted_roots, preferred_by_kind.get(asset_kind))
 
     def _detect_and_store_roots_for_import(self, import_key: str) -> None:
         if import_key == "high_ma":
@@ -2883,11 +2966,14 @@ class HighPolyReviewTool:
         self.log("INFO", "Compare", f"Paires comparées : {len(all_keys)}")
 
         pair_fail_count = 0
-        for key in all_keys:
-            ma_data = ma_by_key.get(key)
-            fbx_data = fbx_by_key.get(key)
-            ma_name = ma_data["path"] if ma_data else f"{self.context['ma_namespace']}:{key}"
-            fbx_name = fbx_data["path"] if fbx_data else f"{self.context['fbx_namespace']}:{key}"
+        self._progress_start("Outsource Review", "Comparing High.ma vs High.fbx...", len(all_keys))
+        try:
+            for idx, key in enumerate(all_keys, start=1):
+                self._progress_step(idx, f"Analyzing compare pair {idx} / {len(all_keys)}")
+                ma_data = ma_by_key.get(key)
+                fbx_data = fbx_by_key.get(key)
+                ma_name = ma_data["path"] if ma_data else f"{self.context['ma_namespace']}:{key}"
+                fbx_name = fbx_data["path"] if fbx_data else f"{self.context['fbx_namespace']}:{key}"
 
             presence_ok = bool(ma_data and fbx_data)
             topo_ok = bool(
@@ -2914,17 +3000,19 @@ class HighPolyReviewTool:
             if not pair_ok:
                 pair_fail_count += 1
 
-            self.log("INFO", "ComparePair", f"MA Mesh = {ma_name}")
-            self.log("INFO", "ComparePair", f"FBX Mesh = {fbx_name}")
-            self.log("INFO" if presence_ok else "FAIL", "ComparePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
-            self.log("INFO" if topo_ok else "FAIL", "ComparePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
-            self.log("INFO" if uv_ok else "FAIL", "ComparePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
-            self.log("INFO", "ComparePair", f"Bounding Box MA = {self._fmt_vec(bbox_dims_ma, precision=2)}")
-            self.log("INFO", "ComparePair", f"Bounding Box FBX = {self._fmt_vec(bbox_dims_fbx, precision=2)}")
-            self.log("INFO", "ComparePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
-            self.log("INFO", "ComparePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
-            self.log("INFO" if bbox_ok else "FAIL", "ComparePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
-            self.log("INFO" if pair_ok else "FAIL", "ComparePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+                self.log("INFO", "ComparePair", f"MA Mesh = {ma_name}")
+                self.log("INFO", "ComparePair", f"FBX Mesh = {fbx_name}")
+                self.log("INFO" if presence_ok else "FAIL", "ComparePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+                self.log("INFO" if topo_ok else "FAIL", "ComparePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
+                self.log("INFO" if uv_ok else "FAIL", "ComparePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+                self.log("INFO", "ComparePair", f"Bounding Box MA = {self._fmt_vec(bbox_dims_ma, precision=2)}")
+                self.log("INFO", "ComparePair", f"Bounding Box FBX = {self._fmt_vec(bbox_dims_fbx, precision=2)}")
+                self.log("INFO", "ComparePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+                self.log("INFO", "ComparePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+                self.log("INFO" if bbox_ok else "FAIL", "ComparePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+                self.log("INFO" if pair_ok else "FAIL", "ComparePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+        finally:
+            self._progress_end()
 
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "Compare", f"Résultat final : {'OK' if ok else 'FAIL'}")
@@ -2984,48 +3072,53 @@ class HighPolyReviewTool:
         self.log("INFO", "CompareBake", f"Paires comparées : {len(all_keys)}")
 
         pair_fail_count = 0
-        for key in all_keys:
-            ma_data = ma_by_key.get(key)
-            bake_data = bake_by_key.get(key)
-            ma_name = ma_data["path"] if ma_data else f"{ma_namespace}:{key}"
-            bake_name = bake_data["path"] if bake_data else f"{bake_namespace}:{key}"
+        self._progress_start("Outsource Review", "Comparing High.ma vs Bake High...", len(all_keys))
+        try:
+            for idx, key in enumerate(all_keys, start=1):
+                self._progress_step(idx, f"Analyzing compare pair {idx} / {len(all_keys)}")
+                ma_data = ma_by_key.get(key)
+                bake_data = bake_by_key.get(key)
+                ma_name = ma_data["path"] if ma_data else f"{ma_namespace}:{key}"
+                bake_name = bake_data["path"] if bake_data else f"{bake_namespace}:{key}"
 
-            presence_ok = bool(ma_data and bake_data)
-            topo_ok = bool(
-                ma_data and bake_data and
-                (ma_data["v"], ma_data["e"], ma_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"])
-            )
-            uv_ok = bool(
-                ma_data and bake_data and
-                ma_data["uv_total"] == bake_data["uv_total"] and
-                ma_data["uv_sets"] == bake_data["uv_sets"]
-            )
-            bbox_dims_ma = (0.0, 0.0, 0.0)
-            bbox_dims_bake = (0.0, 0.0, 0.0)
-            bbox_delta = (0.0, 0.0, 0.0)
-            bbox_center_delta = (0.0, 0.0, 0.0)
-            bbox_ok = False
-            if presence_ok:
-                bbox_dims_ma, bbox_center_ma = self._mesh_bbox_dims_and_center_world(ma_data["path"])
-                bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
-                bbox_delta = tuple(abs(bbox_dims_ma[i] - bbox_dims_bake[i]) for i in range(3))
-                bbox_center_delta = tuple(abs(bbox_center_ma[i] - bbox_center_bake[i]) for i in range(3))
-                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
-            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
-            if not pair_ok:
-                pair_fail_count += 1
+                presence_ok = bool(ma_data and bake_data)
+                topo_ok = bool(
+                    ma_data and bake_data and
+                    (ma_data["v"], ma_data["e"], ma_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"])
+                )
+                uv_ok = bool(
+                    ma_data and bake_data and
+                    ma_data["uv_total"] == bake_data["uv_total"] and
+                    ma_data["uv_sets"] == bake_data["uv_sets"]
+                )
+                bbox_dims_ma = (0.0, 0.0, 0.0)
+                bbox_dims_bake = (0.0, 0.0, 0.0)
+                bbox_delta = (0.0, 0.0, 0.0)
+                bbox_center_delta = (0.0, 0.0, 0.0)
+                bbox_ok = False
+                if presence_ok:
+                    bbox_dims_ma, bbox_center_ma = self._mesh_bbox_dims_and_center_world(ma_data["path"])
+                    bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
+                    bbox_delta = tuple(abs(bbox_dims_ma[i] - bbox_dims_bake[i]) for i in range(3))
+                    bbox_center_delta = tuple(abs(bbox_center_ma[i] - bbox_center_bake[i]) for i in range(3))
+                    bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+                pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
+                if not pair_ok:
+                    pair_fail_count += 1
 
-            self.log("INFO", "CompareBakePair", f"High.ma Mesh = {ma_name}")
-            self.log("INFO", "CompareBakePair", f"Bake High Mesh = {bake_name}")
-            self.log("INFO" if presence_ok else "FAIL", "CompareBakePair", f"Mesh presence match = {'OK' if presence_ok else 'FAIL'}")
-            self.log("INFO" if topo_ok else "FAIL", "CompareBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
-            self.log("INFO" if uv_ok else "FAIL", "CompareBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box High.ma = {self._fmt_vec(bbox_dims_ma, precision=2)}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box Bake = {self._fmt_vec(bbox_dims_bake, precision=2)}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
-            self.log("INFO", "CompareBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
-            self.log("INFO" if bbox_ok else "FAIL", "CompareBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
-            self.log("INFO" if pair_ok else "FAIL", "CompareBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+                self.log("INFO", "CompareBakePair", f"High.ma Mesh = {ma_name}")
+                self.log("INFO", "CompareBakePair", f"Bake High Mesh = {bake_name}")
+                self.log("INFO" if presence_ok else "FAIL", "CompareBakePair", f"Mesh presence match = {'OK' if presence_ok else 'FAIL'}")
+                self.log("INFO" if topo_ok else "FAIL", "CompareBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
+                self.log("INFO" if uv_ok else "FAIL", "CompareBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+                self.log("INFO", "CompareBakePair", f"Bounding Box High.ma = {self._fmt_vec(bbox_dims_ma, precision=2)}")
+                self.log("INFO", "CompareBakePair", f"Bounding Box Bake = {self._fmt_vec(bbox_dims_bake, precision=2)}")
+                self.log("INFO", "CompareBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+                self.log("INFO", "CompareBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+                self.log("INFO" if bbox_ok else "FAIL", "CompareBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+                self.log("INFO" if pair_ok else "FAIL", "CompareBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+        finally:
+            self._progress_end()
 
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
@@ -3137,68 +3230,79 @@ class HighPolyReviewTool:
         low_by_key: Dict[str, List[str]] = {}
         invalid_high_suffix: List[str] = []
         invalid_low_suffix: List[str] = []
-        for mesh in high_meshes:
-            key, has_suffix = self._bake_pair_key(mesh, high_root, "_high")
-            high_by_key.setdefault(key, []).append(mesh)
-            if not has_suffix:
-                invalid_high_suffix.append(mesh)
-        for mesh in low_meshes:
-            key, has_suffix = self._bake_pair_key(mesh, low_root, "_low")
-            low_by_key.setdefault(key, []).append(mesh)
-            if not has_suffix:
-                invalid_low_suffix.append(mesh)
+        preprocess_steps = len(high_meshes) + len(low_meshes)
+        self._progress_start("Outsource Review", "Analyzing bake pairing roots...", preprocess_steps + 1)
+        try:
+            progress_idx = 0
+            for mesh in high_meshes:
+                progress_idx += 1
+                self._progress_step(progress_idx, f"Scanning bake high meshes {progress_idx} / {preprocess_steps}")
+                key, has_suffix = self._bake_pair_key(mesh, high_root, "_high")
+                high_by_key.setdefault(key, []).append(mesh)
+                if not has_suffix:
+                    invalid_high_suffix.append(mesh)
+            for mesh in low_meshes:
+                progress_idx += 1
+                self._progress_step(progress_idx, f"Scanning bake low meshes {progress_idx} / {preprocess_steps}")
+                key, has_suffix = self._bake_pair_key(mesh, low_root, "_low")
+                low_by_key.setdefault(key, []).append(mesh)
+                if not has_suffix:
+                    invalid_low_suffix.append(mesh)
 
-        all_keys = sorted(set(high_by_key.keys()) | set(low_by_key.keys()))
-        orphan_high_keys = [k for k in all_keys if k in high_by_key and k not in low_by_key]
-        orphan_low_keys = [k for k in all_keys if k in low_by_key and k not in high_by_key]
-        duplicate_high = {k: v for k, v in high_by_key.items() if len(v) > 1}
-        duplicate_low = {k: v for k, v in low_by_key.items() if len(v) > 1}
-        orphan_high_meshes = sum([high_by_key[k] for k in orphan_high_keys], [])
-        orphan_low_meshes = sum([low_by_key[k] for k in orphan_low_keys], [])
-        bbox_pivot_mismatch_keys: List[str] = []
-        bbox_pivot_mismatch_meshes: List[str] = []
+            all_keys = sorted(set(high_by_key.keys()) | set(low_by_key.keys()))
+            orphan_high_keys = [k for k in all_keys if k in high_by_key and k not in low_by_key]
+            orphan_low_keys = [k for k in all_keys if k in low_by_key and k not in high_by_key]
+            duplicate_high = {k: v for k, v in high_by_key.items() if len(v) > 1}
+            duplicate_low = {k: v for k, v in low_by_key.items() if len(v) > 1}
+            orphan_high_meshes = sum([high_by_key[k] for k in orphan_high_keys], [])
+            orphan_low_meshes = sum([low_by_key[k] for k in orphan_low_keys], [])
+            bbox_pivot_mismatch_keys: List[str] = []
+            bbox_pivot_mismatch_meshes: List[str] = []
 
-        shared_unique_keys = [
-            k for k in all_keys
-            if k in high_by_key and k in low_by_key and len(high_by_key[k]) == 1 and len(low_by_key[k]) == 1
-        ]
-        bbox_pivot_pass_count = 0
-        for key in shared_unique_keys:
-            high_mesh = high_by_key[key][0]
-            low_mesh = low_by_key[key][0]
-            bbox_dims_high, bbox_center_high = self._mesh_bbox_dims_and_center_world(high_mesh)
-            bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_mesh)
-            bbox_delta = tuple(abs(bbox_dims_high[i] - bbox_dims_low[i]) for i in range(3))
-            bbox_center_delta = tuple(abs(bbox_center_high[i] - bbox_center_low[i]) for i in range(3))
-            max_bbox_dim = max(max(bbox_dims_high), max(bbox_dims_low), 1e-6)
-            bbox_tolerance = max(1e-4, max_bbox_dim * (bbox_scale - 1.0))
-            bbox_ok = all(v <= bbox_tolerance for v in bbox_delta) and all(v <= bbox_tolerance for v in bbox_center_delta)
+            shared_unique_keys = [
+                k for k in all_keys
+                if k in high_by_key and k in low_by_key and len(high_by_key[k]) == 1 and len(low_by_key[k]) == 1
+            ]
+            bbox_pivot_pass_count = 0
+            for idx, key in enumerate(shared_unique_keys, start=1):
+                self._progress_step(progress_idx + idx, f"Checking bake pair {idx} / {len(shared_unique_keys)}")
+                high_mesh = high_by_key[key][0]
+                low_mesh = low_by_key[key][0]
+                bbox_dims_high, bbox_center_high = self._mesh_bbox_dims_and_center_world(high_mesh)
+                bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_mesh)
+                bbox_delta = tuple(abs(bbox_dims_high[i] - bbox_dims_low[i]) for i in range(3))
+                bbox_center_delta = tuple(abs(bbox_center_high[i] - bbox_center_low[i]) for i in range(3))
+                max_bbox_dim = max(max(bbox_dims_high), max(bbox_dims_low), 1e-6)
+                bbox_tolerance = max(1e-4, max_bbox_dim * (bbox_scale - 1.0))
+                bbox_ok = all(v <= bbox_tolerance for v in bbox_delta) and all(v <= bbox_tolerance for v in bbox_center_delta)
 
-            pivot_high = tuple(cmds.xform(high_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
-            pivot_low = tuple(cmds.xform(low_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
-            pivot_delta = tuple(abs(pivot_high[i] - pivot_low[i]) for i in range(3))
-            pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+                pivot_high = tuple(cmds.xform(high_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+                pivot_low = tuple(cmds.xform(low_mesh, query=True, worldSpace=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+                pivot_delta = tuple(abs(pivot_high[i] - pivot_low[i]) for i in range(3))
+                pivot_ok = all(v <= 1e-4 for v in pivot_delta)
 
-            self.log(
-                "INFO" if (bbox_ok and pivot_ok) else "FAIL",
-                "BakePairing",
-                f"Pair '{key}' bbox/pivot test = {'OK' if (bbox_ok and pivot_ok) else 'FAIL'} (bbox={'OK' if bbox_ok else 'FAIL'}, pivot={'OK' if pivot_ok else 'FAIL'})",
-                [high_mesh, low_mesh],
-            )
-
-            if not (bbox_ok and pivot_ok):
-                bbox_pivot_mismatch_keys.append(key)
-                bbox_pivot_mismatch_meshes.extend([high_mesh, low_mesh])
-                self.log("FAIL", "BakePairing", f"Pair '{key}' bbox/pivot mismatch", [high_mesh, low_mesh])
-                self.log("INFO", "BakePairing", f"  BBox High/Low = {self._fmt_vec(bbox_dims_high, precision=2)} / {self._fmt_vec(bbox_dims_low, precision=2)}")
                 self.log(
-                    "INFO",
+                    "INFO" if (bbox_ok and pivot_ok) else "FAIL",
                     "BakePairing",
-                    f"  BBox delta dims/center = {self._fmt_vec(bbox_delta, precision=4)} / {self._fmt_vec(bbox_center_delta, precision=4)} (tol={bbox_tolerance:.4f}, scale={bbox_scale:.3f})",
+                    f"Pair '{key}' bbox/pivot test = {'OK' if (bbox_ok and pivot_ok) else 'FAIL'} (bbox={'OK' if bbox_ok else 'FAIL'}, pivot={'OK' if pivot_ok else 'FAIL'})",
+                    [high_mesh, low_mesh],
                 )
-                self.log("INFO", "BakePairing", f"  Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
-            else:
-                bbox_pivot_pass_count += 1
+
+                if not (bbox_ok and pivot_ok):
+                    bbox_pivot_mismatch_keys.append(key)
+                    bbox_pivot_mismatch_meshes.extend([high_mesh, low_mesh])
+                    self.log("FAIL", "BakePairing", f"Pair '{key}' bbox/pivot mismatch", [high_mesh, low_mesh])
+                    self.log("INFO", "BakePairing", f"  BBox High/Low = {self._fmt_vec(bbox_dims_high, precision=2)} / {self._fmt_vec(bbox_dims_low, precision=2)}")
+                    self.log(
+                        "INFO",
+                        "BakePairing",
+                        f"  BBox delta dims/center = {self._fmt_vec(bbox_delta, precision=4)} / {self._fmt_vec(bbox_center_delta, precision=4)} (tol={bbox_tolerance:.4f}, scale={bbox_scale:.3f})",
+                    )
+                    self.log("INFO", "BakePairing", f"  Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
+                else:
+                    bbox_pivot_pass_count += 1
+        finally:
+            self._progress_end()
 
         self.log("INFO", "BakePairing", f"Paires détectées : {len(all_keys)}")
         self.log("INFO" if not invalid_high_suffix else "FAIL", "BakePairing", f"Naming _high cohérent = {'OK' if not invalid_high_suffix else 'FAIL'}", invalid_high_suffix[:120])
@@ -3275,8 +3379,11 @@ class HighPolyReviewTool:
         self.log("INFO", "BakeReady", f"Vertex color requis = {'Oui' if require_vertex_color else 'Non'}")
 
         fail_count = 0
-        for mesh in meshes:
-            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+        self._progress_start("Outsource Review", "Checking bake readiness...", len(meshes))
+        try:
+            for idx, mesh in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Analyzing bake readiness {idx} / {len(meshes)}")
+                shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
             shape = shapes[0] if shapes else None
             uv_sets = cmds.polyUVSet(shape, q=True, allUVSets=True) if shape else []
             has_uv = bool(uv_sets)
@@ -3300,6 +3407,8 @@ class HighPolyReviewTool:
             color_label = "Vertex color HIGH" if is_high_mesh else "Vertex color LOW (optionnel)"
             self.log("INFO" if color_ok else "FAIL", "BakeReadyMesh", f"{color_label} = {'OK' if color_ok else 'FAIL'}")
             self.log("INFO" if mesh_ok else "FAIL", "BakeReadyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+        finally:
+            self._progress_end()
 
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "BakeReady", f"Résultat final : {'OK' if ok else 'FAIL'}")
@@ -3343,28 +3452,33 @@ class HighPolyReviewTool:
             return
 
         ok_count = 0
-        for m in meshes:
-            nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
-            nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
-            lam = cmds.polyInfo(m, laminaFaces=True) or []
-            non_manifold_count = len(nmv) + len(nme)
-            lamina_count = len(lam)
-            ngon_count = 0
-            face_count = int(cmds.polyEvaluate(m, face=True) or 0)
-            for face_idx in range(face_count):
-                vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
-                tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
-                if len(tokens) > 5:
-                    ngon_count += 1
-            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
-            if mesh_ok:
-                ok_count += 1
+        self._progress_start("Outsource Review", "Analyzing low topology...", len(meshes))
+        try:
+            for idx, m in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Analyzing topology {idx} / {len(meshes)}")
+                nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
+                nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
+                lam = cmds.polyInfo(m, laminaFaces=True) or []
+                non_manifold_count = len(nmv) + len(nme)
+                lamina_count = len(lam)
+                ngon_count = 0
+                face_count = int(cmds.polyEvaluate(m, face=True) or 0)
+                for face_idx in range(face_count):
+                    vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
+                    tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
+                    if len(tokens) > 5:
+                        ngon_count += 1
+                mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
+                if mesh_ok:
+                    ok_count += 1
 
-            self.log("INFO", "LowTopologyMesh", f"Mesh = {m}")
-            self.log("INFO" if ngon_count == 0 else "FAIL", "LowTopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
-            self.log("INFO" if non_manifold_count == 0 else "FAIL", "LowTopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
-            self.log("INFO" if lamina_count == 0 else "FAIL", "LowTopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
-            self.log("INFO" if mesh_ok else "FAIL", "LowTopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+                self.log("INFO", "LowTopologyMesh", f"Mesh = {m}")
+                self.log("INFO" if ngon_count == 0 else "FAIL", "LowTopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
+                self.log("INFO" if non_manifold_count == 0 else "FAIL", "LowTopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
+                self.log("INFO" if lamina_count == 0 else "FAIL", "LowTopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
+                self.log("INFO" if mesh_ok else "FAIL", "LowTopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+        finally:
+            self._progress_end()
 
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
@@ -3455,29 +3569,34 @@ class HighPolyReviewTool:
         mat_full_objects: Dict[str, Set[str]] = {}
         mat_components: Dict[str, Set[str]] = {}
         total_faces = 0
-        for mesh in meshes:
-            fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
-            total_faces += fcount
-            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
-            if not shapes:
-                self.log("WARNING", category, f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
-                continue
-            shape = shapes[0]
-            sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
-            for sg in sgs:
-                mats = cmds.ls(cmds.listConnections(sg + ".surfaceShader") or [], materials=True) or []
-                if not mats:
+        self._progress_start("Outsource Review", "Analyzing material assignments...", len(meshes))
+        try:
+            for idx, mesh in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Analyzing materials {idx} / {len(meshes)}")
+                fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
+                total_faces += fcount
+                shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
+                if not shapes:
+                    self.log("WARNING", category, f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
                     continue
-                mat = mats[0]
-                mesh_face_count, object_assigned, component_faces = self._material_assignment_details(mesh, shape, sg, fcount)
-                if mesh_face_count <= 0:
-                    continue
-                mat_faces[mat] = mat_faces.get(mat, 0) + mesh_face_count
-                mat_objects.setdefault(mat, []).append(mesh)
-                if object_assigned:
-                    mat_full_objects.setdefault(mat, set()).add(mesh)
-                else:
-                    mat_components.setdefault(mat, set()).update(component_faces)
+                shape = shapes[0]
+                sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
+                for sg in sgs:
+                    mats = cmds.ls(cmds.listConnections(sg + ".surfaceShader") or [], materials=True) or []
+                    if not mats:
+                        continue
+                    mat = mats[0]
+                    mesh_face_count, object_assigned, component_faces = self._material_assignment_details(mesh, shape, sg, fcount)
+                    if mesh_face_count <= 0:
+                        continue
+                    mat_faces[mat] = mat_faces.get(mat, 0) + mesh_face_count
+                    mat_objects.setdefault(mat, []).append(mesh)
+                    if object_assigned:
+                        mat_full_objects.setdefault(mat, set()).add(mesh)
+                    else:
+                        mat_components.setdefault(mat, set()).update(component_faces)
+        finally:
+            self._progress_end()
 
         self.material_sets_by_context[material_context_key] = {}
         sorted_mats = sorted(mat_faces.items(), key=lambda x: x[1], reverse=True)
@@ -3741,6 +3860,11 @@ class HighPolyReviewTool:
             return
         high_meshes = self._collect_mesh_transforms(high_root)
         placeholder_meshes = self._collect_mesh_transforms(placeholder_root)
+        self._progress_start("Outsource Review", "Scanning placeholder meshes...", max(len(high_meshes) + len(placeholder_meshes), 1))
+        try:
+            self._progress_step(len(high_meshes) + len(placeholder_meshes), "Comparing aggregated roots...", force_refresh=True)
+        finally:
+            self._progress_end()
         self.log("INFO", "Placeholder", f"High Root sélectionné : {high_root}", [high_root])
         self.log("INFO", "Placeholder", f"Placeholder Root sélectionné : {placeholder_root}", [placeholder_root])
         self.log("INFO", "Placeholder", f"Meshes analysés High/Placeholder : {len(high_meshes)}/{len(placeholder_meshes)}")
@@ -3818,30 +3942,35 @@ class HighPolyReviewTool:
 
         ok_count = 0
 
-        for m in meshes:
-            nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
-            nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
-            lam = cmds.polyInfo(m, laminaFaces=True) or []
-            non_manifold_count = len(nmv) + len(nme)
-            lamina_count = len(lam)
-            ngon_count = 0
-            face_count = int(cmds.polyEvaluate(m, face=True) or 0)
-            for face_idx in range(face_count):
-                vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
-                if not vtx:
-                    continue
-                tokens = [tok for tok in vtx[0].replace(":", " ").split() if tok.isdigit()]
-                if len(tokens) > 5:
-                    ngon_count += 1
+        self._progress_start("Outsource Review", "Scanning high topology...", len(meshes))
+        try:
+            for idx, m in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Analyzing topology {idx} / {len(meshes)}")
+                nmv = cmds.polyInfo(m, nonManifoldVertices=True) or []
+                nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
+                lam = cmds.polyInfo(m, laminaFaces=True) or []
+                non_manifold_count = len(nmv) + len(nme)
+                lamina_count = len(lam)
+                ngon_count = 0
+                face_count = int(cmds.polyEvaluate(m, face=True) or 0)
+                for face_idx in range(face_count):
+                    vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
+                    if not vtx:
+                        continue
+                    tokens = [tok for tok in vtx[0].replace(":", " ").split() if tok.isdigit()]
+                    if len(tokens) > 5:
+                        ngon_count += 1
 
-            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
-            if mesh_ok:
-                ok_count += 1
-            self.log("INFO", "TopologyMesh", f"Mesh = {m}")
-            self.log("INFO" if ngon_count == 0 else "FAIL", "TopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
-            self.log("INFO" if non_manifold_count == 0 else "FAIL", "TopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
-            self.log("INFO" if lamina_count == 0 else "FAIL", "TopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
-            self.log("INFO" if mesh_ok else "FAIL", "TopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+                mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
+                if mesh_ok:
+                    ok_count += 1
+                self.log("INFO", "TopologyMesh", f"Mesh = {m}")
+                self.log("INFO" if ngon_count == 0 else "FAIL", "TopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
+                self.log("INFO" if non_manifold_count == 0 else "FAIL", "TopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
+                self.log("INFO" if lamina_count == 0 else "FAIL", "TopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
+                self.log("INFO" if mesh_ok else "FAIL", "TopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+        finally:
+            self._progress_end()
 
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
@@ -3999,48 +4128,53 @@ else
         mat_full_objects: Dict[str, Set[str]] = {}
         mat_components: Dict[str, Set[str]] = {}
         total_faces = 0
-        for mesh in meshes:
-            fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
-            total_faces += fcount
-            shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
-            if not shapes:
-                self.log("WARNING", "Materials", f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
-                continue
-
-            shape = shapes[0]
-            sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
-            mesh_material_faces: Dict[str, int] = {}
-            for sg in sgs:
-                mats = cmds.ls(cmds.listConnections(f"{sg}.surfaceShader") or [], materials=True) or []
-                if not mats:
+        self._progress_start("Outsource Review", "Analyzing material assignments...", len(meshes))
+        try:
+            for idx, mesh in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Analyzing material assignments {idx} / {len(meshes)}")
+                fcount = int(cmds.polyEvaluate(mesh, face=True) or 0)
+                total_faces += fcount
+                shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or []
+                if not shapes:
+                    self.log("WARNING", "Materials", f"Aucun shape valide trouvé pour mesh : {mesh}", [mesh])
                     continue
-                mat = mats[0]
-                assigned_count, object_assigned, component_faces = self._material_assignment_details(mesh, shape, sg, fcount)
-                if assigned_count <= 0:
+
+                shape = shapes[0]
+                sgs = sorted(set(cmds.listConnections(shape, type="shadingEngine") or []))
+                mesh_material_faces: Dict[str, int] = {}
+                for sg in sgs:
+                    mats = cmds.ls(cmds.listConnections(f"{sg}.surfaceShader") or [], materials=True) or []
+                    if not mats:
+                        continue
+                    mat = mats[0]
+                    assigned_count, object_assigned, component_faces = self._material_assignment_details(mesh, shape, sg, fcount)
+                    if assigned_count <= 0:
+                        continue
+                    mesh_material_faces[mat] = mesh_material_faces.get(mat, 0) + assigned_count
+                    if object_assigned:
+                        mat_full_objects.setdefault(mat, set()).add(mesh)
+                    else:
+                        mat_components.setdefault(mat, set()).update(component_faces)
+
+                self.log("INFO", "MaterialsMesh", f"Mesh = {mesh}")
+                if not mesh_material_faces:
+                    if fcount > 0:
+                        self.log("WARNING", "Materials", f"Aucun material valide trouvé pour mesh : {mesh}", [mesh])
+                    self.log("FAIL", "MaterialsMesh", "Result = FAIL", [mesh])
                     continue
-                mesh_material_faces[mat] = mesh_material_faces.get(mat, 0) + assigned_count
-                if object_assigned:
-                    mat_full_objects.setdefault(mat, set()).add(mesh)
-                else:
-                    mat_components.setdefault(mat, set()).update(component_faces)
 
-            self.log("INFO", "MaterialsMesh", f"Mesh = {mesh}")
-            if not mesh_material_faces:
-                if fcount > 0:
-                    self.log("WARNING", "Materials", f"Aucun material valide trouvé pour mesh : {mesh}", [mesh])
-                self.log("FAIL", "MaterialsMesh", "Result = FAIL", [mesh])
-                continue
-
-            display_materials = ", ".join(self._strip_namespaces_from_name(m) for m in sorted(mesh_material_faces.keys()))
-            self.log("INFO", "MaterialsMesh", f"Materials trouvés = {display_materials}", [mesh])
-            for mat, count in sorted(mesh_material_faces.items(), key=lambda item: item[1], reverse=True):
-                display_name = self._strip_namespaces_from_name(mat)
-                pct = (count / float(fcount) * 100.0) if fcount else 0.0
-                level = "INFO" if display_name.startswith("QDS_") else "FAIL"
-                self.log(level, "MaterialsMesh", f"{display_name} | {pct:.2f}% faces", [mesh])
-                mat_faces[mat] = mat_faces.get(mat, 0) + count
-                mat_objects.setdefault(mat, []).append(mesh)
-            self.log("INFO", "MaterialsMesh", "Result = OK", [mesh])
+                display_materials = ", ".join(self._strip_namespaces_from_name(m) for m in sorted(mesh_material_faces.keys()))
+                self.log("INFO", "MaterialsMesh", f"Materials trouvés = {display_materials}", [mesh])
+                for mat, count in sorted(mesh_material_faces.items(), key=lambda item: item[1], reverse=True):
+                    display_name = self._strip_namespaces_from_name(mat)
+                    pct = (count / float(fcount) * 100.0) if fcount else 0.0
+                    level = "INFO" if display_name.startswith("QDS_") else "FAIL"
+                    self.log(level, "MaterialsMesh", f"{display_name} | {pct:.2f}% faces", [mesh])
+                    mat_faces[mat] = mat_faces.get(mat, 0) + count
+                    mat_objects.setdefault(mat, []).append(mesh)
+                self.log("INFO", "MaterialsMesh", "Result = OK", [mesh])
+        finally:
+            self._progress_end()
 
         self.detected_texture_sets = {}
         self.material_sets_by_context["high"] = {}
@@ -4092,51 +4226,56 @@ else
             return
 
         ok_count = 0
-        for m in meshes:
-            shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
-            if not shapes:
-                continue
-            shape = shapes[0]
-            sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
-            fcount = int(cmds.polyEvaluate(m, face=True) or 0)
-            missing = fcount
-            colored_faces = 0
-            unqueryable_faces = 0
-            distinct_colors: Set[Tuple[float, float, float]] = set()
-            for face_idx in range(fcount):
-                face_component = f"{m}.f[{face_idx}]"
-                try:
-                    rgb = cmds.polyColorPerVertex(face_component, query=True, rgb=True) or []
-                except RuntimeError:
-                    unqueryable_faces += 1
-                    rgb = []
-                if not rgb:
+        self._progress_start("Outsource Review", "Checking vertex colors...", len(meshes))
+        try:
+            for idx, m in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Checking vertex colors {idx} / {len(meshes)}")
+                shapes = cmds.listRelatives(m, shapes=True, noIntermediate=True, fullPath=True) or []
+                if not shapes:
                     continue
-                colored_faces += 1
-                chunk_count = len(rgb) // 3
-                for idx in range(chunk_count):
-                    color = (
-                        round(float(rgb[idx * 3 + 0]), 4),
-                        round(float(rgb[idx * 3 + 1]), 4),
-                        round(float(rgb[idx * 3 + 2]), 4),
-                    )
-                    distinct_colors.add(color)
-            missing = max(0, fcount - colored_faces)
-            has_color_set = bool(sets)
-            mesh_ok = has_color_set and missing == 0
-            if mesh_ok:
-                ok_count += 1
+                shape = shapes[0]
+                sets = cmds.polyColorSet(shape, query=True, allColorSets=True) or []
+                fcount = int(cmds.polyEvaluate(m, face=True) or 0)
+                missing = fcount
+                colored_faces = 0
+                unqueryable_faces = 0
+                distinct_colors: Set[Tuple[float, float, float]] = set()
+                for face_idx in range(fcount):
+                    face_component = f"{m}.f[{face_idx}]"
+                    try:
+                        rgb = cmds.polyColorPerVertex(face_component, query=True, rgb=True) or []
+                    except RuntimeError:
+                        unqueryable_faces += 1
+                        rgb = []
+                    if not rgb:
+                        continue
+                    colored_faces += 1
+                    chunk_count = len(rgb) // 3
+                    for idx2 in range(chunk_count):
+                        color = (
+                            round(float(rgb[idx2 * 3 + 0]), 4),
+                            round(float(rgb[idx2 * 3 + 1]), 4),
+                            round(float(rgb[idx2 * 3 + 2]), 4),
+                        )
+                        distinct_colors.add(color)
+                missing = max(0, fcount - colored_faces)
+                has_color_set = bool(sets)
+                mesh_ok = has_color_set and missing == 0
+                if mesh_ok:
+                    ok_count += 1
 
-            self.log("INFO", "VertexColorMesh", f"Mesh = {m}")
-            self.log("INFO", "VertexColorMesh", f"Faces total = {fcount}")
-            self.log("INFO", "VertexColorMesh", f"Faces avec vertex color = {colored_faces}")
-            self.log("INFO", "VertexColorMesh", f"Faces sans vertex color = {missing}")
-            if unqueryable_faces:
-                self.log("WARNING", "VertexColorMesh", f"{unqueryable_faces} faces could not be queried on {m}")
-            self.log("INFO", "VertexColorMesh", f"Groupes de vertex colors distincts = {len(distinct_colors)}")
-            if not has_color_set:
-                self.log("FAIL", "VertexColorMesh", "Aucun color set trouvé.")
-            self.log("INFO" if mesh_ok else "FAIL", "VertexColorMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+                self.log("INFO", "VertexColorMesh", f"Mesh = {m}")
+                self.log("INFO", "VertexColorMesh", f"Faces total = {fcount}")
+                self.log("INFO", "VertexColorMesh", f"Faces avec vertex color = {colored_faces}")
+                self.log("INFO", "VertexColorMesh", f"Faces sans vertex color = {missing}")
+                if unqueryable_faces:
+                    self.log("WARNING", "VertexColorMesh", f"{unqueryable_faces} faces could not be queried on {m}")
+                self.log("INFO", "VertexColorMesh", f"Groupes de vertex colors distincts = {len(distinct_colors)}")
+                if not has_color_set:
+                    self.log("FAIL", "VertexColorMesh", "Aucun color set trouvé.")
+                self.log("INFO" if mesh_ok else "FAIL", "VertexColorMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
+        finally:
+            self._progress_end()
 
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
@@ -4313,53 +4452,58 @@ else
 
         fail_count = 0
         map1_missing_count = 0
-        for mesh in meshes:
-            shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
-            if not shape:
-                fail_count += 1
-                map1_missing_count += 1
-                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
-                self.log("FAIL", "LowUV1Mesh", "Shape introuvable")
-                self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
-                continue
-            if not self._uv_set_on_shape(shape, "map1"):
-                fail_count += 1
-                map1_missing_count += 1
-                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
-                self.log("FAIL", "LowUV1Mesh", "UV set map1 manquant")
-                self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
-                continue
-            try:
-                cmds.polyUVSet(shape, currentUVSet=True, uvSet="map1")
-            except RuntimeError:
-                fail_count += 1
-                map1_missing_count += 1
-                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
-                self.log("FAIL", "LowUV1Mesh", "Impossible de forcer map1")
-                self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
-                continue
+        self._progress_start("Outsource Review", "Checking UV sets map1...", len(meshes))
+        try:
+            for idx, mesh in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Checking UV sets {idx} / {len(meshes)}")
+                shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
+                if not shape:
+                    fail_count += 1
+                    map1_missing_count += 1
+                    self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                    self.log("FAIL", "LowUV1Mesh", "Shape introuvable")
+                    self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
+                    continue
+                if not self._uv_set_on_shape(shape, "map1"):
+                    fail_count += 1
+                    map1_missing_count += 1
+                    self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                    self.log("FAIL", "LowUV1Mesh", "UV set map1 manquant")
+                    self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
+                    continue
+                try:
+                    cmds.polyUVSet(shape, currentUVSet=True, uvSet="map1")
+                except RuntimeError:
+                    fail_count += 1
+                    map1_missing_count += 1
+                    self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                    self.log("FAIL", "LowUV1Mesh", "Impossible de forcer map1")
+                    self.log("FAIL", "LowUV1Mesh", "Result = FAIL", [mesh])
+                    continue
 
-            overlap_data = cmds.polyUVOverlap(mesh, oc=True) or []
-            overlap_count = len(overlap_data) if isinstance(overlap_data, list) else int(bool(overlap_data))
-            overlap_ok = overlap_count == 0
-            outside_count = 0
-            try:
-                bbox = cmds.polyEvaluate(mesh, boundingBox2d=True) or []
-                if bbox:
-                    (u_min, u_max), (v_min, v_max) = bbox
-                    if u_min < 0.0 or v_min < 0.0 or u_max > 1.0 or v_max > 1.0:
-                        outside_count = 1
-            except RuntimeError:
-                pass
-            outside_ok = outside_count == 0
-            mesh_ok = overlap_ok and outside_ok
-            if not mesh_ok:
-                fail_count += 1
+                overlap_data = cmds.polyUVOverlap(mesh, oc=True) or []
+                overlap_count = len(overlap_data) if isinstance(overlap_data, list) else int(bool(overlap_data))
+                overlap_ok = overlap_count == 0
+                outside_count = 0
+                try:
+                    bbox = cmds.polyEvaluate(mesh, boundingBox2d=True) or []
+                    if bbox:
+                        (u_min, u_max), (v_min, v_max) = bbox
+                        if u_min < 0.0 or v_min < 0.0 or u_max > 1.0 or v_max > 1.0:
+                            outside_count = 1
+                except RuntimeError:
+                    pass
+                outside_ok = outside_count == 0
+                mesh_ok = overlap_ok and outside_ok
+                if not mesh_ok:
+                    fail_count += 1
 
-            self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
-            self.log("INFO" if outside_ok else "FAIL", "LowUV1Mesh", f"UV shells hors 0-1 = {outside_count}")
-            self.log("INFO" if overlap_ok else "FAIL", "LowUV1Mesh", f"UV overlap = {overlap_count}")
-            self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+                self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
+                self.log("INFO" if outside_ok else "FAIL", "LowUV1Mesh", f"UV shells hors 0-1 = {outside_count}")
+                self.log("INFO" if overlap_ok else "FAIL", "LowUV1Mesh", f"UV overlap = {overlap_count}")
+                self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+        finally:
+            self._progress_end()
 
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
@@ -4448,26 +4592,31 @@ else
 
         valid_values: List[float] = []
         pair_fail_count = 0
-        for mesh in meshes:
-            td = self._estimate_texel_density(mesh, uv_set="map2", tex_size=2048)
-            if td is None:
-                pair_fail_count += 1
-                self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
-                self.log("FAIL", "LowUV2Mesh", "TD mesurée = N/A")
-                self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
-                self.log("FAIL", "LowUV2Mesh", "Result = FAIL", [mesh])
-                continue
+        self._progress_start("Outsource Review", "Checking map2 texel density...", len(meshes))
+        try:
+            for idx, mesh in enumerate(meshes, start=1):
+                self._progress_step(idx, f"Checking map2 density {idx} / {len(meshes)}")
+                td = self._estimate_texel_density(mesh, uv_set="map2", tex_size=2048)
+                if td is None:
+                    pair_fail_count += 1
+                    self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
+                    self.log("FAIL", "LowUV2Mesh", "TD mesurée = N/A")
+                    self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
+                    self.log("FAIL", "LowUV2Mesh", "Result = FAIL", [mesh])
+                    continue
 
-            valid_values.append(td)
-            delta = td - LOW_MAP2_TARGET_TD
-            mesh_ok = abs(delta) <= LOW_MAP2_TOLERANCE
-            if not mesh_ok:
-                pair_fail_count += 1
-            self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
-            self.log("INFO", "LowUV2Mesh", f"TD mesurée = {td:.2f}")
-            self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
-            self.log("INFO", "LowUV2Mesh", f"Delta = {delta:.2f}")
-            self.log("INFO" if mesh_ok else "FAIL", "LowUV2Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+                valid_values.append(td)
+                delta = td - LOW_MAP2_TARGET_TD
+                mesh_ok = abs(delta) <= LOW_MAP2_TOLERANCE
+                if not mesh_ok:
+                    pair_fail_count += 1
+                self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
+                self.log("INFO", "LowUV2Mesh", f"TD mesurée = {td:.2f}")
+                self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
+                self.log("INFO", "LowUV2Mesh", f"Delta = {delta:.2f}")
+                self.log("INFO" if mesh_ok else "FAIL", "LowUV2Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
+        finally:
+            self._progress_end()
 
         mean_td = (sum(valid_values) / len(valid_values)) if valid_values else 0.0
         self.log("INFO", category, f"Texel density moyenne mesurée : {mean_td:.2f}")
@@ -4512,41 +4661,46 @@ else
         self.log("INFO", "CompareLowBake", f"Paires comparées : {len(all_keys)}")
 
         pair_fail_count = 0
-        for key in all_keys:
-            low_data = low_by.get(key)
-            bake_data = bake_by.get(key)
-            low_name = low_data["path"] if low_data else f"{self.context['low_fbx_namespace']}:{key}"
-            bake_name = bake_data["path"] if bake_data else f"{self.context['bake_ma_namespace']}:{key}"
+        self._progress_start("Outsource Review", "Comparing Low vs Bake Low...", len(all_keys))
+        try:
+            for idx, key in enumerate(all_keys, start=1):
+                self._progress_step(idx, f"Analyzing compare pair {idx} / {len(all_keys)}")
+                low_data = low_by.get(key)
+                bake_data = bake_by.get(key)
+                low_name = low_data["path"] if low_data else f"{self.context['low_fbx_namespace']}:{key}"
+                bake_name = bake_data["path"] if bake_data else f"{self.context['bake_ma_namespace']}:{key}"
 
-            presence_ok = bool(low_data and bake_data)
-            topo_ok = bool(low_data and bake_data and (low_data["v"], low_data["e"], low_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"]))
-            uv_ok = bool(low_data and bake_data and low_data["uv_total"] == bake_data["uv_total"] and low_data["uv_sets"] == bake_data["uv_sets"])
-            bbox_dims_low = (0.0, 0.0, 0.0)
-            bbox_dims_bake = (0.0, 0.0, 0.0)
-            bbox_delta = (0.0, 0.0, 0.0)
-            bbox_center_delta = (0.0, 0.0, 0.0)
-            bbox_ok = False
-            if presence_ok:
-                bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_data["path"])
-                bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
-                bbox_delta = tuple(abs(bbox_dims_low[i] - bbox_dims_bake[i]) for i in range(3))
-                bbox_center_delta = tuple(abs(bbox_center_low[i] - bbox_center_bake[i]) for i in range(3))
-                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
-            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
-            if not pair_ok:
-                pair_fail_count += 1
+                presence_ok = bool(low_data and bake_data)
+                topo_ok = bool(low_data and bake_data and (low_data["v"], low_data["e"], low_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"]))
+                uv_ok = bool(low_data and bake_data and low_data["uv_total"] == bake_data["uv_total"] and low_data["uv_sets"] == bake_data["uv_sets"])
+                bbox_dims_low = (0.0, 0.0, 0.0)
+                bbox_dims_bake = (0.0, 0.0, 0.0)
+                bbox_delta = (0.0, 0.0, 0.0)
+                bbox_center_delta = (0.0, 0.0, 0.0)
+                bbox_ok = False
+                if presence_ok:
+                    bbox_dims_low, bbox_center_low = self._mesh_bbox_dims_and_center_world(low_data["path"])
+                    bbox_dims_bake, bbox_center_bake = self._mesh_bbox_dims_and_center_world(bake_data["path"])
+                    bbox_delta = tuple(abs(bbox_dims_low[i] - bbox_dims_bake[i]) for i in range(3))
+                    bbox_center_delta = tuple(abs(bbox_center_low[i] - bbox_center_bake[i]) for i in range(3))
+                    bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+                pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
+                if not pair_ok:
+                    pair_fail_count += 1
 
-            self.log("INFO", "CompareLowBakePair", f"Low = {low_name}")
-            self.log("INFO", "CompareLowBakePair", f"Bake Low = {bake_name}")
-            self.log("INFO" if presence_ok else "FAIL", "CompareLowBakePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
-            self.log("INFO" if topo_ok else "FAIL", "CompareLowBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
-            self.log("INFO" if uv_ok else "FAIL", "CompareLowBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
-            self.log("INFO", "CompareLowBakePair", f"Bounding Box Low = {self._fmt_vec(bbox_dims_low, precision=2)}")
-            self.log("INFO", "CompareLowBakePair", f"Bounding Box Bake Low = {self._fmt_vec(bbox_dims_bake, precision=2)}")
-            self.log("INFO", "CompareLowBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
-            self.log("INFO", "CompareLowBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
-            self.log("INFO" if bbox_ok else "FAIL", "CompareLowBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
-            self.log("INFO" if pair_ok else "FAIL", "CompareLowBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+                self.log("INFO", "CompareLowBakePair", f"Low = {low_name}")
+                self.log("INFO", "CompareLowBakePair", f"Bake Low = {bake_name}")
+                self.log("INFO" if presence_ok else "FAIL", "CompareLowBakePair", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+                self.log("INFO" if topo_ok else "FAIL", "CompareLowBakePair", f"Topology match = {'OK' if topo_ok else 'FAIL'}")
+                self.log("INFO" if uv_ok else "FAIL", "CompareLowBakePair", f"UV match = {'OK' if uv_ok else 'FAIL'}")
+                self.log("INFO", "CompareLowBakePair", f"Bounding Box Low = {self._fmt_vec(bbox_dims_low, precision=2)}")
+                self.log("INFO", "CompareLowBakePair", f"Bounding Box Bake Low = {self._fmt_vec(bbox_dims_bake, precision=2)}")
+                self.log("INFO", "CompareLowBakePair", f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+                self.log("INFO", "CompareLowBakePair", f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+                self.log("INFO" if bbox_ok else "FAIL", "CompareLowBakePair", f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+                self.log("INFO" if pair_ok else "FAIL", "CompareLowBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
+        finally:
+            self._progress_end()
 
         ok = pair_fail_count == 0
         self.log("INFO" if ok else "FAIL", "CompareLowBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
@@ -4573,8 +4727,14 @@ else
         self.log("INFO", "CompareLowFinal", f"Source B : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
         self.log("INFO", "CompareLowFinal", f"Root Low sélectionné : {low_root}", [low_root])
         self.log("INFO", "CompareLowFinal", f"Root Final sélectionné : {final_root}", [final_root])
-        low_data = self._root_aggregate_signature(low_root)
-        final_data = self._root_aggregate_signature(final_root)
+        self._progress_start("Outsource Review", "Comparing aggregated roots...", 2)
+        try:
+            self._progress_step(1, "Building Low aggregate signature...")
+            low_data = self._root_aggregate_signature(low_root)
+            self._progress_step(2, "Building Final aggregate signature...", force_refresh=True)
+            final_data = self._root_aggregate_signature(final_root)
+        finally:
+            self._progress_end()
         self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {low_data['mesh_count']} / {final_data['mesh_count']}")
 
         presence_ok = bool(low_data["mesh_count"] > 0 and final_data["mesh_count"] > 0)
@@ -4625,8 +4785,14 @@ else
         self.log("INFO", "FinalAssetCompare", f"Root Final Asset MA sélectionné : {ma_root}", [ma_root])
         self.log("INFO", "FinalAssetCompare", f"Root Final Asset FBX sélectionné : {fbx_root}", [fbx_root])
 
-        ma_data = self._root_aggregate_signature(ma_root)
-        fbx_data = self._root_aggregate_signature(fbx_root)
+        self._progress_start("Outsource Review", "Comparing Final Asset MA vs FBX...", 2)
+        try:
+            self._progress_step(1, "Building Final Asset MA aggregate signature...")
+            ma_data = self._root_aggregate_signature(ma_root)
+            self._progress_step(2, "Building Final Asset FBX aggregate signature...", force_refresh=True)
+            fbx_data = self._root_aggregate_signature(fbx_root)
+        finally:
+            self._progress_end()
         self.log("INFO", "FinalAssetCompare", f"Meshes analysés MA/FBX : {ma_data['mesh_count']} / {fbx_data['mesh_count']}")
 
         presence_ok = bool(ma_data["mesh_count"] > 0 and fbx_data["mesh_count"] > 0)
