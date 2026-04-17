@@ -1927,33 +1927,11 @@ class HighPolyReviewTool:
                 "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
             }
 
-        uv_info = self._mesh_uv_signature_by_set(mesh_transform)
-        total_uv = sum(int(data.get("count", 0)) for data in uv_info.values())
-        shape = shape[0]
-
-        return {
-            "path": mesh_transform,
-            "key": self._normalized_relative_mesh_key(mesh_transform, root),
-            "v": int(cmds.polyEvaluate(shape, vertex=True) or 0),
-            "e": int(cmds.polyEvaluate(shape, edge=True) or 0),
-            "f": int(cmds.polyEvaluate(shape, face=True) or 0),
-            "uv_total": int(total_uv),
-            "uv_sets": uv_info,
-            "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
-            "pivot_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, rotatePivot=True)),
-            "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
-        }
-
-    def _mesh_uv_signature_by_set(self, mesh_transform: str) -> Dict[str, Dict[str, Any]]:
-        shape = cmds.listRelatives(mesh_transform, shapes=True, noIntermediate=True, fullPath=True) or []
-        if not shape:
-            return {}
-
         shape = shape[0]
         uv_sets = cmds.polyUVSet(shape, query=True, allUVSets=True) or []
+        uv_info: Dict[str, Dict[str, int]] = {}
         current_uv = cmds.polyUVSet(shape, query=True, currentUVSet=True) or []
         original_uv = current_uv[0] if current_uv else None
-        uv_info: Dict[str, Dict[str, Any]] = {}
 
         for uv_set in uv_sets:
             try:
@@ -1966,84 +1944,26 @@ class HighPolyReviewTool:
                 shell_count = int(cmds.polyEvaluate(shape, uvShell=True) or 0)
             except RuntimeError:
                 shell_count = 0
-            bbox = tuple(cmds.polyEvaluate(shape, boundingBox2d=True) or ())
-            uvs_raw = cmds.polyEditUV(f"{shape}.map[*]", query=True) or []
-            uv_pairs = [
-                (round(float(uvs_raw[i]), 6), round(float(uvs_raw[i + 1]), 6))
-                for i in range(0, len(uvs_raw), 2)
-            ]
-            uv_info[uv_set] = {
-                "count": uv_count,
-                "shells": shell_count,
-                "bbox": tuple(round(float(v), 6) for v in bbox),
-                "uvs": tuple(sorted(uv_pairs)),
-            }
+            uv_info[uv_set] = {"count": uv_count, "shells": shell_count}
 
-        if original_uv and original_uv in uv_sets:
+        if original_uv:
             try:
                 cmds.polyUVSet(shape, currentUVSet=True, uvSet=original_uv)
             except RuntimeError:
                 pass
 
-        return uv_info
-
-    def _compare_uv_set_signatures(
-        self,
-        uv_a: Dict[str, Dict[str, Any]],
-        uv_b: Dict[str, Dict[str, Any]],
-        category: str = "CompareUV",
-    ) -> Tuple[bool, Dict[str, Any]]:
-        details: Dict[str, Any] = {"missing_in_a": [], "missing_in_b": [], "set_mismatches": {}}
-        all_sets = sorted(set(uv_a.keys()) | set(uv_b.keys()), key=lambda name: (0 if name == "map1" else 1 if name == "map2" else 2, name))
-
-        for uv_set in all_sets:
-            if uv_set not in uv_a:
-                details["missing_in_a"].append(uv_set)
-                continue
-            if uv_set not in uv_b:
-                details["missing_in_b"].append(uv_set)
-                continue
-
-            set_a = uv_a[uv_set]
-            set_b = uv_b[uv_set]
-            set_issues: List[str] = []
-            if int(set_a.get("count", 0)) != int(set_b.get("count", 0)):
-                set_issues.append("count differs")
-            if int(set_a.get("shells", 0)) != int(set_b.get("shells", 0)):
-                set_issues.append("shells differ")
-            if tuple(set_a.get("bbox", ())) != tuple(set_b.get("bbox", ())):
-                set_issues.append("bbox differs")
-            if tuple(set_a.get("uvs", ())) != tuple(set_b.get("uvs", ())):
-                set_issues.append("uv coordinates differ")
-            if set_issues:
-                details["set_mismatches"][uv_set] = set_issues
-
-        uv_ok = not details["missing_in_a"] and not details["missing_in_b"] and not details["set_mismatches"]
-        if not uv_ok:
-            for uv_set in details["missing_in_a"]:
-                self.log("FAIL", category, f"UV mismatch: {uv_set} missing on mesh A")
-            for uv_set in details["missing_in_b"]:
-                self.log("FAIL", category, f"UV mismatch: {uv_set} missing on mesh B")
-            for uv_set, issues in details["set_mismatches"].items():
-                for issue in issues:
-                    self.log("FAIL", category, f"UV mismatch: {uv_set} {issue}")
-        else:
-            compared_sets = sorted(uv_a.keys(), key=lambda name: (0 if name == "map1" else 1 if name == "map2" else 2, name))
-            if compared_sets:
-                self.log("INFO", category, f"UV match OK: {', '.join(compared_sets)} correspond")
-            else:
-                self.log("INFO", category, "UV match OK: no UV sets found on either side")
-        return uv_ok, details
-
-    def _compare_mesh_uv_sets(
-        self,
-        mesh_a: str,
-        mesh_b: str,
-        category: str = "CompareUV",
-    ) -> Tuple[bool, Dict[str, Any]]:
-        uv_a = self._mesh_uv_signature_by_set(mesh_a)
-        uv_b = self._mesh_uv_signature_by_set(mesh_b)
-        return self._compare_uv_set_signatures(uv_a, uv_b, category=category)
+        return {
+            "path": mesh_transform,
+            "key": self._normalized_relative_mesh_key(mesh_transform, root),
+            "v": int(cmds.polyEvaluate(shape, vertex=True) or 0),
+            "e": int(cmds.polyEvaluate(shape, edge=True) or 0),
+            "f": int(cmds.polyEvaluate(shape, face=True) or 0),
+            "uv_total": int(cmds.polyEvaluate(shape, uvcoord=True) or 0),
+            "uv_sets": uv_info,
+            "parent_path": "/".join(self._normalized_segments(mesh_transform)[:-1]),
+            "pivot_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, rotatePivot=True)),
+            "translate_world": tuple(cmds.xform(mesh_transform, q=True, ws=True, translation=True)),
+        }
 
     def _mesh_center_world(self, mesh_transform: str) -> Tuple[float, float, float]:
         bb = cmds.exactWorldBoundingBox(mesh_transform)
@@ -3145,8 +3065,7 @@ class HighPolyReviewTool:
             right_data = self._mesh_data_signature(right_mesh)
             if (left_data["v"], left_data["e"], left_data["f"]) != (right_data["v"], right_data["e"], right_data["f"]):
                 topo_mismatch.append(left_mesh)
-            uv_ok, _uv_details = self._compare_mesh_uv_sets(left_mesh, right_mesh, category="CompareUV")
-            if not uv_ok:
+            if left_data["uv_total"] != right_data["uv_total"] or left_data["uv_sets"] != right_data["uv_sets"]:
                 uv_mismatch.append(left_mesh)
 
         if not unmatched_left and not unmatched_right and not topo_mismatch and not uv_mismatch:
@@ -3214,9 +3133,11 @@ class HighPolyReviewTool:
                 ma_data and fbx_data and
                 (ma_data["v"], ma_data["e"], ma_data["f"]) == (fbx_data["v"], fbx_data["e"], fbx_data["f"])
             )
-            uv_ok = False
-            if ma_data and fbx_data:
-                uv_ok, _uv_details = self._compare_mesh_uv_sets(ma_data["path"], fbx_data["path"], category="ComparePairUV")
+            uv_ok = bool(
+                ma_data and fbx_data and
+                ma_data["uv_total"] == fbx_data["uv_total"] and
+                ma_data["uv_sets"] == fbx_data["uv_sets"]
+            )
             bbox_dims_ma = (0.0, 0.0, 0.0)
             bbox_dims_fbx = (0.0, 0.0, 0.0)
             bbox_delta = (0.0, 0.0, 0.0)
@@ -3324,9 +3245,11 @@ class HighPolyReviewTool:
                 ma_data and bake_data and
                 (ma_data["v"], ma_data["e"], ma_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"])
             )
-            uv_ok = False
-            if ma_data and bake_data:
-                uv_ok, _uv_details = self._compare_mesh_uv_sets(ma_data["path"], bake_data["path"], category="CompareBakePairUV")
+            uv_ok = bool(
+                ma_data and bake_data and
+                ma_data["uv_total"] == bake_data["uv_total"] and
+                ma_data["uv_sets"] == bake_data["uv_sets"]
+            )
             bbox_dims_ma = (0.0, 0.0, 0.0)
             bbox_dims_bake = (0.0, 0.0, 0.0)
             bbox_delta = (0.0, 0.0, 0.0)
@@ -4861,9 +4784,7 @@ else
 
             presence_ok = bool(low_data and bake_data)
             topo_ok = bool(low_data and bake_data and (low_data["v"], low_data["e"], low_data["f"]) == (bake_data["v"], bake_data["e"], bake_data["f"]))
-            uv_ok = False
-            if low_data and bake_data:
-                uv_ok, _uv_details = self._compare_mesh_uv_sets(low_data["path"], bake_data["path"], category="CompareLowBakePairUV")
+            uv_ok = bool(low_data and bake_data and low_data["uv_total"] == bake_data["uv_total"] and low_data["uv_sets"] == bake_data["uv_sets"])
             bbox_dims_low = (0.0, 0.0, 0.0)
             bbox_dims_bake = (0.0, 0.0, 0.0)
             bbox_delta = (0.0, 0.0, 0.0)
@@ -4926,7 +4847,7 @@ else
 
         presence_ok = bool(low_data["mesh_count"] > 0 and final_data["mesh_count"] > 0)
         topo_ok = (low_data["v"], low_data["e"], low_data["f"]) == (final_data["v"], final_data["e"], final_data["f"])
-        uv_ok, _uv_details = self._compare_uv_set_signatures(low_data["uv_sets"], final_data["uv_sets"], category="CompareLowFinalUV")
+        uv_ok = bool(low_data["uv_total"] == final_data["uv_total"] and low_data["uv_sets"] == final_data["uv_sets"])
         bbox_delta = tuple(abs(low_data["bbox_dims"][i] - final_data["bbox_dims"][i]) for i in range(3))
         bbox_center_delta = tuple(abs(low_data["bbox_center"][i] - final_data["bbox_center"][i]) for i in range(3))
         bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
@@ -4978,7 +4899,7 @@ else
 
         presence_ok = bool(ma_data["mesh_count"] > 0 and fbx_data["mesh_count"] > 0)
         topo_ok = (ma_data["v"], ma_data["e"], ma_data["f"]) == (fbx_data["v"], fbx_data["e"], fbx_data["f"])
-        uv_ok, _uv_details = self._compare_uv_set_signatures(ma_data["uv_sets"], fbx_data["uv_sets"], category="FinalAssetCompareUV")
+        uv_ok = bool(ma_data["uv_total"] == fbx_data["uv_total"] and ma_data["uv_sets"] == fbx_data["uv_sets"])
         bbox_delta = tuple(abs(ma_data["bbox_dims"][i] - fbx_data["bbox_dims"][i]) for i in range(3))
         bbox_center_delta = tuple(abs(ma_data["bbox_center"][i] - fbx_data["bbox_center"][i]) for i in range(3))
         bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
