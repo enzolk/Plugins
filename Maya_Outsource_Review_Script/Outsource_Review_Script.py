@@ -211,6 +211,12 @@ class HighPolyReviewTool:
             "final_asset_fbx": [],
         }
         self.summary_items: List[ReviewIssue] = []
+        self.summary_row_ranges: List[Tuple[int, int]] = []
+        self.summary_row_fail_targets: Dict[int, List[int]] = {}
+        self.summary_row_fail_cursor: Dict[int, int] = {}
+        self.log_index_to_row: Dict[int, str] = {}
+        self.log_index_to_offset: Dict[int, int] = {}
+        self._results_content_height = 0
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
@@ -658,10 +664,13 @@ class HighPolyReviewTool:
         cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.text(label="Quick Summary", align="left")
-        self.ui["summary_results_list"] = cmds.textScrollList(
-            allowMultiSelection=False,
+        self.ui["summary_scroll"] = cmds.scrollLayout(
+            childResizable=True,
             height=120,
+            verticalScrollBarThickness=14,
         )
+        self.ui["summary_results_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        cmds.setParent("..")
         cmds.separator(style="in")
         cmds.text(label="Detailed Logs", align="left")
         self.ui["results_scroll"] = cmds.scrollLayout(
@@ -925,26 +934,36 @@ class HighPolyReviewTool:
             command=lambda *_: self.on_result_selected_from_control(row_control),
         )
         cmds.setParent("..")
-        cmds.evalDeferred(self._refresh_results_scroll_to_bottom, lowestPriority=True)
+        log_index = len(self.result_items) + 1
+        self.log_index_to_row[log_index] = row_control
+        self.log_index_to_offset[log_index] = self._results_content_height
+        self._results_content_height += row_height + 2
 
-    def _refresh_results_scroll_to_bottom(self) -> None:
-        if "results_scroll" not in self.ui or "results_column" not in self.ui:
+    def _scroll_results_to_offset(self, offset: int) -> None:
+        if "results_scroll" not in self.ui:
             return
-
-        cmds.columnLayout(self.ui["results_column"], edit=True, adjustableColumn=True)
-        cmds.refresh()
-
-        scroll_area_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, scrollAreaHeight=True) or 0
-        viewport_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, height=True) or 0
-        scroll_delta = max(int(scroll_area_height - viewport_height), 1)
-
+        clamped = max(0, int(offset))
         try:
-            cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("down", scroll_delta))
+            cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("up", 99999999))
+            if clamped > 0:
+                cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("down", clamped))
         except TypeError:
             try:
-                cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByLine=("down", scroll_delta))
+                cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByLine=("up", 99999999))
+                if clamped > 0:
+                    cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByLine=("down", clamped))
             except TypeError:
                 pass
+
+    def _go_to_summary_fail(self, summary_index: int) -> None:
+        targets = self.summary_row_fail_targets.get(summary_index, [])
+        if not targets:
+            return
+        cursor = self.summary_row_fail_cursor.get(summary_index, 0)
+        target_log_index = targets[cursor % len(targets)]
+        self.summary_row_fail_cursor[summary_index] = (cursor + 1) % len(targets)
+        target_offset = self.log_index_to_offset.get(target_log_index, 0)
+        self._scroll_results_to_offset(target_offset)
 
     def log(
         self,
@@ -966,23 +985,56 @@ class HighPolyReviewTool:
 
     def log_summary(self, level: str, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         issue = ReviewIssue(level=level, category=category, message=message, objects=objects or [])
+        summary_index = len(self.summary_items)
+        prev_end = self.summary_row_ranges[-1][1] if self.summary_row_ranges else 0
+        current_end = len(self.result_items)
         self.summary_items.append(issue)
-        if "summary_results_list" not in self.ui:
+        self.summary_row_ranges.append((prev_end + 1, current_end))
+        if "summary_results_column" not in self.ui:
             return
+
         prefix = {"INFO": "[INFO]", "WARNING": "[WARN]", "FAIL": "[FAIL]"}.get(level, "[INFO]")
-        cmds.textScrollList(self.ui["summary_results_list"], e=True, append=f"{prefix} {category}: {message}")
+        display = f"{prefix} {category}: {message}"
+
+        cmds.setParent(self.ui["summary_results_column"])
+        if level == "FAIL":
+            cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+            cmds.text(label=display, align="left")
+            fail_targets: List[int] = []
+            start_idx, end_idx = self.summary_row_ranges[summary_index]
+            if start_idx <= end_idx:
+                for idx in range(start_idx, end_idx + 1):
+                    if idx <= len(self.result_items) and self.result_items[idx - 1].level == "FAIL":
+                        fail_targets.append(idx)
+            if not fail_targets:
+                fallback = [idx for idx, item in enumerate(self.result_items, start=1) if item.level == "FAIL"]
+                fail_targets = fallback
+            self.summary_row_fail_targets[summary_index] = fail_targets
+            self.summary_row_fail_cursor[summary_index] = 0
+            cmds.button(label="Go To Error", height=22, enable=bool(fail_targets), command=lambda *_ , i=summary_index: self._go_to_summary_fail(i))
+            cmds.setParent("..")
+        else:
+            cmds.text(label=display, align="left")
 
     def clear_results(self) -> None:
         self.result_items = []
         self.summary_items = []
         self.result_index_to_objects = {}
         self.result_control_to_objects = {}
+        self.summary_row_ranges = []
+        self.summary_row_fail_targets = {}
+        self.summary_row_fail_cursor = {}
+        self.log_index_to_row = {}
+        self.log_index_to_offset = {}
+        self._results_content_height = 0
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
             if cmds.control(row, exists=True):
                 cmds.deleteUI(row)
-        if "summary_results_list" in self.ui:
-            cmds.textScrollList(self.ui["summary_results_list"], e=True, removeAll=True)
+        summary_rows = cmds.columnLayout(self.ui["summary_results_column"], q=True, childArray=True) or []
+        for row in summary_rows:
+            if cmds.control(row, exists=True):
+                cmds.deleteUI(row)
         self.refresh_summary()
 
     def refresh_summary(self) -> None:
