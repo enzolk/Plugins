@@ -666,6 +666,7 @@ class HighPolyReviewTool:
         self.ui["results_scroll"] = cmds.scrollLayout(
             childResizable=True,
             height=260,
+            verticalScrollBarThickness=16,
         )
         self.ui["results_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         cmds.setParent("..")
@@ -897,7 +898,6 @@ class HighPolyReviewTool:
             "label": display,
             "align": "left",
             "wordWrap": True,
-            "height": 24,
         }
         if row_color:
             text_kwargs["backgroundColor"] = row_color
@@ -915,6 +915,26 @@ class HighPolyReviewTool:
             command=lambda *_: self.on_result_selected_from_control(row_control),
         )
         cmds.setParent("..")
+        cmds.evalDeferred(self._refresh_results_scroll_to_bottom, lowestPriority=True)
+
+    def _refresh_results_scroll_to_bottom(self) -> None:
+        if "results_scroll" not in self.ui or "results_column" not in self.ui:
+            return
+
+        cmds.columnLayout(self.ui["results_column"], edit=True, adjustableColumn=True)
+        cmds.refresh()
+
+        scroll_area_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, scrollAreaHeight=True) or 0
+        viewport_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, height=True) or 0
+        scroll_delta = max(int(scroll_area_height - viewport_height), 1)
+
+        try:
+            cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("down", scroll_delta))
+        except TypeError:
+            try:
+                cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByLine=("down", scroll_delta))
+            except TypeError:
+                pass
 
     def log(
         self,
