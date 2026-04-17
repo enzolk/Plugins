@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -666,6 +667,7 @@ class HighPolyReviewTool:
         self.ui["results_scroll"] = cmds.scrollLayout(
             childResizable=True,
             height=260,
+            verticalScrollBarThickness=16,
         )
         self.ui["results_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         cmds.setParent("..")
@@ -878,6 +880,14 @@ class HighPolyReviewTool:
             "FAIL": "[FAIL]",
         }.get(level, "[INFO]")
         display = f"{prefix} {category}: {message}"
+        wrapped_lines = textwrap.wrap(
+            display,
+            width=120,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [display]
+        wrapped_display = "\n".join(wrapped_lines)
+        row_height = max(24, len(wrapped_lines) * 18)
         row_style = self._get_log_row_style(level, message, style=style)
         style_to_color = {
             "fail": (0.35, 0.18, 0.18),
@@ -894,10 +904,10 @@ class HighPolyReviewTool:
             columnAttach=[(1, "both", 0), (2, "both", 6)],
         )
         text_kwargs: Dict[str, Any] = {
-            "label": display,
+            "label": wrapped_display,
             "align": "left",
-            "wordWrap": True,
-            "height": 24,
+            "wordWrap": False,
+            "height": row_height,
         }
         if row_color:
             text_kwargs["backgroundColor"] = row_color
@@ -910,11 +920,31 @@ class HighPolyReviewTool:
         select_enabled = bool(row_objects)
         cmds.button(
             label="Select",
-            height=22,
+            height=row_height,
             enable=select_enabled,
             command=lambda *_: self.on_result_selected_from_control(row_control),
         )
         cmds.setParent("..")
+        cmds.evalDeferred(self._refresh_results_scroll_to_bottom, lowestPriority=True)
+
+    def _refresh_results_scroll_to_bottom(self) -> None:
+        if "results_scroll" not in self.ui or "results_column" not in self.ui:
+            return
+
+        cmds.columnLayout(self.ui["results_column"], edit=True, adjustableColumn=True)
+        cmds.refresh()
+
+        scroll_area_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, scrollAreaHeight=True) or 0
+        viewport_height = cmds.scrollLayout(self.ui["results_scroll"], q=True, height=True) or 0
+        scroll_delta = max(int(scroll_area_height - viewport_height), 1)
+
+        try:
+            cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("down", scroll_delta))
+        except TypeError:
+            try:
+                cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByLine=("down", scroll_delta))
+            except TypeError:
+                pass
 
     def log(
         self,
