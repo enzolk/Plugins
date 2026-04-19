@@ -129,6 +129,7 @@ class HighPolyReviewTool:
             "ma_bake_compared": {"status": "PENDING", "mode": "AUTO"},
             "bake_structure_checked": {"status": "PENDING", "mode": "AUTO"},
             "bake_low_topology_checked": {"status": "PENDING", "mode": "AUTO"},
+            "bake_high_vertex_colors_checked": {"status": "PENDING", "mode": "AUTO"},
             "bake_high_materials_checked": {"status": "PENDING", "mode": "AUTO"},
             "bake_low_materials_checked": {"status": "PENDING", "mode": "AUTO"},
             "bake_low_uv_map1_checked": {"status": "PENDING", "mode": "AUTO"},
@@ -161,6 +162,7 @@ class HighPolyReviewTool:
             "ma_bake_compared": "check_ma_bake",
             "bake_structure_checked": "check_bake_structure",
             "bake_low_topology_checked": "check_bake_low_topology",
+            "bake_high_vertex_colors_checked": "check_bake_high_vertex_colors",
             "bake_high_materials_checked": "check_bake_high_materials",
             "bake_low_materials_checked": "check_bake_low_materials",
             "bake_low_uv_map1_checked": "check_bake_low_uv_map1",
@@ -361,14 +363,26 @@ class HighPolyReviewTool:
         cmds.text(label="Step 07 — Compare High.ma vs High.fbx", align="left")
         self._build_manual_root_selector("compare_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_fbx_root_menu", "Select High.fbx Root", "high_fbx")
-        self.ui["check_ma_fbx"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("ma_fbx_compared"))
-        cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_ma_vs_fbx())
+        self._build_compare_row(
+            "check_ma_fbx",
+            "ma_fbx_compared",
+            "Run Compare",
+            self.compare_ma_vs_fbx,
+            "compare_ma_fbx_global_mode",
+            default_global=False,
+        )
         cmds.separator(style="in")
         cmds.text(label="Step 08 — Compare High.ma vs Bake Scene High", align="left")
         self._build_manual_root_selector("compare_bake_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_bake_high_root_menu", "Select Bake High Root", "bake_high")
-        self.ui["check_ma_bake"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("ma_bake_compared"))
-        cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_ma_vs_bake_high())
+        self._build_compare_row(
+            "check_ma_bake",
+            "ma_bake_compared",
+            "Run Compare Bake",
+            self.compare_ma_vs_bake_high,
+            "compare_ma_bake_global_mode",
+            default_global=False,
+        )
         cmds.setParent("..")
         cmds.setParent("..")
     def _build_guided_high_review_section(self) -> None:
@@ -452,15 +466,27 @@ class HighPolyReviewTool:
         cmds.text(label="Step 06 — Compare Low.fbx vs Bake Scene Low", align="left")
         self._build_manual_root_selector("compare_low_bake_low_root_menu", "Select Low.fbx Root", "low_fbx")
         self._build_manual_root_selector("compare_low_bake_bake_root_menu", "Select Bake Low Root", "bake_low")
-        self.ui["check_low_bake"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("low_bake_compared"))
-        cmds.button(label="Run Compare Bake", height=26, command=lambda *_: self.compare_low_vs_bake_low())
+        self._build_compare_row(
+            "check_low_bake",
+            "low_bake_compared",
+            "Run Compare Bake",
+            self.compare_low_vs_bake_low,
+            "compare_low_bake_global_mode",
+            default_global=False,
+        )
         cmds.separator(style="in")
 
         cmds.text(label="Step 07 — Compare Low.fbx vs Final Scene Asset", align="left")
         self._build_manual_root_selector("compare_low_final_low_root_menu", "Select Low.fbx Root", "low_fbx")
         self._build_manual_root_selector("compare_low_final_final_root_menu", "Select Final Scene Root", "final_ma")
-        self.ui["check_low_final"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("low_final_compared"))
-        cmds.button(label="Run Compare Final Asset", height=26, command=lambda *_: self.compare_low_vs_final_asset())
+        self._build_compare_row(
+            "check_low_final",
+            "low_final_compared",
+            "Run Compare Final Asset",
+            self.compare_low_vs_final_asset,
+            "compare_low_final_global_mode",
+            default_global=True,
+        )
 
         cmds.setParent("..")
         cmds.setParent("..")
@@ -488,7 +514,12 @@ class HighPolyReviewTool:
         self._build_check_row("check_bake_low_topology", "bake_low_topology_checked", "Low Topology Check", self.run_bake_low_topology_checks)
 
         cmds.separator(style="in")
-        cmds.text(label="Step 03 — Materials on Bake High", align="left")
+        cmds.text(label="Step 03 — Vertex Colors on Bake High", align="left")
+        self._build_manual_root_selector("bake_high_vertex_root_menu", "Select Bake High Root for Vertex Color Check", "bake_high")
+        self._build_check_row("check_bake_high_vertex_colors", "bake_high_vertex_colors_checked", "Vertex Color Check", self.run_bake_high_vertex_color_check)
+
+        cmds.separator(style="in")
+        cmds.text(label="Step 04 — Materials on Bake High", align="left")
         self._build_manual_root_selector("bake_high_materials_root_menu", "Select Bake High Root for Materials / Texture Sets", "bake_high")
         self._build_check_row("check_bake_high_materials", "bake_high_materials_checked", "Analyze Materials", self.analyze_bake_high_materials)
         self.ui["bake_high_texture_sets_list"] = cmds.textScrollList(
@@ -499,7 +530,7 @@ class HighPolyReviewTool:
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("bake_high"))
 
         cmds.separator(style="in")
-        cmds.text(label="Step 04 — Materials on Bake Low", align="left")
+        cmds.text(label="Step 05 — Materials on Bake Low", align="left")
         self._build_manual_root_selector("bake_low_materials_root_menu", "Select Bake Low Root for Materials / Texture Sets", "bake_low")
         self._build_check_row("check_bake_low_materials", "bake_low_materials_checked", "Analyze Materials", self.analyze_bake_low_materials)
         self.ui["bake_low_texture_sets_list"] = cmds.textScrollList(
@@ -510,17 +541,17 @@ class HighPolyReviewTool:
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("bake_low"))
 
         cmds.separator(style="in")
-        cmds.text(label="Step 05 — UV Check Map 1 on Bake Low", align="left")
+        cmds.text(label="Step 06 — UV Check Map 1 on Bake Low", align="left")
         self._build_manual_root_selector("bake_low_uv1_root_menu", "Select Bake Low Root for UV map1 Check", "bake_low")
         self._build_check_row("check_bake_low_uv_map1", "bake_low_uv_map1_checked", "UV Map1 Check", self.run_bake_low_uv_map1_check)
 
         cmds.separator(style="in")
-        cmds.text(label="Step 06 — UV Check Map 2 on Bake Low", align="left")
+        cmds.text(label="Step 07 — UV Check Map 2 on Bake Low", align="left")
         self._build_manual_root_selector("bake_low_uv2_root_menu", "Select Bake Low Root for UV map2 / TD Check", "bake_low")
         self._build_check_row("check_bake_low_uv_map2", "bake_low_uv_map2_checked", "UV Map2 Check", self.run_bake_low_uv_map2_check)
 
         cmds.separator(style="in")
-        cmds.text(label="Step 07 — Naming & Pairing", align="left")
+        cmds.text(label="Step 08 — Naming & Pairing", align="left")
         self._build_manual_root_selector("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(
@@ -542,7 +573,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
         cmds.separator(style="in")
-        cmds.text(label="Step 08 — Bake Readiness", align="left")
+        cmds.text(label="Step 09 — Bake Readiness", align="left")
         self._build_manual_root_selector("bake_ready_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -599,8 +630,14 @@ class HighPolyReviewTool:
         cmds.text(label="Step 06 — Compare Final Asset .ma vs Final Asset .fbx", align="left")
         self._build_manual_root_selector("compare_final_ma_root_menu", "Select Final Asset .ma Root", "final_ma")
         self._build_manual_root_selector("compare_final_fbx_root_menu", "Select Final Asset .fbx Root", "final_fbx")
-        self.ui["check_final_compare"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("final_ma_fbx_compared"))
-        cmds.button(label="Run Compare", height=26, command=lambda *_: self.compare_final_asset_ma_vs_fbx())
+        self._build_compare_row(
+            "check_final_compare",
+            "final_ma_fbx_compared",
+            "Run Compare",
+            self.compare_final_asset_ma_vs_fbx,
+            "compare_final_ma_fbx_global_mode",
+            default_global=True,
+        )
 
         cmds.setParent("..")
         cmds.setParent("..")
@@ -610,6 +647,22 @@ class HighPolyReviewTool:
         self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
         cmds.text(label=label, align="left")
         cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
+        cmds.setParent("..")
+
+    def _build_compare_row(
+        self,
+        check_key_ui: str,
+        check_key: str,
+        button_label: str,
+        command,
+        global_toggle_key: str,
+        default_global: bool = False,
+    ) -> None:
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
+        cmds.text(label="Compare mode", align="left")
+        self.ui[global_toggle_key] = cmds.checkBox(label="Global", value=default_global)
+        cmds.button(label=button_label, height=26, command=lambda *_: command())
         cmds.setParent("..")
 
     def _build_tab_visibility_controls(self, context_key: str) -> None:
@@ -2117,6 +2170,52 @@ class HighPolyReviewTool:
                 quad_count += 1
         return quad_count, face_count
 
+    def _count_non_manifold_uv_components(self, mesh: str) -> int:
+        count = 0
+        for flag in ("nonManifoldUVEdges", "nonManifoldUVs", "nonManifoldUVVertices"):
+            try:
+                issues = cmds.polyInfo(mesh, **{flag: True}) or []
+            except (TypeError, RuntimeError):
+                continue
+            count += len(issues)
+        return count
+
+    def _count_zero_space_uv_shells(self, mesh: str, uv_set: str) -> int:
+        shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+        if not shapes:
+            return 0
+        shape = shapes[0]
+        if not self._uv_set_on_shape(shape, uv_set):
+            return 0
+        try:
+            cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+        except RuntimeError:
+            return 0
+        try:
+            shell_ids = cmds.polyEvaluate(shape, uvShellIds=True) or []
+        except RuntimeError:
+            return 0
+        uvs_raw = cmds.polyEditUV(f"{shape}.map[*]", query=True) or []
+        uv_count = min(len(shell_ids), len(uvs_raw) // 2)
+        if uv_count <= 0:
+            return 0
+
+        shell_bounds: Dict[int, List[float]] = {}
+        for idx in range(uv_count):
+            shell_id = int(shell_ids[idx])
+            u_val = float(uvs_raw[idx * 2])
+            v_val = float(uvs_raw[idx * 2 + 1])
+            if shell_id not in shell_bounds:
+                shell_bounds[shell_id] = [u_val, u_val, v_val, v_val]
+            else:
+                b = shell_bounds[shell_id]
+                b[0] = min(b[0], u_val)
+                b[1] = max(b[1], u_val)
+                b[2] = min(b[2], v_val)
+                b[3] = max(b[3], v_val)
+        eps = 1e-8
+        return sum(1 for b in shell_bounds.values() if abs(b[1] - b[0]) <= eps or abs(b[3] - b[2]) <= eps)
+
     def _namespace_from_node(self, node: str) -> str:
         short = node.split("|")[-1]
         if ":" not in short:
@@ -3173,8 +3272,140 @@ class HighPolyReviewTool:
             self.log("FAIL", "Compare", f"UV différentes: {len(uv_mismatch)}", uv_mismatch[:150])
         return False
 
+    def _is_global_compare_enabled(self, toggle_key: str, default: bool = False) -> bool:
+        control = self.ui.get(toggle_key)
+        if not control:
+            return default
+        try:
+            return bool(cmds.checkBox(control, query=True, value=True))
+        except RuntimeError:
+            return default
+
+    def _run_pair_compare(
+        self,
+        *,
+        category: str,
+        pair_category: str,
+        uv_category: str,
+        check_state_key: str,
+        check_label: str,
+        left_root: str,
+        right_root: str,
+        left_label: str,
+        right_label: str,
+        left_meshes: List[str],
+        right_meshes: List[str],
+    ) -> None:
+        match_data = self._build_mesh_match_pairs(left_meshes, right_meshes, left_label, right_label)
+        matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
+        unmatched_left: List[str] = match_data["unmatched_a"]
+        unmatched_right: List[str] = match_data["unmatched_b"]
+        pair_rows: List[Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]]]] = []
+        for left_mesh, right_mesh in matched_pairs:
+            pair_rows.append((self._mesh_data_signature(left_mesh, root=left_root), self._mesh_data_signature(right_mesh, root=right_root)))
+        for left_mesh in unmatched_left:
+            pair_rows.append((self._mesh_data_signature(left_mesh, root=left_root), None))
+        for right_mesh in unmatched_right:
+            pair_rows.append((None, self._mesh_data_signature(right_mesh, root=right_root)))
+
+        self.log("INFO", category, "Compare mode = Pair")
+        self.log("INFO", category, f"Paires comparées : {len(pair_rows)}")
+        pair_fail_count = 0
+        for left_data, right_data in pair_rows:
+            left_name = left_data["path"] if left_data else f"UNMATCHED {left_label} mesh"
+            right_name = right_data["path"] if right_data else f"UNMATCHED {right_label} mesh"
+            left_key = self._normalized_mesh_leaf_key(left_data["path"]) if left_data else "n/a"
+            right_key = self._normalized_mesh_leaf_key(right_data["path"]) if right_data else "n/a"
+            presence_ok = bool(left_data and right_data)
+            topo_ok = bool(left_data and right_data and (left_data["v"], left_data["e"], left_data["f"]) == (right_data["v"], right_data["e"], right_data["f"]))
+            uv_ok = False
+            if left_data and right_data:
+                uv_ok, _uv_details = self._compare_mesh_uv_sets(left_data["path"], right_data["path"], category=uv_category)
+            bbox_dims_left = (0.0, 0.0, 0.0)
+            bbox_dims_right = (0.0, 0.0, 0.0)
+            bbox_delta = (0.0, 0.0, 0.0)
+            bbox_center_delta = (0.0, 0.0, 0.0)
+            bbox_ok = False
+            if presence_ok:
+                bbox_dims_left, bbox_center_left = self._mesh_bbox_dims_and_center_world(left_data["path"])
+                bbox_dims_right, bbox_center_right = self._mesh_bbox_dims_and_center_world(right_data["path"])
+                bbox_delta = tuple(abs(bbox_dims_left[i] - bbox_dims_right[i]) for i in range(3))
+                bbox_center_delta = tuple(abs(bbox_center_left[i] - bbox_center_right[i]) for i in range(3))
+                bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+            pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
+            if not pair_ok:
+                pair_fail_count += 1
+
+            self.log("INFO", pair_category, f"{left_label} Mesh = {left_name}")
+            self.log("INFO", pair_category, f"{right_label} Mesh = {right_name}")
+            self.log("INFO", pair_category, f"Matching key A = {left_key}")
+            self.log("INFO", pair_category, f"Matching key B = {right_key}")
+            self.log("INFO" if presence_ok else "FAIL", pair_category, f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+            self.log("INFO" if topo_ok else "FAIL", pair_category, f"Topology match = {'OK' if topo_ok else 'FAIL'}")
+            self.log("INFO" if uv_ok else "FAIL", pair_category, f"UV match = {'OK' if uv_ok else 'FAIL'}")
+            self.log("INFO", pair_category, f"Bounding Box A = {self._fmt_vec(bbox_dims_left, precision=2)}")
+            self.log("INFO", pair_category, f"Bounding Box B = {self._fmt_vec(bbox_dims_right, precision=2)}")
+            self.log("INFO", pair_category, f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+            self.log("INFO", pair_category, f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+            self.log("INFO" if bbox_ok else "FAIL", pair_category, f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+            self.log("INFO" if pair_ok else "FAIL", pair_category, f"Result = {'OK' if pair_ok else 'FAIL'}")
+
+        ok = pair_fail_count == 0
+        self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
+        if ok:
+            self.log_check_result(check_state_key, "INFO", check_label, "pair compare: topology, UVs and bbox match")
+        else:
+            self.log_check_result(check_state_key, "FAIL", check_label, f"{pair_fail_count}/{len(pair_rows)} mesh pairs mismatched")
+
+    def _run_global_compare(
+        self,
+        *,
+        category: str,
+        uv_category: str,
+        check_state_key: str,
+        check_label: str,
+        left_root: str,
+        right_root: str,
+        left_label: str,
+        right_label: str,
+    ) -> None:
+        left_data = self._root_aggregate_signature(left_root)
+        right_data = self._root_aggregate_signature(right_root)
+        self.log("INFO", category, "Compare mode = Global")
+        self.log("INFO", category, f"Meshes analysés {left_label}/{right_label} : {left_data['mesh_count']} / {right_data['mesh_count']}")
+
+        presence_ok = bool(left_data["mesh_count"] > 0 and right_data["mesh_count"] > 0)
+        topo_ok = (left_data["v"], left_data["e"], left_data["f"]) == (right_data["v"], right_data["e"], right_data["f"])
+        uv_ok, _uv_details = self._compare_uv_set_signatures(left_data["uv_sets"], right_data["uv_sets"], category=uv_category)
+        bbox_delta = tuple(abs(left_data["bbox_dims"][i] - right_data["bbox_dims"][i]) for i in range(3))
+        bbox_center_delta = tuple(abs(left_data["bbox_center"][i] - right_data["bbox_center"][i]) for i in range(3))
+        bbox_ok = all(v <= 1e-4 for v in bbox_delta) and all(v <= 1e-4 for v in bbox_center_delta)
+        pivot_delta = tuple(abs(left_data["pivot_world"][i] - right_data["pivot_world"][i]) for i in range(3))
+        pivot_ok = all(v <= 1e-4 for v in pivot_delta)
+        ok = presence_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
+
+        self.log("INFO" if presence_ok else "FAIL", category, f"Presence match = {'OK' if presence_ok else 'FAIL'}")
+        self.log("INFO" if topo_ok else "FAIL", category, "Topology match (totaux root) = {}".format("OK" if topo_ok else "FAIL"))
+        self.log("INFO" if uv_ok else "FAIL", category, "UV match (totaux root) = {}".format("OK" if uv_ok else "FAIL"))
+        self.log("INFO", category, f"Bounding Box {left_label} (root) = {self._fmt_vec(left_data['bbox_dims'], precision=2)}")
+        self.log("INFO", category, f"Bounding Box {right_label} (root) = {self._fmt_vec(right_data['bbox_dims'], precision=2)}")
+        self.log("INFO", category, f"Bounding Box delta = {self._fmt_vec(bbox_delta, precision=4)}")
+        self.log("INFO", category, f"Bounding Box center delta = {self._fmt_vec(bbox_center_delta, precision=4)}")
+        self.log("INFO" if bbox_ok else "FAIL", category, f"Bounding Box match = {'OK' if bbox_ok else 'FAIL'}")
+        self.log("INFO", category, f"Pivot {left_label} (root) = {self._fmt_vec(left_data['pivot_world'], precision=4)}")
+        self.log("INFO", category, f"Pivot {right_label} (root) = {self._fmt_vec(right_data['pivot_world'], precision=4)}")
+        self.log("INFO", category, f"Pivot delta = {self._fmt_vec(pivot_delta, precision=4)}")
+        self.log("INFO" if pivot_ok else "FAIL", category, f"Pivot match = {'OK' if pivot_ok else 'FAIL'}")
+        self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
+        if ok:
+            self.log_check_result(check_state_key, "INFO", check_label, "global compare: topology, UVs, bbox and pivot match")
+        else:
+            mismatch_flags = int(not presence_ok) + int(not topo_ok) + int(not uv_ok) + int(not bbox_ok) + int(not pivot_ok)
+            self.log_check_result(check_state_key, "FAIL", check_label, f"{mismatch_flags} global mismatch type(s) detected")
+
     def compare_ma_vs_fbx(self) -> None:
         self._log_step_header(7, "Compare High.ma vs High.fbx", category="Compare")
+        use_global_mode = self._is_global_compare_enabled("compare_ma_fbx_global_mode", default=False)
         self.log("INFO", "Compare", f"Source A : {self._basename_from_path(self.paths.get('high_ma', ''))}")
         self.log("INFO", "Compare", f"Source B : {self._basename_from_path(self.paths.get('high_fbx', ''))}")
         ma_root = self.get_manual_selected_root("compare_ma_root_menu")
@@ -3193,7 +3424,20 @@ class HighPolyReviewTool:
             self.log("FAIL", "Compare", "Résultat : compare impossible (au moins une source sans mesh).")
             self.log_check_result("ma_fbx_compared", "FAIL", "Compare High vs FBX", "compare aborted: one root has no meshes")
             return
+        if use_global_mode:
+            self._run_global_compare(
+                category="Compare",
+                uv_category="CompareGlobalUV",
+                check_state_key="ma_fbx_compared",
+                check_label="Compare High vs FBX",
+                left_root=ma_root,
+                right_root=fbx_root,
+                left_label="MA",
+                right_label="FBX",
+            )
+            return
 
+        self.log("INFO", "Compare", "Compare mode = Pair")
         match_data = self._build_mesh_match_pairs(ma_meshes, fbx_meshes, "High.ma", "High.fbx")
         matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
         unmatched_ma: List[str] = match_data["unmatched_a"]
@@ -3289,6 +3533,7 @@ class HighPolyReviewTool:
 
     def compare_ma_vs_bake_high(self) -> None:
         self._log_step_header(8, "Compare High.ma vs Bake High", category="CompareBake")
+        use_global_mode = self._is_global_compare_enabled("compare_ma_bake_global_mode", default=False)
         ma_root = self.get_manual_selected_root("compare_bake_ma_root_menu")
         bake_root = self.get_manual_selected_root("compare_bake_high_root_menu")
         if not ma_root or not bake_root:
@@ -3303,6 +3548,23 @@ class HighPolyReviewTool:
         self.log("INFO", "CompareBake", f"Root High.ma sélectionné : {ma_root}", [ma_root])
         self.log("INFO", "CompareBake", f"Root Bake sélectionné : {bake_root}", [bake_root])
         self.log("INFO", "CompareBake", f"Meshes analysés High.ma / Bake High : {len(ma_meshes)} / {len(bake_meshes)}")
+        if not ma_meshes or not bake_meshes:
+            self.log("FAIL", "CompareBake", "Compare impossible : High.ma ou Bake High non chargé.")
+            self.log_check_result("ma_bake_compared", "FAIL", "Compare High vs Bake", "compare aborted: one root has no meshes")
+            return
+        if use_global_mode:
+            self._run_global_compare(
+                category="CompareBake",
+                uv_category="CompareBakeGlobalUV",
+                check_state_key="ma_bake_compared",
+                check_label="Compare High vs Bake",
+                left_root=ma_root,
+                right_root=bake_root,
+                left_label="High.ma",
+                right_label="Bake",
+            )
+            return
+        self.log("INFO", "CompareBake", "Compare mode = Pair")
         match_data = self._build_mesh_match_pairs(ma_meshes, bake_meshes, "High.ma", "Bake High")
         matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
         unmatched_ma: List[str] = match_data["unmatched_a"]
@@ -3687,6 +3949,7 @@ class HighPolyReviewTool:
             nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
             lam = cmds.polyInfo(m, laminaFaces=True) or []
             non_manifold_count = len(nmv) + len(nme)
+            non_manifold_uv_count = self._count_non_manifold_uv_components(m)
             lamina_count = len(lam)
             ngon_count = 0
             face_count = int(cmds.polyEvaluate(m, face=True) or 0)
@@ -3695,13 +3958,14 @@ class HighPolyReviewTool:
                 tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
                 if len(tokens) > 5:
                     ngon_count += 1
-            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
+            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and non_manifold_uv_count == 0 and lamina_count == 0)
             if mesh_ok:
                 ok_count += 1
 
             self.log("INFO", "LowTopologyMesh", f"Mesh = {m}")
             self.log("INFO" if ngon_count == 0 else "FAIL", "LowTopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
             self.log("INFO" if non_manifold_count == 0 else "FAIL", "LowTopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
+            self.log("INFO" if non_manifold_uv_count == 0 else "FAIL", "LowTopologyMesh", f"Non-manifold UV = {'OK' if non_manifold_uv_count == 0 else f'FAIL ({non_manifold_uv_count} éléments)'}")
             self.log("INFO" if lamina_count == 0 else "FAIL", "LowTopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
             self.log("INFO" if mesh_ok else "FAIL", "LowTopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
 
@@ -3709,7 +3973,7 @@ class HighPolyReviewTool:
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         if ok:
-            self.log_check_result(check_state_key, "INFO", "Low Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold or lamina")
+            self.log_check_result(check_state_key, "INFO", "Low Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold, non-manifold UV or lamina")
         else:
             self.log_check_result(check_state_key, "FAIL", "Low Topology Check", f"{fail_count}/{len(meshes)} meshes have topology issues")
 
@@ -3943,8 +4207,19 @@ class HighPolyReviewTool:
             source_file_key="bake_ma",
         )
 
+    def run_bake_high_vertex_color_check(self) -> None:
+        self.check_vertex_colors(
+            root_menu_key="bake_high_vertex_root_menu",
+            check_state_key="bake_high_vertex_colors_checked",
+            category="BakeHighVertexColor",
+            step_index=3,
+            step_label="Bake High Vertex Color Check",
+            source_file_key="bake_ma",
+            result_label="Bake High Vertex Color Check",
+        )
+
     def analyze_bake_high_materials(self) -> None:
-        self._log_step_header(3, "Bake High Materials", category="BakeHighMaterials")
+        self._log_step_header(4, "Bake High Materials", category="BakeHighMaterials")
         root = self.get_manual_selected_root("bake_high_materials_root_menu")
         if not root:
             self.log("FAIL", "BakeHighMaterials", "Sélection manuelle requise: Select Bake High Root for Materials / Texture Sets.")
@@ -3978,7 +4253,7 @@ class HighPolyReviewTool:
             root_menu_key="bake_low_materials_root_menu",
             check_state_key="bake_low_materials_checked",
             category="BakeLowMaterials",
-            step_index=4,
+            step_index=5,
             step_label="Bake Low Materials",
             source_file_key="bake_ma",
             material_context_key="bake_low",
@@ -3989,7 +4264,7 @@ class HighPolyReviewTool:
             root_menu_key="bake_low_uv1_root_menu",
             check_state_key="bake_low_uv_map1_checked",
             category="BakeLowUV1",
-            step_index=5,
+            step_index=6,
             step_label="UV Check Map 1 on Bake Low",
             source_file_key="bake_ma",
         )
@@ -3999,7 +4274,7 @@ class HighPolyReviewTool:
             root_menu_key="bake_low_uv2_root_menu",
             check_state_key="bake_low_uv_map2_checked",
             category="BakeLowUV2",
-            step_index=6,
+            step_index=7,
             step_label="UV Check Map 2 on Bake Low",
             source_file_key="bake_ma",
         )
@@ -4162,6 +4437,7 @@ class HighPolyReviewTool:
             nme = cmds.polyInfo(m, nonManifoldEdges=True) or []
             lam = cmds.polyInfo(m, laminaFaces=True) or []
             non_manifold_count = len(nmv) + len(nme)
+            non_manifold_uv_count = self._count_non_manifold_uv_components(m)
             lamina_count = len(lam)
             ngon_count = 0
             face_count = int(cmds.polyEvaluate(m, face=True) or 0)
@@ -4173,12 +4449,13 @@ class HighPolyReviewTool:
                 if len(tokens) > 5:
                     ngon_count += 1
 
-            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and lamina_count == 0)
+            mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and non_manifold_uv_count == 0 and lamina_count == 0)
             if mesh_ok:
                 ok_count += 1
             self.log("INFO", "TopologyMesh", f"Mesh = {m}")
             self.log("INFO" if ngon_count == 0 else "FAIL", "TopologyMesh", f"N-gons = {'OK' if ngon_count == 0 else f'FAIL ({ngon_count} faces)'}")
             self.log("INFO" if non_manifold_count == 0 else "FAIL", "TopologyMesh", f"Non-manifold = {'OK' if non_manifold_count == 0 else f'FAIL ({non_manifold_count} éléments)'}")
+            self.log("INFO" if non_manifold_uv_count == 0 else "FAIL", "TopologyMesh", f"Non-manifold UV = {'OK' if non_manifold_uv_count == 0 else f'FAIL ({non_manifold_uv_count} éléments)'}")
             self.log("INFO" if lamina_count == 0 else "FAIL", "TopologyMesh", f"Lamina faces = {'OK' if lamina_count == 0 else f'FAIL ({lamina_count} faces)'}")
             self.log("INFO" if mesh_ok else "FAIL", "TopologyMesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [m])
 
@@ -4186,7 +4463,7 @@ class HighPolyReviewTool:
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "Topology", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         if ok:
-            self.log_check_result("topology_checked", "INFO", "Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold or lamina")
+            self.log_check_result("topology_checked", "INFO", "Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold, non-manifold UV or lamina")
         else:
             self.log_check_result("topology_checked", "FAIL", "Topology Check", f"{fail_count}/{len(meshes)} meshes have topology defects")
 
@@ -4413,21 +4690,32 @@ else
         else:
             self.log_check_result("texture_sets_analyzed", "FAIL", "Materials Check", "no valid material assignment detected")
 
-    def check_vertex_colors(self, scope_keys: Optional[List[str]] = None, source_label: Optional[str] = None) -> None:
+    def check_vertex_colors(
+        self,
+        scope_keys: Optional[List[str]] = None,
+        source_label: Optional[str] = None,
+        root_menu_key: str = "vertex_high_root_menu",
+        check_state_key: str = "vertex_colors_checked",
+        category: str = "VertexColor",
+        step_index: int = 4,
+        step_label: str = "Vertex Color Check",
+        source_file_key: str = "high_ma",
+        result_label: str = "Vertex Color Check",
+    ) -> None:
         _ = (scope_keys, source_label)
-        self._log_step_header(4, "Vertex Color Check", category="VertexColor")
-        root = self.get_manual_selected_root("vertex_high_root_menu")
+        self._log_step_header(step_index, step_label, category=category)
+        root = self.get_manual_selected_root(root_menu_key)
         if not root:
-            self.log("FAIL", "VertexColor", "Sélection manuelle requise: Select High Root for Vertex Color Check.")
-            self.log_check_result("vertex_colors_checked", "FAIL", "Vertex Color Check", "manual root selection missing")
+            self.log("FAIL", category, "Sélection manuelle requise: Select High Root for Vertex Color Check.")
+            self.log_check_result(check_state_key, "FAIL", result_label, "manual root selection missing")
             return
         meshes = self._collect_mesh_transforms(root)
-        self.log("INFO", "VertexColor", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-        self.log("INFO", "VertexColor", f"Root analysé : {root}", [root])
-        self.log("INFO", "VertexColor", f"Meshes analysés : {len(meshes)}")
+        self.log("INFO", category, f"Fichier analysé : {self._basename_from_path(self.paths.get(source_file_key, ''))}")
+        self.log("INFO", category, f"Root analysé : {root}", [root])
+        self.log("INFO", category, f"Meshes analysés : {len(meshes)}")
         if not meshes:
-            self.log("FAIL", "VertexColor", "Aucun mesh High.ma trouvé.")
-            self.log_check_result("vertex_colors_checked", "FAIL", "Vertex Color Check", "no high meshes found on selected root")
+            self.log("FAIL", category, "Aucun mesh High.ma trouvé.")
+            self.log_check_result(check_state_key, "FAIL", result_label, "no high meshes found on selected root")
             return
 
         ok_count = 0
@@ -4479,11 +4767,11 @@ else
 
         fail_count = len(meshes) - ok_count
         ok = fail_count == 0
-        self.log("INFO" if ok else "FAIL", "VertexColor", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
+        self.log("INFO" if ok else "FAIL", category, f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         if ok:
-            self.log_check_result("vertex_colors_checked", "INFO", "Vertex Color Check", "vertex colors present on all checked meshes")
+            self.log_check_result(check_state_key, "INFO", result_label, "vertex colors present on all checked meshes")
         else:
-            self.log_check_result("vertex_colors_checked", "FAIL", "Vertex Color Check", f"{fail_count}/{len(meshes)} meshes missing vertex colors")
+            self.log_check_result(check_state_key, "FAIL", result_label, f"{fail_count}/{len(meshes)} meshes missing vertex colors")
 
     def display_vertex_colors(self) -> None:
         shapes = self._collect_all_review_mesh_shapes()
@@ -4652,6 +4940,7 @@ else
 
         fail_count = 0
         map1_missing_count = 0
+        zero_space_fail_count = 0
         for mesh in meshes:
             shape = (cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True) or [None])[0]
             if not shape:
@@ -4691,13 +4980,18 @@ else
             except RuntimeError:
                 pass
             outside_ok = outside_count == 0
-            mesh_ok = overlap_ok and outside_ok
+            zero_space_shells = self._count_zero_space_uv_shells(mesh, "map1")
+            zero_space_ok = zero_space_shells == 0
+            mesh_ok = overlap_ok and outside_ok and zero_space_ok
             if not mesh_ok:
                 fail_count += 1
+            if not zero_space_ok:
+                zero_space_fail_count += 1
 
             self.log("INFO", "LowUV1Mesh", f"Mesh = {mesh}")
             self.log("INFO" if outside_ok else "FAIL", "LowUV1Mesh", f"UV shells hors 0-1 = {outside_count}")
             self.log("INFO" if overlap_ok else "FAIL", "LowUV1Mesh", f"UV overlap = {overlap_count}")
+            self.log("INFO" if zero_space_ok else "FAIL", "LowUV1Mesh", f"UV shells zero space = {zero_space_shells}")
             self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
         ok = fail_count == 0
@@ -4713,6 +5007,8 @@ else
             fail_message = f"UV Map1 Check: map1 missing or invalid on {map1_missing_count} meshes"
             if fail_count > map1_missing_count:
                 fail_message = f"{fail_message}; {fail_count}/{len(meshes)} meshes have overlap or shells outside 0-1"
+            if zero_space_fail_count:
+                fail_message = f"{fail_message}; {zero_space_fail_count}/{len(meshes)} meshes have zero-space UV shells"
             self.log_check_result(check_state_key, "FAIL", "UV Map1 Check", fail_message)
         self._open_uv_editor_floating()
 
@@ -4787,6 +5083,7 @@ else
 
         valid_values: List[float] = []
         pair_fail_count = 0
+        zero_space_fail_count = 0
         for mesh in meshes:
             td = self._estimate_texel_density(mesh, uv_set="map2", tex_size=2048)
             if td is None:
@@ -4799,13 +5096,18 @@ else
 
             valid_values.append(td)
             delta = td - LOW_MAP2_TARGET_TD
-            mesh_ok = abs(delta) <= LOW_MAP2_TOLERANCE
+            zero_space_shells = self._count_zero_space_uv_shells(mesh, "map2")
+            zero_space_ok = zero_space_shells == 0
+            mesh_ok = abs(delta) <= LOW_MAP2_TOLERANCE and zero_space_ok
             if not mesh_ok:
                 pair_fail_count += 1
+            if not zero_space_ok:
+                zero_space_fail_count += 1
             self.log("INFO", "LowUV2Mesh", f"Mesh = {mesh}")
             self.log("INFO", "LowUV2Mesh", f"TD mesurée = {td:.2f}")
             self.log("INFO", "LowUV2Mesh", f"TD cible = {LOW_MAP2_TARGET_TD:.2f}")
             self.log("INFO", "LowUV2Mesh", f"Delta = {delta:.2f}")
+            self.log("INFO" if zero_space_ok else "FAIL", "LowUV2Mesh", f"UV shells zero space = {zero_space_shells}")
             self.log("INFO" if mesh_ok else "FAIL", "LowUV2Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
         mean_td = (sum(valid_values) / len(valid_values)) if valid_values else 0.0
@@ -4816,7 +5118,10 @@ else
         if ok:
             self.log_check_result(check_state_key, "INFO", "UV Map2 Check", f"texel density in tolerance on {len(valid_values)} meshes (mean {mean_td:.2f})")
         else:
-            self.log_check_result(check_state_key, "FAIL", "UV Map2 Check", f"texel density out of tolerance on {pair_fail_count}/{len(meshes)} meshes")
+            msg = f"texel density out of tolerance on {pair_fail_count}/{len(meshes)} meshes"
+            if zero_space_fail_count:
+                msg = f"{msg}; zero-space UV shells on {zero_space_fail_count}/{len(meshes)} meshes"
+            self.log_check_result(check_state_key, "FAIL", "UV Map2 Check", msg)
         self._set_uv_set_on_meshes(meshes, "map2")
         try:
             cmds.select(meshes, replace=True)
@@ -4827,6 +5132,7 @@ else
 
     def compare_low_vs_bake_low(self) -> None:
         self._log_step_header(6, "Compare Low vs Bake Low", category="LowCompareBake")
+        use_global_mode = self._is_global_compare_enabled("compare_low_bake_global_mode", default=False)
         low_root = self.get_manual_selected_root("compare_low_bake_low_root_menu")
         bake_root = self.get_manual_selected_root("compare_low_bake_bake_root_menu")
         if not low_root or not bake_root:
@@ -4844,7 +5150,20 @@ else
             self.log("FAIL", "CompareLowBake", "Compare impossible : Low.fbx ou Bake Low non chargé.")
             self.log_check_result("low_bake_compared", "FAIL", "Compare Low vs Bake", "compare aborted: one root has no meshes")
             return
+        if use_global_mode:
+            self._run_global_compare(
+                category="CompareLowBake",
+                uv_category="CompareLowBakeGlobalUV",
+                check_state_key="low_bake_compared",
+                check_label="Compare Low vs Bake",
+                left_root=low_root,
+                right_root=bake_root,
+                left_label="Low",
+                right_label="Bake Low",
+            )
+            return
 
+        self.log("INFO", "CompareLowBake", "Compare mode = Pair")
         match_data = self._build_mesh_match_pairs(low_meshes, bake_meshes, "Low.fbx", "Bake Low")
         matched_pairs: List[Tuple[str, str]] = match_data["pairs"]
         unmatched_low: List[str] = match_data["unmatched_a"]
@@ -4910,6 +5229,7 @@ else
 
     def compare_low_vs_final_asset(self) -> None:
         self._log_step_header(7, "Compare Low vs Final Asset", category="LowCompareFinal")
+        use_global_mode = self._is_global_compare_enabled("compare_low_final_global_mode", default=True)
         low_root = self.get_manual_selected_root("compare_low_final_low_root_menu")
         final_root = self.get_manual_selected_root("compare_low_final_final_root_menu")
         if not low_root or not final_root:
@@ -4926,6 +5246,28 @@ else
         self.log("INFO", "CompareLowFinal", f"Source B : {self._basename_from_path(self.paths.get('final_scene_ma', ''))}")
         self.log("INFO", "CompareLowFinal", f"Root Low sélectionné : {low_root}", [low_root])
         self.log("INFO", "CompareLowFinal", f"Root Final sélectionné : {final_root}", [final_root])
+        low_meshes = self._collect_mesh_transforms(low_root)
+        final_meshes = self._collect_mesh_transforms(final_root)
+        if not low_meshes or not final_meshes:
+            self.log("FAIL", "CompareLowFinal", "Compare impossible : Low.fbx ou Final Scene non chargé.")
+            self.log_check_result("low_final_compared", "FAIL", "Compare Low vs Final", "compare aborted: one root has no meshes")
+            return
+        if not use_global_mode:
+            self._run_pair_compare(
+                category="CompareLowFinal",
+                pair_category="CompareLowFinalPair",
+                uv_category="CompareLowFinalPairUV",
+                check_state_key="low_final_compared",
+                check_label="Compare Low vs Final",
+                left_root=low_root,
+                right_root=final_root,
+                left_label="Low.fbx",
+                right_label="Final",
+                left_meshes=low_meshes,
+                right_meshes=final_meshes,
+            )
+            return
+        self.log("INFO", "CompareLowFinal", "Compare mode = Global")
         low_data = self._root_aggregate_signature(low_root)
         final_data = self._root_aggregate_signature(final_root)
         self.log("INFO", "CompareLowFinal", f"Meshes analysés Low/Final : {low_data['mesh_count']} / {final_data['mesh_count']}")
@@ -4961,6 +5303,7 @@ else
 
     def compare_final_asset_ma_vs_fbx(self) -> None:
         self._log_step_header(6, "Compare Final Asset MA vs FBX", category="FinalAssetCompare")
+        use_global_mode = self._is_global_compare_enabled("compare_final_ma_fbx_global_mode", default=True)
         ma_root = self.get_manual_selected_root("compare_final_ma_root_menu")
         fbx_root = self.get_manual_selected_root("compare_final_fbx_root_menu")
         if not ma_root or not fbx_root:
@@ -4977,6 +5320,28 @@ else
         self.log("INFO", "FinalAssetCompare", f"Source B : {self._basename_from_path(self.paths.get('final_asset_fbx', ''))}")
         self.log("INFO", "FinalAssetCompare", f"Root Final Asset MA sélectionné : {ma_root}", [ma_root])
         self.log("INFO", "FinalAssetCompare", f"Root Final Asset FBX sélectionné : {fbx_root}", [fbx_root])
+        ma_meshes = self._collect_mesh_transforms(ma_root)
+        fbx_meshes = self._collect_mesh_transforms(fbx_root)
+        if not ma_meshes or not fbx_meshes:
+            self.log("FAIL", "FinalAssetCompare", "Compare impossible : Final Asset MA ou FBX non chargé.")
+            self.log_check_result("final_ma_fbx_compared", "FAIL", "Compare Final Asset MA vs FBX", "compare aborted: one root has no meshes")
+            return
+        if not use_global_mode:
+            self._run_pair_compare(
+                category="FinalAssetCompare",
+                pair_category="FinalAssetComparePair",
+                uv_category="FinalAssetComparePairUV",
+                check_state_key="final_ma_fbx_compared",
+                check_label="Compare Final Asset MA vs FBX",
+                left_root=ma_root,
+                right_root=fbx_root,
+                left_label="Final MA",
+                right_label="Final FBX",
+                left_meshes=ma_meshes,
+                right_meshes=fbx_meshes,
+            )
+            return
+        self.log("INFO", "FinalAssetCompare", "Compare mode = Global")
 
         ma_data = self._root_aggregate_signature(ma_root)
         fbx_data = self._root_aggregate_signature(fbx_root)
