@@ -215,8 +215,6 @@ class HighPolyReviewTool:
         self.summary_row_fail_targets: Dict[int, List[int]] = {}
         self.summary_row_fail_cursor: Dict[int, int] = {}
         self.log_index_to_row: Dict[int, str] = {}
-        self.log_index_to_offset: Dict[int, int] = {}
-        self._results_content_height = 0
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
@@ -913,7 +911,7 @@ class HighPolyReviewTool:
         row_objects = list(objects or [])
 
         cmds.setParent(self.ui["results_column"])
-        cmds.rowLayout(
+        row_layout = cmds.rowLayout(
             numberOfColumns=2,
             adjustableColumn=1,
             columnAttach=[(1, "both", 0), (2, "both", 6)],
@@ -941,14 +939,50 @@ class HighPolyReviewTool:
         )
         cmds.setParent("..")
         log_index = len(self.result_items) + 1
-        self.log_index_to_row[log_index] = row_control
-        self.log_index_to_offset[log_index] = self._results_content_height
-        self._results_content_height += row_height + 2
+        self.log_index_to_row[log_index] = row_layout
+
+    def _query_layout_height(self, control_name: str) -> int:
+        if not control_name:
+            return 0
+        height = 0
+        try:
+            if cmds.control(control_name, exists=True):
+                height = int(cmds.control(control_name, q=True, height=True) or 0)
+            elif cmds.layout(control_name, exists=True):
+                height = int(cmds.layout(control_name, q=True, height=True) or 0)
+        except RuntimeError:
+            height = 0
+        return max(0, height)
+
+    def _get_results_row_spacing(self) -> int:
+        try:
+            return max(0, int(cmds.columnLayout(self.ui["results_column"], q=True, rowSpacing=True) or 0))
+        except RuntimeError:
+            return 0
+
+    def _get_results_viewport_height(self) -> int:
+        try:
+            viewport_height = int(cmds.scrollLayout(self.ui["results_scroll"], q=True, scrollAreaHeight=True) or 0)
+            if viewport_height > 0:
+                return viewport_height
+        except RuntimeError:
+            pass
+        try:
+            return max(0, int(cmds.scrollLayout(self.ui["results_scroll"], q=True, height=True) or 0))
+        except RuntimeError:
+            return 0
 
     def _scroll_results_to_offset(self, offset: int) -> None:
         if "results_scroll" not in self.ui:
             return
         clamped = max(0, int(offset))
+        try:
+            cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollAreaValue=(0, clamped))
+            return
+        except RuntimeError:
+            pass
+        except TypeError:
+            pass
         try:
             cmds.scrollLayout(self.ui["results_scroll"], edit=True, scrollByPixel=("up", 99999999))
             if clamped > 0:
@@ -961,6 +995,41 @@ class HighPolyReviewTool:
             except TypeError:
                 pass
 
+    def _center_results_log_row(self, log_index: int) -> None:
+        if "results_scroll" not in self.ui or "results_column" not in self.ui:
+            return
+        row_name = self.log_index_to_row.get(log_index)
+        if not row_name or not cmds.layout(row_name, exists=True):
+            return
+
+        rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
+        if not rows or row_name not in rows:
+            return
+
+        row_spacing = self._get_results_row_spacing()
+        viewport_height = self._get_results_viewport_height()
+        if viewport_height <= 0:
+            return
+
+        target_top = 0
+        content_height = 0
+        target_height = 0
+        for idx, row in enumerate(rows):
+            row_height = self._query_layout_height(row)
+            if row == row_name:
+                target_top = content_height
+                target_height = row_height
+            content_height += row_height
+            if idx < len(rows) - 1:
+                content_height += row_spacing
+
+        if target_height <= 0:
+            return
+
+        centered_offset = int(round(target_top + (target_height * 0.5) - (viewport_height * 0.5)))
+        max_offset = max(0, content_height - viewport_height)
+        self._scroll_results_to_offset(max(0, min(centered_offset, max_offset)))
+
     def _go_to_summary_fail(self, summary_index: int) -> None:
         targets = self.summary_row_fail_targets.get(summary_index, [])
         if not targets:
@@ -968,8 +1037,7 @@ class HighPolyReviewTool:
         cursor = self.summary_row_fail_cursor.get(summary_index, 0)
         target_log_index = targets[cursor % len(targets)]
         self.summary_row_fail_cursor[summary_index] = (cursor + 1) % len(targets)
-        target_offset = self.log_index_to_offset.get(target_log_index, 0)
-        self._scroll_results_to_offset(target_offset)
+        self._center_results_log_row(target_log_index)
 
     def log(
         self,
@@ -1031,8 +1099,6 @@ class HighPolyReviewTool:
         self.summary_row_fail_targets = {}
         self.summary_row_fail_cursor = {}
         self.log_index_to_row = {}
-        self.log_index_to_offset = {}
-        self._results_content_height = 0
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
             if cmds.control(row, exists=True):
