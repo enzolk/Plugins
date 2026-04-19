@@ -46,6 +46,17 @@ class ReviewIssue:
     objects: List[str] = field(default_factory=list)
 
 
+@dataclass
+class DetailedLogRowRef:
+    """Stable UI references for one Detailed Logs row."""
+
+    log_index: int
+    order: int
+    row_layout: str
+    main_text_control: str
+    measured_height: int
+
+
 class HighPolyReviewTool:
     """Main tool class for High Poly outsourcing review."""
 
@@ -216,8 +227,7 @@ class HighPolyReviewTool:
         self.summary_row_ranges: List[Tuple[int, int]] = []
         self.summary_row_fail_targets: Dict[int, List[int]] = {}
         self.summary_row_fail_cursor: Dict[int, int] = {}
-        self.log_index_to_row: Dict[int, str] = {}
-        self.log_index_to_row_layout: Dict[int, str] = {}
+        self.log_rows_by_index: Dict[int, DetailedLogRowRef] = {}
         self.log_row_order: List[int] = []
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
@@ -933,6 +943,7 @@ class HighPolyReviewTool:
 
     def _append_detailed_log_row(
         self,
+        log_index: int,
         level: str,
         category: str,
         message: str,
@@ -993,9 +1004,13 @@ class HighPolyReviewTool:
             command=lambda *_: self.on_result_selected_from_control(row_control),
         )
         cmds.setParent("..")
-        log_index = len(self.result_items) + 1
-        self.log_index_to_row[log_index] = row_control
-        self.log_index_to_row_layout[log_index] = row_layout
+        self.log_rows_by_index[log_index] = DetailedLogRowRef(
+            log_index=log_index,
+            order=len(self.log_row_order),
+            row_layout=row_layout,
+            main_text_control=row_control,
+            measured_height=row_height,
+        )
         self.log_row_order.append(log_index)
 
     def _ui_element_exists(self, ui_name: str) -> bool:
@@ -1004,33 +1019,41 @@ class HighPolyReviewTool:
         return bool(cmds.control(ui_name, exists=True) or cmds.layout(ui_name, exists=True))
 
     def _resolve_log_target_control(self, log_index: int) -> Optional[str]:
-        row_layout = self.log_index_to_row_layout.get(log_index, "")
-        if self._ui_element_exists(row_layout):
-            return row_layout
-        row_control = self.log_index_to_row.get(log_index, "")
-        if self._ui_element_exists(row_control):
-            return row_control
+        row_ref = self.log_rows_by_index.get(log_index)
+        if not row_ref:
+            return None
+        if self._ui_element_exists(row_ref.row_layout):
+            return row_ref.row_layout
+        if self._ui_element_exists(row_ref.main_text_control):
+            return row_ref.main_text_control
         return None
 
-    def _get_results_row_height(self, row_control: str, log_index: int) -> int:
+    def _get_results_row_height(self, log_index: int) -> int:
+        row_ref = self.log_rows_by_index.get(log_index)
+        if not row_ref:
+            return 24
+
+        row_control = row_ref.row_layout
         try:
             if cmds.layout(row_control, exists=True):
                 row_height = int(cmds.layout(row_control, q=True, height=True) or 0)
                 if row_height > 0:
+                    row_ref.measured_height = row_height
                     return row_height
         except Exception:
             pass
 
-        label_control = self.log_index_to_row.get(log_index, "")
+        label_control = row_ref.main_text_control
         try:
             if label_control and cmds.control(label_control, exists=True):
                 label_height = int(cmds.control(label_control, q=True, height=True) or 0)
                 if label_height > 0:
+                    row_ref.measured_height = label_height
                     return label_height
         except Exception:
             pass
 
-        return 24
+        return max(24, int(row_ref.measured_height or 24))
 
     def _get_results_visible_height(self) -> int:
         scroll_name = self.ui.get("results_scroll", "")
@@ -1046,24 +1069,17 @@ class HighPolyReviewTool:
         if "results_column" not in self.ui or "results_scroll" not in self.ui:
             return None
 
-        results_column = self.ui["results_column"]
-        row_controls = cmds.columnLayout(results_column, q=True, childArray=True) or []
-        if not row_controls:
-            return None
-
-        row_to_log_index: Dict[str, int] = {}
-        for idx, row_layout in self.log_index_to_row_layout.items():
-            if self._ui_element_exists(row_layout):
-                row_to_log_index[row_layout] = idx
-
         content_height = 0
         target_center_y: Optional[float] = None
 
-        for row_control in row_controls:
-            if row_control not in row_to_log_index:
+        for row_idx in self.log_row_order:
+            row_ref = self.log_rows_by_index.get(row_idx)
+            if not row_ref:
                 continue
-            row_idx = row_to_log_index[row_control]
-            row_height = self._get_results_row_height(row_control, row_idx)
+            if not self._resolve_log_target_control(row_idx):
+                continue
+
+            row_height = self._get_results_row_height(row_idx)
             if row_idx == log_index:
                 target_center_y = content_height + (row_height * 0.5)
             content_height += row_height
@@ -1144,7 +1160,7 @@ class HighPolyReviewTool:
 
         idx = len(self.result_items)
         self.result_index_to_objects[idx] = issue.objects
-        self._append_detailed_log_row(level, category, message, objects=issue.objects, style=style)
+        self._append_detailed_log_row(idx, level, category, message, objects=issue.objects, style=style)
 
     def log_success(self, category: str, message: str, objects: Optional[List[str]] = None) -> None:
         self.log("INFO", category, message, objects=objects, style="success")
@@ -1190,8 +1206,7 @@ class HighPolyReviewTool:
         self.summary_row_ranges = []
         self.summary_row_fail_targets = {}
         self.summary_row_fail_cursor = {}
-        self.log_index_to_row = {}
-        self.log_index_to_row_layout = {}
+        self.log_rows_by_index = {}
         self.log_row_order = []
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
