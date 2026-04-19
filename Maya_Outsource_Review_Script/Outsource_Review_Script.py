@@ -232,6 +232,7 @@ class HighPolyReviewTool:
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
+        self.manual_root_fulltext_controls: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -697,13 +698,25 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         cmds.text(label=label, align="left")
         self.ui[menu_key] = cmds.optionMenu(changeCommand=lambda *_: self.on_manual_root_changed(menu_key))
         cmds.menuItem(label="-- Aucun root --", parent=self.ui[menu_key])
         cmds.button(label="Use Selection", height=24, command=lambda *_: self.set_manual_root_from_selection(menu_key))
         cmds.setParent("..")
+
+        fulltext_key = f"{menu_key}_fulltext"
+        self.ui[fulltext_key] = cmds.scrollField(
+            editable=False,
+            wordWrap=True,
+            height=38,
+            text="-- Aucun root --",
+        )
+        cmds.setParent("..")
+
         self.manual_root_menu_sources[menu_key] = source_key
+        self.manual_root_fulltext_controls[menu_key] = fulltext_key
 
     def _build_global_action_section(self) -> None:
         cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=8)
@@ -777,12 +790,7 @@ class HighPolyReviewTool:
         return f"{text[:keep]}...{text[-(max_length - 3 - keep):]}"
 
     def _format_node_menu_label(self, node: str) -> str:
-        short = self._short_name(node)
-        if len(node) <= MAX_MENU_LABEL_LENGTH:
-            return node
-        hint_max = max(12, MAX_MENU_LABEL_LENGTH - len(short) - 5)
-        tail_hint = self._ellipsize_middle(node, max_length=hint_max)
-        return f"{short} | {tail_hint}"
+        return node
 
     def _basename_from_path(self, path: str) -> str:
         return os.path.basename(path) if path else "N/A"
@@ -1667,11 +1675,22 @@ class HighPolyReviewTool:
             self._clear_option_menu(menu)
             if not values:
                 cmds.menuItem(label="-- Aucun root --", parent=menu)
+                self._update_manual_root_fulltext(menu_key)
                 continue
             for node in values:
                 cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
             idx = values.index(current) + 1 if current in values else 1
             cmds.optionMenu(menu, e=True, select=idx)
+            self._update_manual_root_fulltext(menu_key)
+
+    def _update_manual_root_fulltext(self, menu_key: str) -> None:
+        fulltext_key = self.manual_root_fulltext_controls.get(menu_key)
+        fulltext_control = self.ui.get(fulltext_key) if fulltext_key else None
+        if not fulltext_control or not cmds.scrollField(fulltext_control, exists=True):
+            return
+        root = self.get_manual_selected_root(menu_key)
+        text = root if root else "-- Aucun root --"
+        cmds.scrollField(fulltext_control, e=True, text=text)
 
     def get_manual_selected_root(self, menu_key: str) -> Optional[str]:
         values = self.manual_root_menu_values.get(menu_key, [])
@@ -1701,12 +1720,14 @@ class HighPolyReviewTool:
         values = self.manual_root_menu_values.get(menu_key, [])
         if node in values:
             cmds.optionMenu(self.ui[menu_key], e=True, select=values.index(node) + 1)
-        self.log("INFO", "RootSelect", f"Root manuel défini: {self._short_name(node)}", [node])
+        self._update_manual_root_fulltext(menu_key)
+        self.log("INFO", "RootSelect", f"Root manuel défini: {node}", [node])
 
     def on_manual_root_changed(self, menu_key: str) -> None:
+        self._update_manual_root_fulltext(menu_key)
         root = self.get_manual_selected_root(menu_key)
         if root:
-            self.log("INFO", "RootSelect", f"Root sélectionné: {self._short_name(root)}", [root])
+            self.log("INFO", "RootSelect", f"Root sélectionné: {root}", [root])
 
     def on_root_selection_changed(self, root_key: str) -> None:
         root = self.get_detected_root(root_key)
@@ -1714,7 +1735,7 @@ class HighPolyReviewTool:
             self.log(
                 "INFO",
                 "RootDetect",
-                f"{root_key.capitalize()} root sélectionné: {self._ellipsize_middle(root, max_length=MAX_UI_TEXT_LENGTH - 36)}",
+                f"{root_key.capitalize()} root sélectionné: {root}",
                 [root],
             )
 
@@ -1753,7 +1774,7 @@ class HighPolyReviewTool:
         self.log(
             "INFO",
             "RootDetect",
-            f"{root_key.capitalize()} root défini depuis la sélection: {self._ellipsize_middle(sel[0], max_length=MAX_UI_TEXT_LENGTH - 45)}",
+            f"{root_key.capitalize()} root défini depuis la sélection: {sel[0]}",
             [sel[0]],
         )
 
