@@ -1554,7 +1554,7 @@ class HighPolyReviewTool:
         menu = self.ui[f"{root_key}_root_menu"]
         items = [n for n in self.detected_roots[root_key] if cmds.objExists(n)]
         preferred_group = self._preferred_group_root_for_detected(root_key)
-        items = self._inject_preferred_root(items, preferred_group)
+        items = self._inject_preferred_root(items, preferred_group, append_only=True)
         self.detected_roots[root_key] = items
         self._clear_option_menu(menu)
 
@@ -1641,13 +1641,15 @@ class HighPolyReviewTool:
         long_names = cmds.ls(group_name, long=True, type="transform") or []
         return long_names[0] if long_names else group_name
 
-    def _inject_preferred_root(self, values: List[str], preferred: Optional[str]) -> List[str]:
+    def _inject_preferred_root(self, values: List[str], preferred: Optional[str], append_only: bool = False) -> List[str]:
         ordered: List[str] = []
-        if preferred and cmds.objExists(preferred):
+        if preferred and cmds.objExists(preferred) and not append_only:
             ordered.append(preferred)
         for node in values:
             if node and cmds.objExists(node) and node not in ordered:
                 ordered.append(node)
+        if preferred and cmds.objExists(preferred) and append_only and preferred not in ordered:
+            ordered.append(preferred)
         return ordered
 
     def refresh_manual_root_menus(self) -> None:
@@ -1659,7 +1661,7 @@ class HighPolyReviewTool:
             overrides = [n for n in self.manual_root_overrides.get(menu_key, []) if cmds.objExists(n)]
             detected = [n for n in self._manual_root_candidates(source_key) if cmds.objExists(n)]
             preferred_group = self._preferred_group_root_for_source(source_key)
-            values = self._inject_preferred_root(overrides + detected, preferred_group)
+            values = self._inject_preferred_root(overrides + detected, preferred_group, append_only=True)
             self.manual_root_overrides[menu_key] = overrides
             self.manual_root_menu_values[menu_key] = values
             self._clear_option_menu(menu)
