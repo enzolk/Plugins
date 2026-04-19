@@ -685,8 +685,13 @@ class HighPolyReviewTool:
         global_toggle_key: str,
         default_global: bool = False,
     ) -> None:
-        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        cmds.rowLayout(
+            numberOfColumns=4,
+            adjustableColumn=2,
+            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 4)],
+        )
         self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
+        cmds.text(label="", align="left")
         self.ui[global_toggle_key] = cmds.checkBox(label="Global", value=default_global)
         cmds.button(label=button_label, height=26, command=lambda *_: command())
         cmds.setParent("..")
