@@ -1073,21 +1073,33 @@ class HighPolyReviewTool:
             return False
 
         viewport = scroll_widget.viewport()
-        content_widget: Optional[QtWidgets.QWidget] = None
-        if isinstance(scroll_widget, QtWidgets.QScrollArea):
-            content_widget = scroll_widget.widget()
-        if content_widget is None:
-            content_widget = target_widget.parentWidget()
-        if content_widget is None:
-            return False
-
-        target_pos = target_widget.mapTo(content_widget, QtCore.QPoint(0, 0))
-        target_center_y = target_pos.y() + max(1, target_widget.height()) * 0.5
-        desired_value = int(round(target_center_y - viewport.height() * 0.5))
         vbar = scroll_widget.verticalScrollBar()
+
+        # Force an initial layout/update pass so that geometry is stable before computing
+        # precise centered scroll values on rows with dynamic/multi-line heights.
+        QtWidgets.QApplication.processEvents()
+
+        target_top_left = target_widget.mapTo(viewport, QtCore.QPoint(0, 0))
+        target_rect = QtCore.QRect(target_top_left, target_widget.size())
+
+        # If the target is still outside of the viewport, move close to it first and
+        # recompute after the scroll pass to avoid stale/incomplete geometry.
+        if target_rect.bottom() < 0 or target_rect.top() > viewport.height():
+            if hasattr(scroll_widget, "ensureWidgetVisible"):
+                scroll_widget.ensureWidgetVisible(target_widget, 0, 0)
+                QtWidgets.QApplication.processEvents()
+                target_top_left = target_widget.mapTo(viewport, QtCore.QPoint(0, 0))
+                target_rect = QtCore.QRect(target_top_left, target_widget.size())
+
+        viewport_center_y = viewport.height() * 0.5
+        target_center_y = target_rect.center().y()
+        delta_to_center = int(round(target_center_y - viewport_center_y))
+        desired_value = vbar.value() + delta_to_center
         clamped_value = max(vbar.minimum(), min(vbar.maximum(), desired_value))
         vbar.setValue(clamped_value)
-        scroll_widget.ensureWidgetVisible(target_widget, 8, 8)
+
+        # One more pass for stability (window resize / large log lists / mixed row heights).
+        QtWidgets.QApplication.processEvents()
         return True
 
     def _scroll_results_to_log_index(self, log_index: int) -> bool:
