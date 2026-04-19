@@ -21,6 +21,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 import maya.mel as mel
+from maya import OpenMayaUI as omui
+from shiboken2 import wrapInstance
+from PySide2 import QtCore, QtWidgets
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
@@ -217,7 +220,9 @@ class HighPolyReviewTool:
         self.summary_row_fail_targets: Dict[int, List[int]] = {}
         self.summary_row_fail_cursor: Dict[int, int] = {}
         self.log_index_to_row: Dict[int, str] = {}
+        self.log_index_to_row_layout: Dict[int, str] = {}
         self.log_index_to_offset: Dict[int, int] = {}
+        self.log_row_order: List[int] = []
         self._results_content_height = 0
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
@@ -966,7 +971,7 @@ class HighPolyReviewTool:
         row_objects = list(objects or [])
 
         cmds.setParent(self.ui["results_column"])
-        cmds.rowLayout(
+        row_layout = cmds.rowLayout(
             numberOfColumns=2,
             adjustableColumn=1,
             columnAttach=[(1, "both", 0), (2, "both", 6)],
@@ -995,8 +1000,87 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         log_index = len(self.result_items) + 1
         self.log_index_to_row[log_index] = row_control
+        self.log_index_to_row_layout[log_index] = row_layout
         self.log_index_to_offset[log_index] = self._results_content_height
+        self.log_row_order.append(log_index)
         self._results_content_height += row_height + 2
+
+    def _ui_element_exists(self, ui_name: str) -> bool:
+        if not ui_name:
+            return False
+        return bool(cmds.control(ui_name, exists=True) or cmds.layout(ui_name, exists=True))
+
+    def _get_qt_widget(self, ui_name: str) -> Optional[QtWidgets.QWidget]:
+        if not self._ui_element_exists(ui_name):
+            return None
+        ptr = omui.MQtUtil.findControl(ui_name)
+        if ptr is None:
+            ptr = omui.MQtUtil.findLayout(ui_name)
+        if ptr is None:
+            return None
+        return wrapInstance(int(ptr), QtWidgets.QWidget)
+
+    def _resolve_log_target_control(self, log_index: int) -> Optional[str]:
+        row_layout = self.log_index_to_row_layout.get(log_index, "")
+        if self._ui_element_exists(row_layout):
+            return row_layout
+        row_control = self.log_index_to_row.get(log_index, "")
+        if self._ui_element_exists(row_control):
+            return row_control
+        return None
+
+    def _get_valid_fail_targets(self, summary_index: int) -> List[int]:
+        raw_targets = self.summary_row_fail_targets.get(summary_index, [])
+        valid_targets = [idx for idx in raw_targets if self._resolve_log_target_control(idx)]
+        if valid_targets:
+            return valid_targets
+        fallback_targets = [
+            idx
+            for idx, item in enumerate(self.result_items, start=1)
+            if item.level == "FAIL" and self._resolve_log_target_control(idx)
+        ]
+        if fallback_targets:
+            self.summary_row_fail_targets[summary_index] = fallback_targets
+        return fallback_targets
+
+    def _center_results_on_control(self, target_control: str) -> bool:
+        scroll_name = self.ui.get("results_scroll", "")
+        if not self._ui_element_exists(scroll_name):
+            return False
+        scroll_widget = self._get_qt_widget(scroll_name)
+        target_widget = self._get_qt_widget(target_control)
+        if scroll_widget is None or target_widget is None:
+            return False
+        if not isinstance(scroll_widget, QtWidgets.QAbstractScrollArea):
+            return False
+
+        viewport = scroll_widget.viewport()
+        content_widget: Optional[QtWidgets.QWidget] = None
+        if isinstance(scroll_widget, QtWidgets.QScrollArea):
+            content_widget = scroll_widget.widget()
+        if content_widget is None:
+            content_widget = target_widget.parentWidget()
+        if content_widget is None:
+            return False
+
+        target_pos = target_widget.mapTo(content_widget, QtCore.QPoint(0, 0))
+        target_center_y = target_pos.y() + max(1, target_widget.height()) * 0.5
+        desired_value = int(round(target_center_y - viewport.height() * 0.5))
+        vbar = scroll_widget.verticalScrollBar()
+        clamped_value = max(vbar.minimum(), min(vbar.maximum(), desired_value))
+        vbar.setValue(clamped_value)
+        scroll_widget.ensureWidgetVisible(target_widget, 8, 8)
+        return True
+
+    def _scroll_results_to_log_index(self, log_index: int) -> bool:
+        target_control = self._resolve_log_target_control(log_index)
+        if not target_control:
+            return False
+        if self._center_results_on_control(target_control):
+            return True
+        target_offset = self.log_index_to_offset.get(log_index, 0)
+        self._scroll_results_to_offset(target_offset)
+        return True
 
     def _scroll_results_to_offset(self, offset: int) -> None:
         if "results_scroll" not in self.ui:
@@ -1015,14 +1099,17 @@ class HighPolyReviewTool:
                 pass
 
     def _go_to_summary_fail(self, summary_index: int) -> None:
-        targets = self.summary_row_fail_targets.get(summary_index, [])
+        targets = self._get_valid_fail_targets(summary_index)
         if not targets:
+            self._scroll_results_to_offset(0)
+            cmds.warning("Go To Error: aucune erreur navigable trouvée dans Detailed Logs.")
             return
         cursor = self.summary_row_fail_cursor.get(summary_index, 0)
         target_log_index = targets[cursor % len(targets)]
         self.summary_row_fail_cursor[summary_index] = (cursor + 1) % len(targets)
-        target_offset = self.log_index_to_offset.get(target_log_index, 0)
-        self._scroll_results_to_offset(target_offset)
+        if not self._scroll_results_to_log_index(target_log_index):
+            self._scroll_results_to_offset(0)
+            cmds.warning("Go To Error: cible introuvable, retour au début des Detailed Logs.")
 
     def log(
         self,
@@ -1084,7 +1171,9 @@ class HighPolyReviewTool:
         self.summary_row_fail_targets = {}
         self.summary_row_fail_cursor = {}
         self.log_index_to_row = {}
+        self.log_index_to_row_layout = {}
         self.log_index_to_offset = {}
+        self.log_row_order = []
         self._results_content_height = 0
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
