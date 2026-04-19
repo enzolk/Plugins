@@ -12,7 +12,6 @@ Usage in Maya Script Editor (Python tab):
 from __future__ import annotations
 
 import json
-import importlib.util
 import os
 import re
 import textwrap
@@ -22,22 +21,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 import maya.mel as mel
-from maya import OpenMayaUI as omui
-
-if importlib.util.find_spec("PySide6"):
-    from PySide6 import QtCore, QtWidgets
-elif importlib.util.find_spec("PySide2"):
-    from PySide2 import QtCore, QtWidgets
-else:
-    QtCore = None
-    QtWidgets = None
-
-if importlib.util.find_spec("shiboken6"):
-    from shiboken6 import wrapInstance
-elif importlib.util.find_spec("shiboken2"):
-    from shiboken2 import wrapInstance
-else:
-    wrapInstance = None
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
@@ -235,9 +218,7 @@ class HighPolyReviewTool:
         self.summary_row_fail_cursor: Dict[int, int] = {}
         self.log_index_to_row: Dict[int, str] = {}
         self.log_index_to_row_layout: Dict[int, str] = {}
-        self.log_index_to_offset: Dict[int, int] = {}
         self.log_row_order: List[int] = []
-        self._results_content_height = 0
         self.manual_root_menu_sources: Dict[str, str] = {}
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
@@ -1015,26 +996,12 @@ class HighPolyReviewTool:
         log_index = len(self.result_items) + 1
         self.log_index_to_row[log_index] = row_control
         self.log_index_to_row_layout[log_index] = row_layout
-        self.log_index_to_offset[log_index] = self._results_content_height
         self.log_row_order.append(log_index)
-        self._results_content_height += row_height + 2
 
     def _ui_element_exists(self, ui_name: str) -> bool:
         if not ui_name:
             return False
         return bool(cmds.control(ui_name, exists=True) or cmds.layout(ui_name, exists=True))
-
-    def _get_qt_widget(self, ui_name: str) -> Optional[QtWidgets.QWidget]:
-        if wrapInstance is None or QtWidgets is None:
-            return None
-        if not self._ui_element_exists(ui_name):
-            return None
-        ptr = omui.MQtUtil.findControl(ui_name)
-        if ptr is None:
-            ptr = omui.MQtUtil.findLayout(ui_name)
-        if ptr is None:
-            return None
-        return wrapInstance(int(ptr), QtWidgets.QWidget)
 
     def _resolve_log_target_control(self, log_index: int) -> Optional[str]:
         row_layout = self.log_index_to_row_layout.get(log_index, "")
@@ -1044,6 +1011,73 @@ class HighPolyReviewTool:
         if self._ui_element_exists(row_control):
             return row_control
         return None
+
+    def _get_results_row_height(self, row_control: str, log_index: int) -> int:
+        try:
+            if cmds.layout(row_control, exists=True):
+                row_height = int(cmds.layout(row_control, q=True, height=True) or 0)
+                if row_height > 0:
+                    return row_height
+        except Exception:
+            pass
+
+        label_control = self.log_index_to_row.get(log_index, "")
+        try:
+            if label_control and cmds.control(label_control, exists=True):
+                label_height = int(cmds.control(label_control, q=True, height=True) or 0)
+                if label_height > 0:
+                    return label_height
+        except Exception:
+            pass
+
+        return 24
+
+    def _get_results_visible_height(self) -> int:
+        scroll_name = self.ui.get("results_scroll", "")
+        if not self._ui_element_exists(scroll_name):
+            return 0
+        try:
+            visible_height = int(cmds.scrollLayout(scroll_name, q=True, height=True) or 0)
+            return max(0, visible_height)
+        except Exception:
+            return 0
+
+    def _compute_results_scroll_offset_for_log(self, log_index: int) -> Optional[int]:
+        if "results_column" not in self.ui or "results_scroll" not in self.ui:
+            return None
+
+        results_column = self.ui["results_column"]
+        row_controls = cmds.columnLayout(results_column, q=True, childArray=True) or []
+        if not row_controls:
+            return None
+
+        row_to_log_index: Dict[str, int] = {}
+        for idx, row_layout in self.log_index_to_row_layout.items():
+            if self._ui_element_exists(row_layout):
+                row_to_log_index[row_layout] = idx
+
+        content_height = 0
+        target_center_y: Optional[float] = None
+
+        for row_control in row_controls:
+            if row_control not in row_to_log_index:
+                continue
+            row_idx = row_to_log_index[row_control]
+            row_height = self._get_results_row_height(row_control, row_idx)
+            if row_idx == log_index:
+                target_center_y = content_height + (row_height * 0.5)
+            content_height += row_height
+
+        if target_center_y is None:
+            return None
+
+        visible_height = self._get_results_visible_height()
+        if visible_height <= 0:
+            return None
+
+        desired_offset = int(round(target_center_y - (visible_height * 0.5)))
+        max_offset = max(0, content_height - visible_height)
+        return max(0, min(max_offset, desired_offset))
 
     def _get_valid_fail_targets(self, summary_index: int) -> List[int]:
         raw_targets = self.summary_row_fail_targets.get(summary_index, [])
@@ -1059,56 +1093,14 @@ class HighPolyReviewTool:
             self.summary_row_fail_targets[summary_index] = fallback_targets
         return fallback_targets
 
-    def _center_results_on_control(self, target_control: str) -> bool:
-        if QtWidgets is None or QtCore is None:
-            return False
-        scroll_name = self.ui.get("results_scroll", "")
-        if not self._ui_element_exists(scroll_name):
-            return False
-        scroll_widget = self._get_qt_widget(scroll_name)
-        target_widget = self._get_qt_widget(target_control)
-        if scroll_widget is None or target_widget is None:
-            return False
-        if not isinstance(scroll_widget, QtWidgets.QAbstractScrollArea):
-            return False
-
-        viewport = scroll_widget.viewport()
-        vbar = scroll_widget.verticalScrollBar()
-
-        # Force an initial layout/update pass so that geometry is stable before computing
-        # precise centered scroll values on rows with dynamic/multi-line heights.
-        QtWidgets.QApplication.processEvents()
-
-        target_top_left = target_widget.mapTo(viewport, QtCore.QPoint(0, 0))
-        target_rect = QtCore.QRect(target_top_left, target_widget.size())
-
-        # If the target is still outside of the viewport, move close to it first and
-        # recompute after the scroll pass to avoid stale/incomplete geometry.
-        if target_rect.bottom() < 0 or target_rect.top() > viewport.height():
-            if hasattr(scroll_widget, "ensureWidgetVisible"):
-                scroll_widget.ensureWidgetVisible(target_widget, 0, 0)
-                QtWidgets.QApplication.processEvents()
-                target_top_left = target_widget.mapTo(viewport, QtCore.QPoint(0, 0))
-                target_rect = QtCore.QRect(target_top_left, target_widget.size())
-
-        viewport_center_y = viewport.height() * 0.5
-        target_center_y = target_rect.center().y()
-        delta_to_center = int(round(target_center_y - viewport_center_y))
-        desired_value = vbar.value() + delta_to_center
-        clamped_value = max(vbar.minimum(), min(vbar.maximum(), desired_value))
-        vbar.setValue(clamped_value)
-
-        # One more pass for stability (window resize / large log lists / mixed row heights).
-        QtWidgets.QApplication.processEvents()
-        return True
-
     def _scroll_results_to_log_index(self, log_index: int) -> bool:
-        target_control = self._resolve_log_target_control(log_index)
-        if not target_control:
+        if not self._resolve_log_target_control(log_index):
             return False
-        if self._center_results_on_control(target_control):
-            return True
-        target_offset = self.log_index_to_offset.get(log_index, 0)
+
+        cmds.refresh(force=True)
+        target_offset = self._compute_results_scroll_offset_for_log(log_index)
+        if target_offset is None:
+            return False
         self._scroll_results_to_offset(target_offset)
         return True
 
@@ -1131,14 +1123,12 @@ class HighPolyReviewTool:
     def _go_to_summary_fail(self, summary_index: int) -> None:
         targets = self._get_valid_fail_targets(summary_index)
         if not targets:
-            self._scroll_results_to_offset(0)
             cmds.warning("Go To Error: aucune erreur navigable trouvée dans Detailed Logs.")
             return
         cursor = self.summary_row_fail_cursor.get(summary_index, 0)
         target_log_index = targets[cursor % len(targets)]
         self.summary_row_fail_cursor[summary_index] = (cursor + 1) % len(targets)
         if not self._scroll_results_to_log_index(target_log_index):
-            self._scroll_results_to_offset(0)
             cmds.warning("Go To Error: cible introuvable, retour au début des Detailed Logs.")
 
     def log(
@@ -1202,9 +1192,7 @@ class HighPolyReviewTool:
         self.summary_row_fail_cursor = {}
         self.log_index_to_row = {}
         self.log_index_to_row_layout = {}
-        self.log_index_to_offset = {}
         self.log_row_order = []
-        self._results_content_height = 0
         rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
         for row in rows:
             if cmds.control(row, exists=True):
