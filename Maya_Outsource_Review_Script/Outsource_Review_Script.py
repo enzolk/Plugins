@@ -233,6 +233,8 @@ class HighPolyReviewTool:
         self.manual_root_menu_values: Dict[str, List[str]] = {}
         self.manual_root_overrides: Dict[str, List[str]] = {}
         self.manual_root_fulltext_controls: Dict[str, str] = {}
+        self.manual_root_fulltext_layouts: Dict[str, str] = {}
+        self.manual_root_fulltext_toggles: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -692,21 +694,35 @@ class HighPolyReviewTool:
 
     def _build_tab_visibility_controls(self, context_key: str) -> None:
         groups = {
-            "high": [("High_MA_GRP", "High MA"), ("High_FBX_GRP", "High FBX"), ("Placeholder_GRP", "Placeholder")],
-            "low": [("Low_FBX_GRP", "Low FBX"), ("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
-            "bake": [("Bake_MA_GRP", "Bake MA")],
-            "final_asset": [("Final_Asset_MA_GRP", "Final Asset MA"), ("Final_Asset_FBX_GRP", "Final Asset FBX")],
+            "high": [
+                {"key": "High_MA_GRP", "label": "High MA", "handler": lambda visible: self._set_group_visibility("High_MA_GRP", visible)},
+                {"key": "High_FBX_GRP", "label": "High FBX", "handler": lambda visible: self._set_group_visibility("High_FBX_GRP", visible)},
+                {"key": "Placeholder_GRP", "label": "Placeholder", "handler": lambda visible: self._set_group_visibility("Placeholder_GRP", visible)},
+            ],
+            "low": [
+                {"key": "Low_FBX_GRP", "label": "Low FBX", "handler": lambda visible: self._set_group_visibility("Low_FBX_GRP", visible)},
+                {"key": "Final_Asset_MA_GRP", "label": "Final Asset MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible)},
+                {"key": "Final_Asset_FBX_GRP", "label": "Final Asset FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible)},
+            ],
+            "bake": [
+                {"key": "Bake_High", "label": "High Bake Scene", "handler": lambda visible: self._set_bake_kind_visibility("high", visible)},
+                {"key": "Bake_Low", "label": "Low Bake Scene", "handler": lambda visible: self._set_bake_kind_visibility("low", visible)},
+            ],
+            "final_asset": [
+                {"key": "Final_Asset_MA_GRP", "label": "Final Asset MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible)},
+                {"key": "Final_Asset_FBX_GRP", "label": "Final Asset FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible)},
+            ],
         }.get(context_key, [])
         if not groups:
             return
         cmds.frameLayout(label="Scene Visibility", collapsable=True, collapse=False, marginWidth=6)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
-        for group_name, label in groups:
-            checkbox_key = f"vis_{context_key}_{group_name}"
+        for group_data in groups:
+            checkbox_key = f"vis_{context_key}_{group_data['key']}"
             self.ui[checkbox_key] = cmds.checkBox(
-                label=f"Show/Hide {label}",
+                label=f"Show/Hide {group_data['label']}",
                 value=False,
-                changeCommand=lambda val, grp=group_name: self._set_group_visibility(grp, bool(val)),
+                changeCommand=lambda val, visibility_handler=group_data["handler"]: visibility_handler(bool(val)),
             )
         cmds.setParent("..")
         cmds.setParent("..")
@@ -720,6 +736,15 @@ class HighPolyReviewTool:
         cmds.button(label="Use Selection", height=24, command=lambda *_: self.set_manual_root_from_selection(menu_key))
         cmds.setParent("..")
 
+        toggle_key = f"{menu_key}_fulltext_toggle"
+        self.ui[toggle_key] = cmds.checkBox(
+            label="Show full root path",
+            value=False,
+            changeCommand=lambda val, mk=menu_key: self._set_manual_root_fulltext_visibility(mk, bool(val)),
+        )
+
+        fulltext_layout_key = f"{menu_key}_fulltext_layout"
+        self.ui[fulltext_layout_key] = cmds.columnLayout(adjustableColumn=True, visible=False)
         fulltext_key = f"{menu_key}_fulltext"
         self.ui[fulltext_key] = cmds.scrollField(
             editable=False,
@@ -728,9 +753,12 @@ class HighPolyReviewTool:
             text="-- Aucun root --",
         )
         cmds.setParent("..")
+        cmds.setParent("..")
 
         self.manual_root_menu_sources[menu_key] = source_key
         self.manual_root_fulltext_controls[menu_key] = fulltext_key
+        self.manual_root_fulltext_layouts[menu_key] = fulltext_layout_key
+        self.manual_root_fulltext_toggles[menu_key] = toggle_key
 
     def _build_global_action_section(self) -> None:
         cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=8)
@@ -876,6 +904,31 @@ class HighPolyReviewTool:
             return
         current = bool(cmds.getAttr(group_name + ".visibility"))
         self._set_group_visibility(group_name, not current)
+
+    def _set_bake_kind_visibility(self, kind: str, visible: bool) -> None:
+        namespace = self.context.get("bake_ma_namespace", "")
+        detected_key = "bake_high" if kind == "high" else "bake_low"
+        suffix = "_high" if kind == "high" else "_low"
+
+        roots = [r for r in self.detected_roots.get(detected_key, []) if cmds.objExists(r)]
+        if not roots:
+            roots = [r for r in self._find_root_candidates(kind, namespace=namespace) if cmds.objExists(r)]
+
+        if not roots:
+            self.log("WARNING", "Visibility", f"Aucun root Bake {kind.title()} trouvé pour la visibilité.")
+            return
+
+        for root in roots:
+            self._set_group_visibility(root, visible)
+
+        state_label = "visible" if visible else "hidden"
+        self.log("INFO", "Visibility", f"Bake {kind.title()} roots ({suffix}) set to {state_label}: {len(roots)} root(s)")
+
+    def _set_manual_root_fulltext_visibility(self, menu_key: str, visible: bool) -> None:
+        layout_key = self.manual_root_fulltext_layouts.get(menu_key)
+        layout_control = self.ui.get(layout_key) if layout_key else None
+        if layout_control and cmds.columnLayout(layout_control, exists=True):
+            cmds.columnLayout(layout_control, e=True, visible=visible)
 
     def _organize_high_ma_loaded_roots(self) -> None:
         namespace = self.context["ma_namespace"]
