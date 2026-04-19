@@ -527,7 +527,21 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 03 — Vertex Colors on Bake High", align="left")
         self._build_manual_root_selector("bake_high_vertex_root_menu", "Select Bake High Root for Vertex Color Check", "bake_high")
-        self._build_check_row("check_bake_high_vertex_colors", "bake_high_vertex_colors_checked", "Vertex Color Check", self.run_bake_high_vertex_color_check)
+        cmds.rowLayout(
+            numberOfColumns=5,
+            adjustableColumn=2,
+            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)],
+        )
+        self.ui["check_bake_high_vertex_colors"] = cmds.checkBox(
+            label="",
+            value=False,
+            changeCommand=lambda *_: self.on_manual_check_toggle("bake_high_vertex_colors_checked"),
+        )
+        cmds.text(label="Vertex Colors (Bake High)", align="left")
+        cmds.button(label="Run Vertex Color Check", height=26, command=lambda *_: self.run_bake_high_vertex_color_check())
+        cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
+        cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
+        cmds.setParent("..")
 
         cmds.separator(style="in")
         cmds.text(label="Step 04 — Materials on Bake High", align="left")
@@ -4919,10 +4933,10 @@ else
             self.log_check_result(check_state_key, "FAIL", result_label, f"{fail_count}/{len(meshes)} meshes missing vertex colors")
 
     def display_vertex_colors(self) -> None:
-        shapes = self._collect_all_review_mesh_shapes()
-        self.log("INFO", "VertexColor", "Display: portée scène review complète.")
+        shapes = self._collect_all_scene_mesh_shapes()
+        self.log("INFO", "VertexColor", "Display: portée scène Maya complète.")
         if not shapes:
-            self.log("WARNING", "VertexColor", "Aucun mesh trouvé dans Outsourcing_Review.")
+            self.log("WARNING", "VertexColor", "Aucun mesh trouvé dans la scène Maya ouverte.")
             return
         for shape in shapes:
             try:
@@ -4935,10 +4949,10 @@ else
         self.log_summary("INFO", "Vertex Colors", f"display enabled on {len(shapes)} mesh shapes (scene-wide)")
 
     def hide_vertex_colors(self) -> None:
-        shapes = self._collect_all_review_mesh_shapes()
-        self.log("INFO", "VertexColor", "Hide: portée scène review complète.")
+        shapes = self._collect_all_scene_mesh_shapes()
+        self.log("INFO", "VertexColor", "Hide: portée scène Maya complète.")
         if not shapes:
-            self.log("WARNING", "VertexColor", "Aucun mesh trouvé dans Outsourcing_Review.")
+            self.log("WARNING", "VertexColor", "Aucun mesh trouvé dans la scène Maya ouverte.")
             return
         for shape in shapes:
             try:
@@ -4948,6 +4962,20 @@ else
         self.log("INFO", "VertexColor", f"Hide: Shapes affectés : {len(shapes)}")
         self.log("INFO", "VertexColor", "Hide: Résultat : OK")
         self.log_summary("INFO", "Vertex Colors", f"display disabled on {len(shapes)} mesh shapes (scene-wide)")
+
+    def _collect_all_scene_mesh_shapes(self) -> List[str]:
+        shapes = cmds.ls(type="mesh", long=True) or []
+        visible_shapes: List[str] = []
+        for shape in shapes:
+            if not cmds.objExists(shape):
+                continue
+            try:
+                is_intermediate = bool(cmds.getAttr(shape + ".intermediateObject"))
+            except RuntimeError:
+                is_intermediate = False
+            if not is_intermediate:
+                visible_shapes.append(shape)
+        return sorted(set(visible_shapes))
 
     def _collect_all_review_mesh_shapes(self) -> List[str]:
         if not cmds.objExists("Outsourcing_Review"):
