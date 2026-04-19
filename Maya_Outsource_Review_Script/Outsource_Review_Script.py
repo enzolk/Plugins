@@ -729,19 +729,23 @@ class HighPolyReviewTool:
 
     def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.rowLayout(
+            numberOfColumns=4,
+            adjustableColumn=2,
+            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 4)],
+        )
         cmds.text(label=label, align="left")
         self.ui[menu_key] = cmds.optionMenu(changeCommand=lambda *_: self.on_manual_root_changed(menu_key))
         cmds.menuItem(label="-- Aucun root --", parent=self.ui[menu_key])
         cmds.button(label="Use Selection", height=24, command=lambda *_: self.set_manual_root_from_selection(menu_key))
-        cmds.setParent("..")
-
         toggle_key = f"{menu_key}_fulltext_toggle"
-        self.ui[toggle_key] = cmds.checkBox(
-            label="Show full root path",
-            value=False,
-            changeCommand=lambda val, mk=menu_key: self._set_manual_root_fulltext_visibility(mk, bool(val)),
+        self.ui[toggle_key] = cmds.button(
+            label="▶",
+            width=22,
+            height=22,
+            command=lambda *_args, mk=menu_key: self._toggle_manual_root_fulltext_visibility(mk),
         )
+        cmds.setParent("..")
 
         fulltext_layout_key = f"{menu_key}_fulltext_layout"
         self.ui[fulltext_layout_key] = cmds.columnLayout(adjustableColumn=True, visible=False)
@@ -918,17 +922,50 @@ class HighPolyReviewTool:
             self.log("WARNING", "Visibility", f"Aucun root Bake {kind.title()} trouvé pour la visibilité.")
             return
 
+        if visible:
+            self._ensure_parent_visibility_for_bake_roots(roots)
+
         for root in roots:
             self._set_group_visibility(root, visible)
 
         state_label = "visible" if visible else "hidden"
         self.log("INFO", "Visibility", f"Bake {kind.title()} roots ({suffix}) set to {state_label}: {len(roots)} root(s)")
 
+    def _ensure_parent_visibility_for_bake_roots(self, roots: List[str]) -> None:
+        parent_updated = 0
+        for root in roots:
+            parent = root
+            while parent and cmds.objExists(parent):
+                short_name = parent.split("|")[-1]
+                if short_name == "Bake_MA_GRP":
+                    try:
+                        cmds.setAttr(parent + ".visibility", 1)
+                        parent_updated += 1
+                    except RuntimeError:
+                        pass
+                    break
+                parent_list = cmds.listRelatives(parent, parent=True, fullPath=True) or []
+                parent = parent_list[0] if parent_list else ""
+        if parent_updated:
+            self.log("INFO", "Visibility", "Bake_MA_GRP forced visible to keep shown Bake roots actually visible.")
+
+    def _toggle_manual_root_fulltext_visibility(self, menu_key: str) -> None:
+        layout_key = self.manual_root_fulltext_layouts.get(menu_key)
+        layout_control = self.ui.get(layout_key) if layout_key else None
+        current = False
+        if layout_control and cmds.columnLayout(layout_control, exists=True):
+            current = bool(cmds.columnLayout(layout_control, q=True, visible=True))
+        self._set_manual_root_fulltext_visibility(menu_key, not current)
+
     def _set_manual_root_fulltext_visibility(self, menu_key: str, visible: bool) -> None:
         layout_key = self.manual_root_fulltext_layouts.get(menu_key)
         layout_control = self.ui.get(layout_key) if layout_key else None
         if layout_control and cmds.columnLayout(layout_control, exists=True):
             cmds.columnLayout(layout_control, e=True, visible=visible)
+        toggle_key = self.manual_root_fulltext_toggles.get(menu_key)
+        toggle_control = self.ui.get(toggle_key) if toggle_key else None
+        if toggle_control and cmds.button(toggle_control, exists=True):
+            cmds.button(toggle_control, e=True, label="▼" if visible else "▶")
 
     def _organize_high_ma_loaded_roots(self) -> None:
         namespace = self.context["ma_namespace"]
