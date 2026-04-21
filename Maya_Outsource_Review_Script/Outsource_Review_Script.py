@@ -746,11 +746,18 @@ class HighPolyReviewTool:
         if not defs:
             return
         self.subcheck_ui_map.setdefault(check_key, {})
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        cmds.flowLayout(wrap=True, columnSpacing=14)
         for sub_key, sub_label in defs:
             control_key = f"subcheck_{check_key}_{sub_key}"
-            self.ui[control_key] = cmds.checkBox(label=sub_label, value=False, enable=False)
+            cmds.rowLayout(
+                numberOfColumns=2,
+                adjustableColumn=2,
+                columnAttach=[(1, "both", 0), (2, "both", 4)],
+            )
+            self.ui[control_key] = cmds.checkBox(label="", value=False, enable=False)
+            cmds.text(label=sub_label, align="left")
             self.subcheck_ui_map[check_key][sub_key] = control_key
+            cmds.setParent("..")
         cmds.setParent("..")
 
     def _set_subcheck_results(self, check_key: str, results: Dict[str, bool]) -> None:
