@@ -123,13 +123,17 @@ QToolButton#InfoButton, QToolButton#CollapseButton {
     font-size: 16px;
 }
 QToolButton#CollapseButton {
-    min-width: 30px;
-    min-height: 30px;
-    border-radius: 6px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 2px;
+    border-radius: 10px;
+    font-size: 28px;
+    font-weight: 700;
+    color: #c9dbfb;
 }
 QToolButton#CollapseButton:hover {
     background-color: #1d2b42;
-    color: #d7e5ff;
+    color: #eef4ff;
 }
 QToolButton#CollapseButton:pressed {
     background-color: #162236;
@@ -305,14 +309,9 @@ if QT_AVAILABLE and QtWidgets is not None:
             self.use_selection_btn.setObjectName("PrimaryBlueButton")
             self.use_selection_btn.setFixedWidth(125)
 
-            self.extra_btn = QtWidgets.QToolButton()
-            self.extra_btn.setObjectName("SquareIconButton")
-            self.extra_btn.setText("⚙")
-
             row_layout.addWidget(label_frame)
             row_layout.addWidget(self.path_combo, 1)
             row_layout.addWidget(self.use_selection_btn, 0)
-            row_layout.addWidget(self.extra_btn, 0)
 else:
     class StepRootSelectorRow:  # type: ignore[no-redef]
         pass
@@ -1228,7 +1227,7 @@ class HighPolyReviewTool:
         if not self.step01_placeholder_body_widget or not self.step01_collapse_button:
             return
         self.step01_placeholder_body_widget.setVisible(not collapsed)
-        self.step01_collapse_button.setText("⌄" if collapsed else "⌃")
+        self.step01_collapse_button.setText("▸" if collapsed else "▾")
         self.step01_collapse_button.setToolTip("Expand Step 01" if collapsed else "Collapse Step 01")
 
     def _sync_step01_qt_subchecks(self) -> None:
@@ -1292,10 +1291,16 @@ class HighPolyReviewTool:
         info_btn = QtWidgets.QToolButton()
         info_btn.setObjectName("InfoButton")
         info_btn.setText("ⓘ")
-        info_btn.setToolTip("Placeholder Match")
+        info_btn.setToolTip(
+            "Cette étape vérifie qu’un High correspond bien à son Placeholder.\n\n"
+            "• BBox compare la cohérence globale du volume et des dimensions.\n"
+            "• Pivot vérifie que le pivot du High correspond à celui du Placeholder.\n\n"
+            "Elle permet de détecter rapidement un mauvais placeholder, un mauvais scale global\n"
+            "ou un pivot mal positionné avant de continuer la review."
+        )
         collapse_btn = QtWidgets.QToolButton()
         collapse_btn.setObjectName("CollapseButton")
-        collapse_btn.setText("⌃")
+        collapse_btn.setText("▾")
         collapse_btn.setToolTip("Collapse Step 01")
 
         header_layout.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
