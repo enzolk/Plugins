@@ -22,12 +22,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import maya.cmds as cmds
 import maya.mel as mel
 
-try:
-    from PySide2 import QtCore, QtWidgets
-except ImportError:
-    QtCore = None
-    QtWidgets = None
-
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
@@ -292,8 +286,6 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
-        self.qt_window = None
-        self.qt_selected_roots: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -1602,24 +1594,18 @@ class HighPolyReviewTool:
             f"Global: {global_state} | Checks OK: {ok_count}/{len(self.check_states)} | "
             f"Warnings: {warn_count} | Fails: {fail_count} | Pending: {pending}"
         )
-        summary_text = self.ui.get("summary_text")
-        if summary_text and cmds.text(summary_text, exists=True):
-            cmds.text(summary_text, e=True, label=text, backgroundColor=color)
-        if self.qt_window:
-            self.qt_window.refresh_summary_counts(ok_count, warn_count, fail_count, pending)
+        cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
 
     def refresh_checklist_ui(self) -> None:
         for key, ctrl in self.check_ui_map.items():
             if ctrl not in self.ui:
                 continue
-            if cmds.checkBox(self.ui[ctrl], exists=True):
-                is_checked = self.check_states[key]["status"] == "OK"
-                cmds.checkBox(self.ui[ctrl], e=True, value=is_checked)
+            is_checked = self.check_states[key]["status"] == "OK"
+            cmds.checkBox(self.ui[ctrl], e=True, value=is_checked)
         for check_key, sub_controls in self.subcheck_ui_map.items():
             for sub_key, ctrl in sub_controls.items():
                 status = self.subcheck_states.get(check_key, {}).get(sub_key, "PENDING")
-                if ctrl in self.ui and cmds.checkBox(self.ui[ctrl], exists=True):
-                    cmds.checkBox(self.ui[ctrl], e=True, value=(status == "OK"))
+                cmds.checkBox(self.ui[ctrl], e=True, value=(status == "OK"))
 
         self.refresh_summary()
 
@@ -2064,8 +2050,7 @@ class HighPolyReviewTool:
         values = self.manual_root_menu_values.get(menu_key, [])
         menu = self.ui.get(menu_key)
         if not values or not menu or not cmds.optionMenu(menu, exists=True):
-            qt_root = self.qt_selected_roots.get(menu_key)
-            return qt_root if qt_root and cmds.objExists(qt_root) else None
+            return None
         index = max(1, cmds.optionMenu(menu, q=True, select=True)) - 1
         index = max(0, min(index, len(values) - 1))
         root = values[index]
@@ -6174,260 +6159,14 @@ else
         return "\n".join(lines)
 
 
-class _ReviewQtWindow(QtWidgets.QWidget if QtWidgets else object):
-    """PySide2 redesign closely matching the provided mockup."""
-
-    def __init__(self, tool: HighPolyReviewTool) -> None:
-        super().__init__()
-        self.tool = tool
-        self.setWindowTitle(WINDOW_TITLE)
-        self.resize(1820, 1220)
-        self._build_ui()
-        self.refresh_summary_counts(0, 0, 0, len(self.tool.check_states))
-
-    def _build_ui(self) -> None:
-        self.setStyleSheet(
-            """
-            QWidget { background-color: #070d1a; color: #d7deef; font-size: 13px; }
-            #RootPanel { background-color: #0f182a; border: 1px solid #1b2a45; border-radius: 14px; }
-            #Sidebar { background-color: #0a1220; border-radius: 12px; }
-            #MainPanel { background-color: #10192c; border-radius: 12px; border: 1px solid #1b2b48; }
-            #SectionTitle { color: #6f819f; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; }
-            #ReviewTitle { color: #2f79ff; font-size: 36px; font-weight: 800; }
-            #PrimaryBtn { background-color: #2d6bf3; border: 1px solid #3e79ff; border-radius: 10px; padding: 10px 18px; font-weight: 700; }
-            #SecondaryBtn { background-color: #1a2740; border: 1px solid #293c5f; border-radius: 10px; padding: 8px 16px; font-weight: 600; }
-            #StepCard { background-color: #121f33; border: 1px solid #263957; border-radius: 12px; }
-            #StepBadge { background-color: #111f34; border: 1px solid #2d63bc; border-radius: 10px; color: #54a3ff; }
-            #PathField, #ToleranceField { background-color: #0c1525; border: 1px solid #1e314e; border-radius: 8px; padding: 9px 10px; }
-            """
-        )
-        root = QtWidgets.QHBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 20)
-        root.setSpacing(14)
-
-        wrap = QtWidgets.QFrame()
-        wrap.setObjectName("RootPanel")
-        root.addWidget(wrap)
-        wrap_layout = QtWidgets.QHBoxLayout(wrap)
-        wrap_layout.setContentsMargins(14, 14, 14, 14)
-        wrap_layout.setSpacing(14)
-
-        sidebar = self._build_sidebar()
-        sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(250)
-        wrap_layout.addWidget(sidebar)
-
-        main = self._build_main_panel()
-        main.setObjectName("MainPanel")
-        wrap_layout.addWidget(main, 1)
-
-    def _build_sidebar(self) -> QtWidgets.QWidget:
-        w = QtWidgets.QFrame()
-        lay = QtWidgets.QVBoxLayout(w)
-        lay.setContentsMargins(14, 18, 14, 14)
-        lay.setSpacing(12)
-        lay.addWidget(self._label("REVIEW", "SectionTitle"))
-        for text, active in [("High", True), ("Low", False), ("Bake", False), ("Final Asset", False)]:
-            btn = QtWidgets.QPushButton(f"⬡  {text}")
-            btn.setObjectName("PrimaryBtn" if active else "SecondaryBtn")
-            btn.setMinimumHeight(44)
-            lay.addWidget(btn)
-        lay.addSpacing(8)
-        lay.addWidget(self._label("TOOLS", "SectionTitle"))
-        for text in ["Scene Visibility", "Logs & Report"]:
-            btn = QtWidgets.QPushButton(f"◉  {text}")
-            btn.setObjectName("SecondaryBtn")
-            btn.setMinimumHeight(42)
-            lay.addWidget(btn)
-        lay.addStretch(1)
-        summary = QtWidgets.QFrame()
-        summary.setObjectName("StepCard")
-        s = QtWidgets.QVBoxLayout(summary)
-        s.addWidget(self._label("REVIEW SUMMARY", "SectionTitle"))
-        self.summary_labels = {}
-        for key in ["Passed", "Warnings", "Failed", "Pending", "Total Checks"]:
-            row = QtWidgets.QHBoxLayout()
-            lbl = QtWidgets.QLabel(key)
-            val = QtWidgets.QLabel("0")
-            row.addWidget(lbl)
-            row.addStretch(1)
-            row.addWidget(val)
-            s.addLayout(row)
-            self.summary_labels[key] = val
-        lay.addWidget(summary)
-        return w
-
-    def _build_main_panel(self) -> QtWidgets.QWidget:
-        container = QtWidgets.QWidget()
-        outer = QtWidgets.QVBoxLayout(container)
-        outer.setContentsMargins(18, 18, 18, 18)
-        outer.setSpacing(14)
-
-        header = QtWidgets.QHBoxLayout()
-        header.addWidget(self._label("HIGH POLY REVIEW", "ReviewTitle"))
-        header.addStretch(1)
-        self.header_state_labels = {}
-        for text in ["Passed", "Warning", "Failed", "Pending"]:
-            lbl = QtWidgets.QLabel(f"◉ {text}")
-            header.addWidget(lbl)
-            self.header_state_labels[text] = lbl
-        run_all = QtWidgets.QPushButton("▶  Run All")
-        run_all.setObjectName("PrimaryBtn")
-        run_all.setMinimumSize(170, 48)
-        run_all.clicked.connect(self.tool.run_all_checks)
-        header.addWidget(run_all)
-        outer.addLayout(header)
-
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        steps_host = QtWidgets.QWidget()
-        steps = QtWidgets.QVBoxLayout(steps_host)
-        steps.setContentsMargins(0, 0, 0, 0)
-        steps.setSpacing(12)
-        steps.addWidget(self._build_step01())
-        for number, title, action in [
-            ("02", "Design Kit Review", "Open Design Kit"),
-            ("03", "Topology Check", "Run Topology Check"),
-            ("04", "Vertex Colors", "Run Check"),
-            ("05", "Namespaces", "Run Check"),
-            ("06", "Materials / Texture Sets", "Analyze"),
-            ("07", "Compare High.ma vs High.fbx", "Compare"),
-            ("08", "Compare High.ma vs Bake Scene High", "Compare"),
-        ]:
-            steps.addWidget(self._build_simple_step(number, title, action))
-        steps.addStretch(1)
-        scroll.setWidget(steps_host)
-        outer.addWidget(scroll, 1)
-        return container
-
-    def _build_step01(self) -> QtWidgets.QWidget:
-        card = QtWidgets.QFrame()
-        card.setObjectName("StepCard")
-        l = QtWidgets.QVBoxLayout(card)
-        l.setContentsMargins(16, 14, 16, 14)
-        l.setSpacing(12)
-        l.addLayout(self._step_header("01", "Placeholder Match"))
-        l.addLayout(self._root_row("High Root", "placeholder_high_root_menu", self.tool.check_placeholder_match))
-        l.addLayout(self._root_row("Placeholder Root", "placeholder_placeholder_root_menu", self.tool.check_placeholder_match))
-        bottom = QtWidgets.QHBoxLayout()
-        for txt in ["☑ BBox", "Verify that each high matches its placeholder", "☑ Pivot", "Verify that each high matches its placeholder pivot"]:
-            bottom.addWidget(QtWidgets.QLabel(txt))
-            if "Verify" in txt:
-                bottom.addSpacing(8)
-        run_btn = QtWidgets.QPushButton("▶  Run Placeholder Check")
-        run_btn.setObjectName("PrimaryBtn")
-        run_btn.clicked.connect(self.tool.check_placeholder_match)
-        bottom.addWidget(run_btn)
-        bottom.addWidget(QtWidgets.QLabel("Tolerance %"))
-        self.tolerance = QtWidgets.QDoubleSpinBox()
-        self.tolerance.setObjectName("ToleranceField")
-        self.tolerance.setRange(0.0, 100.0)
-        self.tolerance.setDecimals(2)
-        self.tolerance.setSingleStep(0.25)
-        self.tolerance.setValue(7.0)
-        self.tolerance.valueChanged.connect(self._sync_tolerance_to_tool)
-        bottom.addWidget(self.tolerance)
-        l.addLayout(bottom)
-        return card
-
-    def _build_simple_step(self, number: str, title: str, action_label: str) -> QtWidgets.QWidget:
-        card = QtWidgets.QFrame()
-        card.setObjectName("StepCard")
-        l = QtWidgets.QHBoxLayout(card)
-        l.setContentsMargins(16, 12, 16, 12)
-        l.setSpacing(12)
-        l.addLayout(self._step_header(number, title))
-        l.addStretch(1)
-        btn = QtWidgets.QPushButton(f"▶  {action_label}")
-        btn.setObjectName("SecondaryBtn")
-        l.addWidget(btn)
-        l.addWidget(QtWidgets.QLabel("˅"))
-        return card
-
-    def _step_header(self, number: str, title: str) -> QtWidgets.QLayout:
-        row = QtWidgets.QHBoxLayout()
-        badge = QtWidgets.QLabel(f"STEP\n{number}")
-        badge.setObjectName("StepBadge")
-        badge.setAlignment(QtCore.Qt.AlignCenter)
-        badge.setFixedSize(86, 64)
-        row.addWidget(badge)
-        t = QtWidgets.QLabel(title)
-        t.setStyleSheet("font-size: 18px; font-weight: 700;")
-        row.addWidget(t)
-        row.addWidget(QtWidgets.QLabel("ⓘ"))
-        row.addStretch(1)
-        row.addWidget(QtWidgets.QLabel("⌃"))
-        return row
-
-    def _root_row(self, label: str, menu_key: str, run_callback) -> QtWidgets.QLayout:
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel(f"⬡  {label}"))
-        field = QtWidgets.QLineEdit("")
-        field.setObjectName("PathField")
-        field.setReadOnly(True)
-        row.addWidget(field, 1)
-        use_btn = QtWidgets.QPushButton("Use Selection")
-        use_btn.setObjectName("PrimaryBtn")
-        use_btn.setMinimumHeight(40)
-        use_btn.clicked.connect(lambda: self._set_root_from_selection(menu_key, field))
-        row.addWidget(use_btn)
-        action = QtWidgets.QPushButton("◉")
-        action.setObjectName("SecondaryBtn")
-        action.clicked.connect(run_callback)
-        row.addWidget(action)
-        return row
-
-    def _set_root_from_selection(self, menu_key: str, field: QtWidgets.QLineEdit) -> None:
-        sel = cmds.ls(selection=True, long=True) or []
-        if not sel:
-            self.tool.log("WARNING", "Selection", "Aucun objet sélectionné.")
-            return
-        node = sel[0]
-        if cmds.nodeType(node) == "mesh":
-            parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
-            if parent:
-                node = parent[0]
-        self.tool.qt_selected_roots[menu_key] = node
-        field.setText(node)
-        self.tool.log("INFO", "RootSelect", f"Root manuel défini (Qt): {node}", [node])
-
-    def _sync_tolerance_to_tool(self, value: float) -> None:
-        control = self.tool.ui.get("placeholder_tolerance")
-        if control and cmds.floatField(control, exists=True):
-            cmds.floatField(control, e=True, value=value)
-
-    def refresh_summary_counts(self, ok_count: int, warn_count: int, fail_count: int, pending_count: int) -> None:
-        if not hasattr(self, "summary_labels"):
-            return
-        total = len(self.tool.check_states)
-        self.summary_labels["Passed"].setText(str(ok_count))
-        self.summary_labels["Warnings"].setText(str(warn_count))
-        self.summary_labels["Failed"].setText(str(fail_count))
-        self.summary_labels["Pending"].setText(str(pending_count))
-        self.summary_labels["Total Checks"].setText(str(total))
-
-    @staticmethod
-    def _label(text: str, object_name: str) -> QtWidgets.QLabel:
-        lbl = QtWidgets.QLabel(text)
-        lbl.setObjectName(object_name)
-        return lbl
-
-
 _TOOL_INSTANCE: Optional[HighPolyReviewTool] = None
-_QT_WINDOW_INSTANCE: Optional[_ReviewQtWindow] = None
 
 
 def show_outsource_review_tool() -> HighPolyReviewTool:
     """Launch tool window and keep a live instance in module scope."""
-    global _TOOL_INSTANCE, _QT_WINDOW_INSTANCE
+    global _TOOL_INSTANCE
     _TOOL_INSTANCE = HighPolyReviewTool()
-    if QtWidgets and QtCore:
-        _QT_WINDOW_INSTANCE = _ReviewQtWindow(_TOOL_INSTANCE)
-        _TOOL_INSTANCE.qt_window = _QT_WINDOW_INSTANCE
-        _QT_WINDOW_INSTANCE.show()
-    else:
-        _TOOL_INSTANCE.build()
+    _TOOL_INSTANCE.build()
     return _TOOL_INSTANCE
 
 
