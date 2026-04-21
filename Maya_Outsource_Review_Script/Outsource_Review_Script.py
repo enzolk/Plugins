@@ -187,7 +187,8 @@ QPushButton#PrimaryBlueButton {
     border-radius: 8px;
     color: #ffffff;
     min-height: 40px;
-    padding: 0 18px;
+    padding-left: 16px;
+    padding-right: 16px;
     font-size: 16px;
     font-weight: 700;
 }
@@ -400,7 +401,9 @@ if QT_AVAILABLE and QtWidgets is not None:
 
             self.use_selection_btn = QtWidgets.QPushButton("Use Selection")
             self.use_selection_btn.setObjectName("PrimaryBlueButton")
-            self.use_selection_btn.setFixedWidth(125)
+            self.use_selection_btn.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+            button_text_width = self.use_selection_btn.fontMetrics().horizontalAdvance(self.use_selection_btn.text())
+            self.use_selection_btn.setMinimumWidth(button_text_width + 32)
 
             row_layout.addWidget(label_frame)
             row_layout.addWidget(self.path_combo, 1)
