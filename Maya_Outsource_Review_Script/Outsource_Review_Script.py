@@ -212,6 +212,43 @@ class HighPolyReviewTool:
             "final_uv_map2_checked": "check_final_uv_map2",
             "final_ma_fbx_compared": "check_final_compare",
         }
+        self.subcheck_definitions: Dict[str, List[Tuple[str, str]]] = {
+            "placeholder_checked": [("bbox", "BBox"), ("pivot", "Pivot")],
+            "design_kit_checked": [("reviewed", "Design Kit Reviewed")],
+            "topology_checked": [("non_manifold_geometry", "Non Manifold Geometry"), ("non_manifold_uv", "Non Manifold UV"), ("lamina_faces", "Lamina Faces"), ("ngons", "N-Gons")],
+            "vertex_colors_checked": [("vertex_colors_present", "Vertex Colors Present")],
+            "no_namespaces": [("authorized_namespaces_only", "Authorized Namespaces Only")],
+            "texture_sets_analyzed": [("materials_texture_sets_analyzed", "Materials / Texture Sets Analyzed")],
+            "ma_fbx_compared": [("presence", "Presence"), ("topology", "Topology"), ("uv", "UV"), ("bounding_box", "Bounding Box"), ("pivot", "Pivot")],
+            "ma_bake_compared": [("presence", "Presence"), ("topology", "Topology"), ("uv", "UV"), ("bounding_box", "Bounding Box"), ("pivot", "Pivot")],
+            "low_topology_checked": [("non_manifold_geometry", "Non Manifold Geometry"), ("non_manifold_uv", "Non Manifold UV"), ("lamina_faces", "Lamina Faces"), ("ngons", "N-Gons")],
+            "low_namespaces_checked": [("authorized_namespaces_only", "Authorized Namespaces Only")],
+            "low_materials_checked": [("materials_texture_sets_analyzed", "Materials / Texture Sets Analyzed")],
+            "low_uv_map1_checked": [("overlap_outside", "Overlap / Outside 0-1"), ("zero_space_uv_shells", "Zero-Space UV Shells")],
+            "low_uv_map2_checked": [("map2_present", "Map2 Present"), ("texel_density", "Texel Density"), ("zero_space_uv_shells", "Zero-Space UV Shells")],
+            "low_bake_compared": [("presence", "Presence"), ("topology", "Topology"), ("uv", "UV"), ("bounding_box", "Bounding Box")],
+            "low_final_compared": [("presence", "Presence"), ("topology", "Topology"), ("uv", "UV"), ("bounding_box", "Bounding Box"), ("pivot", "Pivot")],
+            "bake_structure_checked": [("bake_high_present", "Bake High Present"), ("bake_low_present", "Bake Low Present"), ("structure_valid", "Structure Valid")],
+            "bake_low_topology_checked": [("non_manifold_geometry", "Non Manifold Geometry"), ("non_manifold_uv", "Non Manifold UV"), ("lamina_faces", "Lamina Faces"), ("ngons", "N-Gons")],
+            "bake_high_vertex_colors_checked": [("vertex_colors_present", "Vertex Colors Present")],
+            "bake_high_materials_checked": [("materials_texture_sets_analyzed", "Materials / Texture Sets Analyzed")],
+            "bake_low_materials_checked": [("materials_texture_sets_analyzed", "Materials / Texture Sets Analyzed")],
+            "bake_low_uv_map1_checked": [("overlap_outside", "Overlap / Outside 0-1"), ("zero_space_uv_shells", "Zero-Space UV Shells")],
+            "bake_low_uv_map2_checked": [("map2_present", "Map2 Present"), ("texel_density", "Texel Density"), ("zero_space_uv_shells", "Zero-Space UV Shells")],
+            "bake_pairing_checked": [("naming", "Naming"), ("pairing", "Pairing"), ("bounding_box", "Bounding Box")],
+            "bake_ready_checked": [("bake_ready", "Bake Ready")],
+            "final_topology_checked": [("non_manifold_geometry", "Non Manifold Geometry"), ("non_manifold_uv", "Non Manifold UV"), ("lamina_faces", "Lamina Faces"), ("ngons", "N-Gons")],
+            "final_namespaces_checked": [("authorized_namespaces_only", "Authorized Namespaces Only")],
+            "final_materials_checked": [("materials_texture_sets_analyzed", "Materials / Texture Sets Analyzed")],
+            "final_uv_map1_checked": [("overlap_outside", "Overlap / Outside 0-1"), ("zero_space_uv_shells", "Zero-Space UV Shells")],
+            "final_uv_map2_checked": [("map2_present", "Map2 Present"), ("texel_density", "Texel Density"), ("zero_space_uv_shells", "Zero-Space UV Shells")],
+            "final_ma_fbx_compared": [("presence", "Presence"), ("topology", "Topology"), ("uv", "UV"), ("bounding_box", "Bounding Box"), ("pivot", "Pivot")],
+        }
+        self.subcheck_states: Dict[str, Dict[str, str]] = {
+            step_key: {sub_key: "PENDING" for sub_key, _ in subchecks}
+            for step_key, subchecks in self.subcheck_definitions.items()
+        }
+        self.subcheck_ui_map: Dict[str, Dict[str, str]] = {}
 
         self.detected_texture_sets: Dict[str, Dict[str, object]] = {}
         self.material_sets_by_context: Dict[str, Dict[str, Dict[str, object]]] = {"high": {}, "low": {}, "bake_high": {}, "bake_low": {}, "final_asset": {}}
@@ -341,8 +378,8 @@ class HighPolyReviewTool:
         cmds.text(label="Step 01 — Placeholder Match", align="left")
         self._build_manual_root_selector("placeholder_high_root_menu", "Select High Root", "high_ma")
         self._build_manual_root_selector("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma")
-        cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 6), (5, "both", 2)])
-        self.ui["check_placeholder"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("placeholder_checked"))
+        cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 6), (4, "both", 2), (5, "both", 2)])
+        self._build_subcheck_boxes("placeholder_checked")
         cmds.text(label="Verify that each high matches its placeholder", align="left")
         cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match())
         cmds.text(label="Tolerance %", align="right")
@@ -351,18 +388,15 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 02 — Design Kit Review (manual)", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui["check_design"] = cmds.checkBox(
-            label="",
-            value=False,
-            changeCommand=lambda *_: self.on_manual_design_toggle(),
-        )
+        self._build_subcheck_boxes("design_kit_checked")
         cmds.text(label="Visually verify high(s) against the design kit.", align="left")
         cmds.button(label="Mark Step as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
         cmds.setParent("..")
         cmds.separator(style="in")
         cmds.text(label="Step 03 — Topology Check", align="left")
         self._build_manual_root_selector("topology_high_root_menu", "Select High Root for Topology Check", "high_ma")
-        self._build_check_row("check_topology", "topology_checked", "Topology", self.run_topology_checks)
+        self._build_subcheck_boxes("topology_checked")
+        cmds.button(label="Run Topology", height=26, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.run_topology_checks())
         cmds.separator(style="in")
         cmds.text(label="Step 04 — Vertex Colors", align="left")
         self._build_manual_root_selector("vertex_high_root_menu", "Select High Root for Vertex Color Check", "high_ma")
@@ -371,7 +405,7 @@ class HighPolyReviewTool:
             adjustableColumn=2,
             columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8), (5, "both", 8)],
         )
-        self.ui["check_vtx"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("vertex_colors_checked"))
+        self._build_subcheck_boxes("vertex_colors_checked")
         cmds.text(label="Vertex Colors", align="left")
         cmds.button(label="Run Vertex Color Check", height=26, command=lambda *_: self.check_vertex_colors())
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
@@ -381,7 +415,7 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 05 — Namespaces", align="left")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
-        self.ui["check_ns"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("no_namespaces"))
+        self._build_subcheck_boxes("no_namespaces")
         cmds.text(label="Only tool namespaces should remain", align="left")
         cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_namespaces())
@@ -389,7 +423,8 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
         cmds.text(label="Step 06 — Materials / Texture Sets", align="left")
         self._build_manual_root_selector("materials_high_root_menu", "Select High Root for Materials / Texture Sets", "high_ma")
-        self._build_check_row("check_texturesets", "texture_sets_analyzed", "Analyze Materials", lambda: self.analyze_texture_sets(mode="materials"))
+        self._build_subcheck_boxes("texture_sets_analyzed")
+        cmds.button(label="Run Analyze Materials", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.analyze_texture_sets(mode="materials"))
         self.ui["texture_sets_list"] = cmds.textScrollList(
             allowMultiSelection=True,
             height=130,
@@ -400,26 +435,16 @@ class HighPolyReviewTool:
         cmds.text(label="Step 07 — Compare High.ma vs High.fbx", align="left")
         self._build_manual_root_selector("compare_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_fbx_root_menu", "Select High.fbx Root", "high_fbx")
-        self._build_compare_row(
-            "check_ma_fbx",
-            "ma_fbx_compared",
-            "Run Compare",
-            self.compare_ma_vs_fbx,
-            "compare_ma_fbx_global_mode",
-            default_global=False,
-        )
+        self._build_subcheck_boxes("ma_fbx_compared")
+        self.ui["compare_ma_fbx_global_mode"] = cmds.checkBox(label="Global", value=False)
+        cmds.button(label="Run Compare", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.compare_ma_vs_fbx())
         cmds.separator(style="in")
         cmds.text(label="Step 08 — Compare High.ma vs Bake Scene High", align="left")
         self._build_manual_root_selector("compare_bake_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_bake_high_root_menu", "Select Bake High Root", "bake_high")
-        self._build_compare_row(
-            "check_ma_bake",
-            "ma_bake_compared",
-            "Run Compare Bake",
-            self.compare_ma_vs_bake_high,
-            "compare_ma_bake_global_mode",
-            default_global=False,
-        )
+        self._build_subcheck_boxes("ma_bake_compared")
+        self.ui["compare_ma_bake_global_mode"] = cmds.checkBox(label="Global", value=False)
+        cmds.button(label="Run Compare Bake", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.compare_ma_vs_bake_high())
         cmds.setParent("..")
         cmds.setParent("..")
     def _build_guided_high_review_section(self) -> None:
@@ -704,11 +729,44 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_check_row(self, check_key_ui: str, check_key: str, label: str, command) -> None:
+        if check_key in self.subcheck_definitions:
+            cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+            self._build_subcheck_boxes(check_key)
+            cmds.button(label=f"Run {label}", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
+            cmds.setParent("..")
+            return
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
+        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label=label, align="left")
         cmds.button(label=f"Run {label}", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
         cmds.setParent("..")
+
+    def _build_subcheck_boxes(self, check_key: str) -> None:
+        defs = self.subcheck_definitions.get(check_key, [])
+        if not defs:
+            return
+        self.subcheck_ui_map.setdefault(check_key, {})
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        for sub_key, sub_label in defs:
+            control_key = f"subcheck_{check_key}_{sub_key}"
+            self.ui[control_key] = cmds.checkBox(label=sub_label, value=False, enable=False)
+            self.subcheck_ui_map[check_key][sub_key] = control_key
+        cmds.setParent("..")
+
+    def _set_subcheck_results(self, check_key: str, results: Dict[str, bool]) -> None:
+        if check_key not in self.subcheck_states:
+            return
+        for sub_key in self.subcheck_states[check_key]:
+            if sub_key in results:
+                self.subcheck_states[check_key][sub_key] = "OK" if results[sub_key] else "FAIL"
+        states = list(self.subcheck_states[check_key].values())
+        if states and all(state == "OK" for state in states):
+            self.check_states[check_key]["status"] = "OK"
+        elif any(state == "FAIL" for state in states):
+            self.check_states[check_key]["status"] = "FAIL"
+        else:
+            self.check_states[check_key]["status"] = "PENDING"
+        self.refresh_checklist_ui()
 
     def _build_compare_row(
         self,
@@ -719,12 +777,15 @@ class HighPolyReviewTool:
         global_toggle_key: str,
         default_global: bool = False,
     ) -> None:
-        cmds.rowLayout(
-            numberOfColumns=4,
-            adjustableColumn=2,
-            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 4)],
-        )
-        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
+        if check_key in self.subcheck_definitions:
+            cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 4)])
+            self._build_subcheck_boxes(check_key)
+            self.ui[global_toggle_key] = cmds.checkBox(label="Global", value=default_global)
+            cmds.button(label=button_label, height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
+            cmds.setParent("..")
+            return
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 4)])
+        self.ui[check_key_ui] = cmds.checkBox(label="", value=False, enable=False)
         cmds.text(label="", align="left")
         self.ui[global_toggle_key] = cmds.checkBox(label="Global", value=default_global)
         cmds.button(label=button_label, height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
@@ -1530,8 +1591,14 @@ class HighPolyReviewTool:
 
     def refresh_checklist_ui(self) -> None:
         for key, ctrl in self.check_ui_map.items():
+            if ctrl not in self.ui:
+                continue
             is_checked = self.check_states[key]["status"] == "OK"
             cmds.checkBox(self.ui[ctrl], e=True, value=is_checked)
+        for check_key, sub_controls in self.subcheck_ui_map.items():
+            for sub_key, ctrl in sub_controls.items():
+                status = self.subcheck_states.get(check_key, {}).get(sub_key, "PENDING")
+                cmds.checkBox(self.ui[ctrl], e=True, value=(status == "OK"))
 
         self.refresh_summary()
 
@@ -1549,9 +1616,14 @@ class HighPolyReviewTool:
     ) -> None:
         status = "OK" if level == "INFO" else "FAIL"
         self.set_check_status(check_key, status)
+        defs = self.subcheck_definitions.get(check_key, [])
+        if len(defs) == 1:
+            self._set_subcheck_results(check_key, {defs[0][0]: level == "INFO"})
         self.log_summary(level, short_title, reason, objects)
 
     def on_manual_check_toggle(self, check_key: str) -> None:
+        if check_key in self.subcheck_definitions:
+            return
         ui_key = self.check_ui_map.get(check_key)
         if not ui_key or ui_key not in self.ui:
             return
@@ -1567,16 +1639,14 @@ class HighPolyReviewTool:
             cmds.select(targets, replace=True)
 
     def on_manual_design_toggle(self) -> None:
-        checked = cmds.checkBox(self.ui["check_design"], q=True, value=True)
-        self.set_check_status("design_kit_checked", "OK" if checked else "PENDING")
-        if checked:
-            self._log_step_header(2, "Design Kit Review", category="DesignKit")
-            self.log("INFO", "DesignKit", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
-            self.log("INFO", "DesignKit", "Résultat : Revue design kit marquée comme effectuée (manuel).")
+        self.set_check_status("design_kit_checked", "OK")
+        self._set_subcheck_results("design_kit_checked", {"reviewed": True})
+        self._log_step_header(2, "Design Kit Review", category="DesignKit")
+        self.log("INFO", "DesignKit", f"Fichier analysé : {self._basename_from_path(self.paths.get('high_ma', ''))}")
+        self.log("INFO", "DesignKit", "Résultat : Revue design kit marquée comme effectuée (manuel).")
 
     def mark_design_reviewed(self) -> None:
         self.log("INFO", "DesignKit", "Action: Mark Design Kit Reviewed")
-        cmds.checkBox(self.ui["check_design"], e=True, value=True)
         self.on_manual_design_toggle()
 
     def _set_root_folder(self, path: str) -> None:
@@ -3733,6 +3803,10 @@ class HighPolyReviewTool:
         self.log("INFO", category, "Compare mode = Pair")
         self.log("INFO", category, f"Paires comparées : {len(pair_rows)}")
         pair_fail_count = 0
+        presence_all = True
+        topology_all = True
+        uv_all = True
+        bbox_all = True
         for left_data, right_data in pair_rows:
             left_name = left_data["path"] if left_data else f"UNMATCHED {left_label} mesh"
             right_name = right_data["path"] if right_data else f"UNMATCHED {right_label} mesh"
@@ -3757,6 +3831,10 @@ class HighPolyReviewTool:
             pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
             if not pair_ok:
                 pair_fail_count += 1
+            presence_all = presence_all and presence_ok
+            topology_all = topology_all and topo_ok
+            uv_all = uv_all and uv_ok
+            bbox_all = bbox_all and bbox_ok
 
             self.log("INFO", pair_category, f"{left_label} Mesh = {left_name}")
             self.log("INFO", pair_category, f"{right_label} Mesh = {right_name}")
@@ -3773,6 +3851,12 @@ class HighPolyReviewTool:
             self.log("INFO" if pair_ok else "FAIL", pair_category, f"Result = {'OK' if pair_ok else 'FAIL'}")
 
         ok = pair_fail_count == 0
+        sub_results = {"presence": presence_all, "topology": topology_all, "uv": uv_all, "bounding_box": bbox_all}
+        if any(sub_key == "pivot" for sub_key, _ in self.subcheck_definitions.get(check_state_key, [])):
+            left_pivot = tuple(cmds.xform(left_root, q=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+            right_pivot = tuple(cmds.xform(right_root, q=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+            sub_results["pivot"] = all(abs(left_pivot[i] - right_pivot[i]) <= 1e-4 for i in range(3))
+        self._set_subcheck_results(check_state_key, sub_results)
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result(check_state_key, "INFO", check_label, "pair compare: topology, UVs and bbox match")
@@ -3805,6 +3889,10 @@ class HighPolyReviewTool:
         pivot_delta = tuple(abs(left_data["pivot_world"][i] - right_data["pivot_world"][i]) for i in range(3))
         pivot_ok = all(v <= 1e-4 for v in pivot_delta)
         ok = presence_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
+        self._set_subcheck_results(
+            check_state_key,
+            {"presence": presence_ok, "topology": topo_ok, "uv": uv_ok, "bounding_box": bbox_ok, "pivot": pivot_ok},
+        )
 
         self.log("INFO" if presence_ok else "FAIL", category, f"Presence match = {'OK' if presence_ok else 'FAIL'}")
         self.log("INFO" if topo_ok else "FAIL", category, "Topology match (totaux root) = {}".format("OK" if topo_ok else "FAIL"))
@@ -3875,6 +3963,10 @@ class HighPolyReviewTool:
             pair_rows.append((None, self._mesh_data_signature(fbx_mesh, root=fbx_root)))
 
         pair_fail_count = 0
+        presence_all = True
+        topology_all = True
+        uv_all = True
+        bbox_all = True
         for ma_data, fbx_data in pair_rows:
             ma_name = ma_data["path"] if ma_data else "UNMATCHED High.ma mesh"
             fbx_name = fbx_data["path"] if fbx_data else "UNMATCHED High.fbx mesh"
@@ -3903,6 +3995,10 @@ class HighPolyReviewTool:
             pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
             if not pair_ok:
                 pair_fail_count += 1
+            presence_all = presence_all and presence_ok
+            topology_all = topology_all and topo_ok
+            uv_all = uv_all and uv_ok
+            bbox_all = bbox_all and bbox_ok
 
             self.log("INFO", "ComparePair", f"MA Mesh = {ma_name}")
             self.log("INFO", "ComparePair", f"FBX Mesh = {fbx_name}")
@@ -3921,6 +4017,9 @@ class HighPolyReviewTool:
             self.log("INFO" if pair_ok else "FAIL", "ComparePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
 
         ok = pair_fail_count == 0
+        ma_pivot = tuple(cmds.xform(ma_root, q=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+        fbx_pivot = tuple(cmds.xform(fbx_root, q=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+        self._set_subcheck_results("ma_fbx_compared", {"presence": presence_all, "topology": topology_all, "uv": uv_all, "bounding_box": bbox_all, "pivot": all(abs(ma_pivot[i] - fbx_pivot[i]) <= 1e-4 for i in range(3))})
         self.log("INFO" if ok else "FAIL", "Compare", f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result("ma_fbx_compared", "INFO", "Compare High vs FBX", "aggregated topology, UVs and bbox match")
@@ -4003,6 +4102,10 @@ class HighPolyReviewTool:
         self.log("INFO", "CompareBake", f"Paires comparées : {len(pairings)}")
 
         pair_fail_count = 0
+        presence_all = True
+        topology_all = True
+        uv_all = True
+        bbox_all = True
         for ma_data, bake_data in pairings:
             ma_name = ma_data["path"] if ma_data else "UNMATCHED High.ma mesh"
             bake_name = bake_data["path"] if bake_data else "UNMATCHED Bake High mesh"
@@ -4031,6 +4134,10 @@ class HighPolyReviewTool:
             pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
             if not pair_ok:
                 pair_fail_count += 1
+            presence_all = presence_all and presence_ok
+            topology_all = topology_all and topo_ok
+            uv_all = uv_all and uv_ok
+            bbox_all = bbox_all and bbox_ok
 
             self.log("INFO", "CompareBakePair", f"High.ma Mesh = {ma_name}")
             self.log("INFO", "CompareBakePair", f"Bake High Mesh = {bake_name}")
@@ -4049,6 +4156,9 @@ class HighPolyReviewTool:
             self.log("INFO" if pair_ok else "FAIL", "CompareBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
 
         ok = pair_fail_count == 0
+        ma_pivot = tuple(cmds.xform(ma_root, q=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+        bake_pivot = tuple(cmds.xform(bake_root, q=True, ws=True, rotatePivot=True) or [0.0, 0.0, 0.0])
+        self._set_subcheck_results("ma_bake_compared", {"presence": presence_all, "topology": topology_all, "uv": uv_all, "bounding_box": bbox_all, "pivot": all(abs(ma_pivot[i] - bake_pivot[i]) <= 1e-4 for i in range(3))})
         self.log("INFO" if ok else "FAIL", "CompareBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result("ma_bake_compared", "INFO", "Compare High vs Bake", "aggregated topology, UVs and bbox match")
@@ -4112,6 +4222,14 @@ class HighPolyReviewTool:
         )
 
         ok = high_ok and low_ok and namespace_ok and overlap_ok and naming_split_ok
+        self._set_subcheck_results(
+            "bake_structure_checked",
+            {
+                "bake_high_present": high_ok,
+                "bake_low_present": low_ok,
+                "structure_valid": namespace_ok and overlap_ok and naming_split_ok,
+            },
+        )
         self.log("INFO" if ok else "FAIL", "BakeStructure", f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result("bake_structure_checked", "INFO", "Bake Structure", "high/low roots valid, separated and namespace-consistent")
@@ -4256,6 +4374,14 @@ class HighPolyReviewTool:
             duplicate_low,
             bbox_pivot_mismatch_keys,
         ])
+        self._set_subcheck_results(
+            "bake_pairing_checked",
+            {
+                "naming": not invalid_high_suffix and not invalid_low_suffix,
+                "pairing": not orphan_high_keys and not orphan_low_keys and not duplicate_high and not duplicate_low,
+                "bounding_box": not bbox_pivot_mismatch_keys,
+            },
+        )
         self.log("INFO" if ok else "FAIL", "BakePairing", f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result("bake_pairing_checked", "INFO", "Bake Pairing", f"{len(shared_unique_keys)} pairs matched, suffix/pivot/bbox valid with bbox scale {bbox_scale:.3f}")
@@ -4373,13 +4499,7 @@ class HighPolyReviewTool:
             non_manifold_count = len(nmv) + len(nme)
             non_manifold_uv_count = self._count_non_manifold_uv_components(m)
             lamina_count = len(lam)
-            ngon_count = 0
-            face_count = int(cmds.polyEvaluate(m, face=True) or 0)
-            for face_idx in range(face_count):
-                vtx = cmds.polyInfo(f"{m}.f[{face_idx}]", faceToVertex=True) or []
-                tokens = [tok for tok in (vtx[0].replace(":", " ").split() if vtx else []) if tok.isdigit()]
-                if len(tokens) > 5:
-                    ngon_count += 1
+            ngon_count = self._mesh_ngon_count(m)
             mesh_ok = (ngon_count == 0 and non_manifold_count == 0 and non_manifold_uv_count == 0 and lamina_count == 0)
             if mesh_ok:
                 ok_count += 1
@@ -4395,8 +4515,10 @@ class HighPolyReviewTool:
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         if ok:
+            self._set_subcheck_results(check_state_key, {"non_manifold_geometry": True, "non_manifold_uv": True, "lamina_faces": True, "ngons": True})
             self.log_check_result(check_state_key, "INFO", "Low Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold, non-manifold UV or lamina")
         else:
+            self._set_subcheck_results(check_state_key, self._topology_subcheck_results(meshes))
             self.log_check_result(check_state_key, "FAIL", "Low Topology Check", f"{fail_count}/{len(meshes)} meshes have topology issues")
 
     def _scan_namespaces_with_allowed(self, allowed: List[str]) -> List[str]:
@@ -4825,8 +4947,10 @@ class HighPolyReviewTool:
         fail_count = 0 if pair_ok else 1
         self.log("INFO" if fail_count == 0 else "FAIL", "Placeholder", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         if pair_ok:
+            self._set_subcheck_results("placeholder_checked", {"bbox": True, "pivot": True})
             self.log_check_result("placeholder_checked", "INFO", "Placeholder Check", "aggregated bbox and pivot are within tolerance")
         else:
+            self._set_subcheck_results("placeholder_checked", {"bbox": bbox_ok, "pivot": pivot_ok})
             self.log_check_result(
                 "placeholder_checked",
                 "FAIL",
@@ -4885,8 +5009,18 @@ class HighPolyReviewTool:
         ok = fail_count == 0
         self.log("INFO" if ok else "FAIL", "Topology", f"Résultat final : {ok_count} OK / {fail_count} FAIL")
         if ok:
+            self._set_subcheck_results("topology_checked", {"non_manifold_geometry": True, "non_manifold_uv": True, "lamina_faces": True, "ngons": True})
             self.log_check_result("topology_checked", "INFO", "Topology Check", f"{len(meshes)} meshes clean: no ngons, non-manifold, non-manifold UV or lamina")
         else:
+            self._set_subcheck_results(
+                "topology_checked",
+                {
+                    "non_manifold_geometry": all((len(cmds.polyInfo(m, nonManifoldVertices=True) or []) + len(cmds.polyInfo(m, nonManifoldEdges=True) or [])) == 0 for m in meshes),
+                    "non_manifold_uv": all(self._count_non_manifold_uv_components(m) == 0 for m in meshes),
+                    "lamina_faces": all(len(cmds.polyInfo(m, laminaFaces=True) or []) == 0 for m in meshes),
+                    "ngons": all(self._mesh_ngon_count(m) == 0 for m in meshes),
+                },
+            )
             self.log_check_result("topology_checked", "FAIL", "Topology Check", f"{fail_count}/{len(meshes)} meshes have topology defects")
 
     def _count_faces_assigned_to_mesh(
@@ -4898,6 +5032,26 @@ class HighPolyReviewTool:
     ) -> int:
         count, _, _ = self._material_assignment_details(mesh, shape, shading_group, mesh_face_count)
         return count
+
+    def _mesh_ngon_count(self, mesh: str) -> int:
+        ngon_count = 0
+        face_count = int(cmds.polyEvaluate(mesh, face=True) or 0)
+        for face_idx in range(face_count):
+            vtx = cmds.polyInfo(f"{mesh}.f[{face_idx}]", faceToVertex=True) or []
+            if not vtx:
+                continue
+            tokens = [tok for tok in vtx[0].replace(":", " ").split() if tok.isdigit()]
+            if len(tokens) > 5:
+                ngon_count += 1
+        return ngon_count
+
+    def _topology_subcheck_results(self, meshes: List[str]) -> Dict[str, bool]:
+        return {
+            "non_manifold_geometry": all((len(cmds.polyInfo(m, nonManifoldVertices=True) or []) + len(cmds.polyInfo(m, nonManifoldEdges=True) or [])) == 0 for m in meshes),
+            "non_manifold_uv": all(self._count_non_manifold_uv_components(m) == 0 for m in meshes),
+            "lamina_faces": all(len(cmds.polyInfo(m, laminaFaces=True) or []) == 0 for m in meshes),
+            "ngons": all(self._mesh_ngon_count(m) == 0 for m in meshes),
+        }
 
     def _material_assignment_details(
         self,
@@ -5431,6 +5585,9 @@ else
             self.log("INFO" if mesh_ok else "FAIL", "LowUV1Mesh", f"Result = {'OK' if mesh_ok else 'FAIL'}", [mesh])
 
         ok = fail_count == 0
+        overlap_outside_ok = (fail_count - map1_missing_count - zero_space_fail_count) <= 0 and map1_missing_count == 0
+        zero_space_ok = zero_space_fail_count == 0 and map1_missing_count == 0
+        self._set_subcheck_results(check_state_key, {"overlap_outside": overlap_outside_ok, "zero_space_uv_shells": zero_space_ok})
         self.log("INFO" if ok else "FAIL", category, f"Résultat final : {'OK' if ok else 'FAIL'}")
         self._set_uv_set_on_meshes(meshes, "map1")
         try:
@@ -5550,6 +5707,9 @@ else
         self.log("INFO", category, f"Texel density moyenne mesurée : {mean_td:.2f}")
         self.log("INFO", category, f"Tolérance : ±{LOW_MAP2_TOLERANCE:.2f}")
         ok = bool(valid_values) and pair_fail_count == 0
+        map2_present_ok = len(valid_values) == len(meshes)
+        texel_ok = bool(valid_values) and (pair_fail_count - zero_space_fail_count) == 0
+        self._set_subcheck_results(check_state_key, {"map2_present": map2_present_ok, "texel_density": texel_ok, "zero_space_uv_shells": zero_space_fail_count == 0 and map2_present_ok})
         self.log("INFO" if ok else "FAIL", category, f"Résultat global : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result(check_state_key, "INFO", "UV Map2 Check", f"texel density in tolerance on {len(valid_values)} meshes (mean {mean_td:.2f})")
@@ -5614,6 +5774,10 @@ else
         self.log("INFO", "CompareLowBake", f"Paires comparées : {len(pair_rows)}")
 
         pair_fail_count = 0
+        presence_all = True
+        topology_all = True
+        uv_all = True
+        bbox_all = True
         for low_data, bake_data in pair_rows:
             low_name = low_data["path"] if low_data else "UNMATCHED Low.fbx mesh"
             bake_name = bake_data["path"] if bake_data else "UNMATCHED Bake Low mesh"
@@ -5639,6 +5803,10 @@ else
             pair_ok = presence_ok and topo_ok and uv_ok and bbox_ok
             if not pair_ok:
                 pair_fail_count += 1
+            presence_all = presence_all and presence_ok
+            topology_all = topology_all and topo_ok
+            uv_all = uv_all and uv_ok
+            bbox_all = bbox_all and bbox_ok
 
             self.log("INFO", "CompareLowBakePair", f"Low = {low_name}")
             self.log("INFO", "CompareLowBakePair", f"Bake Low = {bake_name}")
@@ -5657,6 +5825,7 @@ else
             self.log("INFO" if pair_ok else "FAIL", "CompareLowBakePair", f"Result = {'OK' if pair_ok else 'FAIL'}")
 
         ok = pair_fail_count == 0
+        self._set_subcheck_results("low_bake_compared", {"presence": presence_all, "topology": topology_all, "uv": uv_all, "bounding_box": bbox_all})
         self.log("INFO" if ok else "FAIL", "CompareLowBake", f"Résultat final : {'OK' if ok else 'FAIL'}")
         if ok:
             self.log_check_result("low_bake_compared", "INFO", "Compare Low vs Bake", "aggregated topology, UVs and bbox match")
@@ -5717,6 +5886,7 @@ else
         pivot_delta = tuple(abs(low_data["pivot_world"][i] - final_data["pivot_world"][i]) for i in range(3))
         pivot_ok = all(v <= 1e-4 for v in pivot_delta)
         ok = presence_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
+        self._set_subcheck_results("low_final_compared", {"presence": presence_ok, "topology": topo_ok, "uv": uv_ok, "bounding_box": bbox_ok, "pivot": pivot_ok})
 
         self.log("INFO" if presence_ok else "FAIL", "CompareLowFinal", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
         self.log("INFO" if topo_ok else "FAIL", "CompareLowFinal", f"Topology match (totaux root) = {'OK' if topo_ok else 'FAIL'}")
@@ -5792,6 +5962,7 @@ else
         pivot_delta = tuple(abs(ma_data["pivot_world"][i] - fbx_data["pivot_world"][i]) for i in range(3))
         pivot_ok = all(v <= 1e-4 for v in pivot_delta)
         ok = presence_ok and topo_ok and uv_ok and bbox_ok and pivot_ok
+        self._set_subcheck_results("final_ma_fbx_compared", {"presence": presence_ok, "topology": topo_ok, "uv": uv_ok, "bounding_box": bbox_ok, "pivot": pivot_ok})
 
         self.log("INFO" if presence_ok else "FAIL", "FinalAssetCompare", f"Presence match = {'OK' if presence_ok else 'FAIL'}")
         self.log("INFO" if topo_ok else "FAIL", "FinalAssetCompare", f"Topology match (totaux root) = {'OK' if topo_ok else 'FAIL'}")
