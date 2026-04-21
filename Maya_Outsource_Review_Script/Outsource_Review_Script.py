@@ -27,23 +27,18 @@ WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
 MAX_UI_TEXT_LENGTH = 90
 MAX_MENU_LABEL_LENGTH = 72
-UI_COLOR_BG_WINDOW = (0.11, 0.12, 0.13)
-UI_COLOR_BG_SECTION = (0.16, 0.17, 0.19)
-UI_COLOR_BG_SUBSECTION = (0.20, 0.21, 0.23)
-UI_COLOR_BG_ACCENT = (0.22, 0.39, 0.61)
-UI_COLOR_BG_ACCENT_SOFT = (0.24, 0.29, 0.36)
-UI_COLOR_BG_WARNING = (0.42, 0.31, 0.14)
-UI_COLOR_BG_LOG = (0.10, 0.11, 0.12)
-UI_COLOR_TEXT_MUTED = (0.72, 0.74, 0.77)
-UI_COLOR_VIS_ON = (0.19, 0.46, 0.31)
-UI_COLOR_VIS_OFF = (0.28, 0.29, 0.31)
-UI_COLOR_STATUS_OK = (0.19, 0.47, 0.30)
-UI_COLOR_STATUS_WARNING = (0.70, 0.54, 0.16)
-UI_COLOR_STATUS_FAIL = (0.60, 0.22, 0.20)
-UI_COLOR_STATUS_PENDING = (0.37, 0.38, 0.40)
-UI_BUTTON_HEIGHT = 24
-UI_PRIMARY_BUTTON_HEIGHT = 28
-UI_SIDEBAR_WIDTH = 196
+UI_COLOR_BG_WINDOW = (0.17, 0.17, 0.18)
+UI_COLOR_BG_SECTION = (0.20, 0.20, 0.22)
+UI_COLOR_BG_SUBSECTION = (0.23, 0.23, 0.25)
+UI_COLOR_BG_ACCENT = (0.25, 0.37, 0.56)
+UI_COLOR_BG_ACCENT_SOFT = (0.28, 0.32, 0.38)
+UI_COLOR_BG_WARNING = (0.34, 0.27, 0.16)
+UI_COLOR_BG_LOG = (0.15, 0.15, 0.16)
+UI_COLOR_TEXT_MUTED = (0.77, 0.77, 0.79)
+UI_COLOR_VIS_ON = (0.22, 0.44, 0.30)
+UI_COLOR_VIS_OFF = (0.30, 0.30, 0.32)
+UI_BUTTON_HEIGHT = 28
+UI_PRIMARY_BUTTON_HEIGHT = 32
 ROOT_SUFFIXES = {
     "high": "_high",
     "low": "_low",
@@ -291,10 +286,6 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
-        self.sidebar_nav_buttons: Dict[str, str] = {}
-        self.tab_index_to_context: Dict[int, str] = {}
-        self.section_headers: Dict[str, Dict[str, str]] = {}
-        self.sidebar_summary_labels: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -312,37 +303,28 @@ class HighPolyReviewTool:
         )
 
         root_layout = cmds.formLayout()
-        self.ui["main_split"] = cmds.paneLayout(
-            configuration="horizontal2",
-            staticWidthPane=1,
-            separatorThickness=4,
-        )
-        self._build_sidebar_navigation()
         self.ui["scroll"] = cmds.scrollLayout(
             childResizable=True,
-            horizontalScrollBarThickness=10,
-            verticalScrollBarThickness=10,
-            backgroundColor=UI_COLOR_BG_WINDOW,
+            horizontalScrollBarThickness=12,
+            verticalScrollBarThickness=12,
         )
 
-        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
         self._build_file_section()
         self._build_review_tabs_section()
         self._build_results_section()
         self._build_notes_section()
         self._build_summary_section()
-        cmds.setParent("..")
-        cmds.setParent("..")
 
         cmds.setParent(root_layout)
         cmds.formLayout(
             root_layout,
             edit=True,
             attachForm=[
-                (self.ui["main_split"], "top", 0),
-                (self.ui["main_split"], "left", 0),
-                (self.ui["main_split"], "right", 0),
-                (self.ui["main_split"], "bottom", 0),
+                (self.ui["scroll"], "top", 0),
+                (self.ui["scroll"], "left", 0),
+                (self.ui["scroll"], "right", 0),
+                (self.ui["scroll"], "bottom", 0),
             ],
         )
 
@@ -384,79 +366,6 @@ class HighPolyReviewTool:
         )
         cmds.setParent("..")
 
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_sidebar_navigation(self) -> None:
-        cmds.columnLayout(
-            adjustableColumn=True,
-            rowSpacing=8,
-            width=UI_SIDEBAR_WIDTH,
-            backgroundColor=UI_COLOR_BG_SECTION,
-        )
-        cmds.text(label="OUTSOURCE REVIEW", align="left", height=26, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        self._build_sidebar_group("Review", [("high", "High"), ("low", "Low"), ("bake", "Bake"), ("final_asset", "Final Asset")])
-        self._build_sidebar_group("Tools", [("tools_visibility", "Scene Visibility"), ("tools_logs", "Logs & Report")])
-        cmds.frameLayout(label="Summary", collapsable=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        for key, label in (("passed", "Passed"), ("warning", "Warnings"), ("failed", "Failed"), ("pending", "Pending"), ("total", "Total Checks")):
-            self.sidebar_summary_labels[key] = cmds.text(label=f"{label}: 0", align="left")
-        cmds.setParent("..")
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_sidebar_group(self, title: str, entries: List[Tuple[str, str]]) -> None:
-        cmds.frameLayout(label=title, collapsable=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        for key, label in entries:
-            self.sidebar_nav_buttons[key] = cmds.button(
-                label=label,
-                height=24,
-                align="left",
-                backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
-                command=lambda *_args, nav=key: self._on_sidebar_nav_clicked(nav),
-            )
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _on_sidebar_nav_clicked(self, nav_key: str) -> None:
-        if nav_key in {"high", "low", "bake", "final_asset"}:
-            self._switch_to_review_tab(nav_key)
-            return
-        if nav_key == "tools_visibility":
-            self._switch_to_review_tab("high")
-            self._reset_main_scroll_to_top()
-            return
-        if nav_key == "tools_logs":
-            scroll_layout = self.ui.get("scroll")
-            if scroll_layout and cmds.scrollLayout(scroll_layout, exists=True):
-                cmds.scrollLayout(scroll_layout, edit=True, scrollByPixel=("down", 99999999))
-
-    def _switch_to_review_tab(self, context_key: str) -> None:
-        tabs = self.ui.get("review_tabs")
-        if not tabs or not cmds.tabLayout(tabs, exists=True):
-            return
-        for idx, ctx in self.tab_index_to_context.items():
-            if ctx == context_key:
-                cmds.tabLayout(tabs, edit=True, selectTabIndex=idx)
-                self._reset_main_scroll_to_top()
-                return
-
-    def _build_tab_header(self, context_key: str, title: str, run_all_callback) -> None:
-        cmds.frameLayout(labelVisible=False, collapsable=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.rowLayout(
-            numberOfColumns=7,
-            adjustableColumn=1,
-            columnAttach=[(1, "both", 0), (2, "both", 12), (3, "both", 8), (4, "both", 8), (5, "both", 8), (6, "both", 8), (7, "both", 0)],
-        )
-        self.section_headers[context_key] = {
-            "title": cmds.text(label=title, align="left", font="boldLabelFont"),
-            "passed": cmds.text(label="Passed: 0", align="left"),
-            "warning": cmds.text(label="Warning: 0", align="left"),
-            "failed": cmds.text(label="Failed: 0", align="left"),
-            "pending": cmds.text(label="Pending: 0", align="left"),
-        }
-        cmds.button(label="Run All", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: run_all_callback())
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -549,25 +458,20 @@ class HighPolyReviewTool:
             innerMarginHeight=6,
             changeCommand=lambda *_: self._reset_main_scroll_to_top(),
         )
-        self.ui["review_tabs"] = tabs
 
         high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_tab_header("high", "HIGH POLY REVIEW", self.run_all_checks)
         self._build_guided_high_review_section()
         cmds.setParent("..")
 
         low_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_tab_header("low", "LOW POLY REVIEW", self.run_low_review_checks)
         self._build_guided_low_review_section()
         cmds.setParent("..")
 
         bake_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_tab_header("bake", "BAKE SCENE REVIEW", self.run_bake_review_checks)
         self._build_guided_bake_review_section()
         cmds.setParent("..")
 
         final_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_tab_header("final_asset", "FINAL ASSET REVIEW", self.run_final_review_checks)
         self._build_guided_final_asset_review_section()
         cmds.setParent("..")
 
@@ -581,7 +485,6 @@ class HighPolyReviewTool:
                 (final_tab, "Review 04 — Final Asset"),
             ),
         )
-        self.tab_index_to_context = {1: "high", 2: "low", 3: "bake", 4: "final_asset"}
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -843,18 +746,18 @@ class HighPolyReviewTool:
         if not defs:
             return
         self.subcheck_ui_map.setdefault(check_key, {})
-        cmds.flowLayout(wrap=True, columnSpacing=8)
+        cmds.flowLayout(wrap=True, columnSpacing=14)
         for sub_key, sub_label in defs:
             control_key = f"subcheck_{check_key}_{sub_key}"
-            self.ui[control_key] = cmds.iconTextCheckBox(
-                style="textOnly",
-                label=f"• {sub_label}",
-                value=False,
-                enable=False,
-                height=20,
-                backgroundColor=UI_COLOR_STATUS_PENDING,
+            cmds.rowLayout(
+                numberOfColumns=2,
+                adjustableColumn=2,
+                columnAttach=[(1, "both", 0), (2, "both", 4)],
             )
+            self.ui[control_key] = cmds.checkBox(label="", value=False, enable=False)
+            cmds.text(label=sub_label, align="left")
             self.subcheck_ui_map[check_key][sub_key] = control_key
+            cmds.setParent("..")
         cmds.setParent("..")
 
     def _set_subcheck_results(self, check_key: str, results: Dict[str, bool]) -> None:
@@ -1692,29 +1595,6 @@ class HighPolyReviewTool:
             f"Warnings: {warn_count} | Fails: {fail_count} | Pending: {pending}"
         )
         cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
-        self._refresh_header_indicators(ok_count, warn_count, fail_count, pending)
-        self._refresh_sidebar_summary(ok_count, warn_count, fail_count, pending)
-
-    def _refresh_header_indicators(self, ok_count: int, warn_count: int, fail_count: int, pending: int) -> None:
-        for header_map in self.section_headers.values():
-            for key, value in (("passed", ok_count), ("warning", warn_count), ("failed", fail_count), ("pending", pending)):
-                control = header_map.get(key)
-                if control and cmds.text(control, exists=True):
-                    cmds.text(control, e=True, label=f"{key.capitalize()}: {value}")
-
-    def _refresh_sidebar_summary(self, ok_count: int, warn_count: int, fail_count: int, pending: int) -> None:
-        total = len(self.check_states)
-        labels = {
-            "passed": f"Passed: {ok_count}",
-            "warning": f"Warnings: {warn_count}",
-            "failed": f"Failed: {fail_count}",
-            "pending": f"Pending: {pending}",
-            "total": f"Total Checks: {total}",
-        }
-        for key, text in labels.items():
-            control = self.sidebar_summary_labels.get(key)
-            if control and cmds.text(control, exists=True):
-                cmds.text(control, e=True, label=text)
 
     def refresh_checklist_ui(self) -> None:
         for key, ctrl in self.check_ui_map.items():
@@ -1725,12 +1605,7 @@ class HighPolyReviewTool:
         for check_key, sub_controls in self.subcheck_ui_map.items():
             for sub_key, ctrl in sub_controls.items():
                 status = self.subcheck_states.get(check_key, {}).get(sub_key, "PENDING")
-                bg = UI_COLOR_STATUS_PENDING
-                if status == "OK":
-                    bg = UI_COLOR_STATUS_OK
-                elif status == "FAIL":
-                    bg = UI_COLOR_STATUS_FAIL
-                cmds.iconTextCheckBox(self.ui[ctrl], e=True, value=(status == "OK"), backgroundColor=bg)
+                cmds.checkBox(self.ui[ctrl], e=True, value=(status == "OK"))
 
         self.refresh_summary()
 
@@ -6166,19 +6041,6 @@ else
         self.compare_low_vs_bake_low()
         self.compare_low_vs_final_asset()
         self.log("INFO", "RunAllLow", "Résultat : Run All Low Steps terminé.")
-
-    def run_bake_review_checks(self) -> None:
-        self.log("INFO", "RunAllBake", "----- Run All Bake Steps (01 -> 09) -----")
-        self.check_bake_scene_structure()
-        self.run_bake_low_topology_checks()
-        self.run_bake_high_vertex_color_check()
-        self.analyze_bake_high_materials()
-        self.analyze_bake_low_materials()
-        self.run_bake_low_uv_map1_check()
-        self.run_bake_low_uv_map2_check()
-        self.check_bake_pairing()
-        self.check_bake_readiness()
-        self.log("INFO", "RunAllBake", "Résultat : Run All Bake Steps terminé.")
 
     def run_final_review_checks(self) -> None:
         self.log("INFO", "RunAll", "Final Review désactivée dans cette version High-only.")
