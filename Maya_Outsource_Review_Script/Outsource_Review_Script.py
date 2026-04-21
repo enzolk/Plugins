@@ -95,6 +95,11 @@ QFrame#Step01Card {
     border: 1px solid #273854;
     border-radius: 12px;
 }
+QFrame#StepCard {
+    background-color: #151f31;
+    border: 1px solid #273854;
+    border-radius: 12px;
+}
 QFrame#StepBadge {
     background-color: #121b2c;
     border: 1px solid #2a4670;
@@ -208,6 +213,19 @@ QFrame#SubChecksBand {
     background-color: #182335;
     border: 1px solid #243751;
     border-radius: 10px;
+}
+QListWidget#StepListWidget {
+    background-color: #0f1727;
+    border: 1px solid #2f4360;
+    border-radius: 8px;
+    color: #dce9ff;
+    font-size: 13px;
+    padding: 4px;
+}
+QCheckBox#GlobalToggleBox {
+    color: #c7d8f3;
+    font-size: 13px;
+    font-weight: 600;
 }
 QCheckBox#StepSubCheckBox {
     color: #eaf2ff;
@@ -410,6 +428,71 @@ if QT_AVAILABLE and QtWidgets is not None:
             row_layout.addWidget(self.use_selection_btn, 0)
 else:
     class StepRootSelectorRow:  # type: ignore[no-redef]
+        pass
+
+
+if QT_AVAILABLE and QtWidgets is not None:
+    class ReviewStepCard(QtWidgets.QFrame):
+        def __init__(self, step_num: int, title: str, info_text: str = "", parent: Optional[QtWidgets.QWidget] = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("StepCard")
+            self.setStyleSheet(STEP01_QSS)
+            self.body_widget = QtWidgets.QWidget()
+            root = QtWidgets.QVBoxLayout(self)
+            root.setContentsMargins(14, 12, 14, 12)
+            root.setSpacing(10)
+
+            header = QtWidgets.QHBoxLayout()
+            header.setSpacing(10)
+            badge = QtWidgets.QFrame()
+            badge.setObjectName("StepBadge")
+            badge.setFixedSize(52, 52)
+            b_l = QtWidgets.QVBoxLayout(badge)
+            b_l.setContentsMargins(0, 7, 0, 6)
+            b_l.setSpacing(0)
+            b_l.setAlignment(QtCore.Qt.AlignCenter)
+            t = QtWidgets.QLabel("STEP")
+            t.setObjectName("StepBadgeTop")
+            t.setAlignment(QtCore.Qt.AlignCenter)
+            n = QtWidgets.QLabel(f"{step_num:02d}")
+            n.setObjectName("StepBadgeBottom")
+            n.setAlignment(QtCore.Qt.AlignCenter)
+            n.setStyleSheet("font-size: 24px;")
+            b_l.addWidget(t)
+            b_l.addWidget(n)
+
+            title_lbl = QtWidgets.QLabel(title)
+            title_lbl.setObjectName("StepTitle")
+            title_lbl.setStyleSheet("font-size: 18px;")
+            header.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
+            header.addWidget(title_lbl, 0, QtCore.Qt.AlignVCenter)
+            if info_text:
+                info_btn = ModernInfoButton(info_text)
+                info_btn.setObjectName("InfoButton")
+                info_btn.setText("ⓘ")
+                header.addWidget(info_btn, 0, QtCore.Qt.AlignVCenter)
+            header.addStretch(1)
+            self.collapse_btn = QtWidgets.QToolButton()
+            self.collapse_btn.setObjectName("CollapseButton")
+            self.collapse_btn.setText("▾")
+            self.collapse_btn.clicked.connect(self._toggle_body)
+            header.addWidget(self.collapse_btn, 0, QtCore.Qt.AlignVCenter)
+            root.addLayout(header)
+
+            body_l = QtWidgets.QVBoxLayout(self.body_widget)
+            body_l.setContentsMargins(0, 0, 0, 0)
+            body_l.setSpacing(8)
+            root.addWidget(self.body_widget)
+
+        def body_layout(self) -> QtWidgets.QVBoxLayout:
+            return self.body_widget.layout()  # type: ignore[return-value]
+
+        def _toggle_body(self) -> None:
+            visible = self.body_widget.isVisible()
+            self.body_widget.setVisible(not visible)
+            self.collapse_btn.setText("▸" if visible else "▾")
+else:
+    class ReviewStepCard:  # type: ignore[no-redef]
         pass
 
 
@@ -633,6 +716,10 @@ class HighPolyReviewTool:
         self.step01_placeholder_body_widget: Optional[QtWidgets.QWidget] = None
         self.step01_collapse_button: Optional[QtWidgets.QToolButton] = None
         self.step01_qt_subcheck_widgets: Dict[str, QtWidgets.QCheckBox] = {}
+        self.qt_check_widgets: Dict[str, QtWidgets.QCheckBox] = {}
+        self.qt_subcheck_widgets: Dict[str, Dict[str, QtWidgets.QCheckBox]] = {}
+        self.qt_global_toggles: Dict[str, QtWidgets.QCheckBox] = {}
+        self.qt_list_widgets: Dict[str, QtWidgets.QListWidget] = {}
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
 
@@ -719,6 +806,94 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_technical_checks_section(self) -> None:
+        if QT_AVAILABLE and QtWidgets is not None:
+            cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+            cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            self._build_tab_visibility_controls("high")
+            cmds.text(label="Guided review of the High.ma delivery.", align="left")
+            self._build_step01_placeholder_match_qt()
+
+            self._build_qt_step_card(
+                2,
+                "Design Kit Review",
+                lambda body: (
+                    body.addWidget(self._create_qt_subcheck_band("design_kit_checked")[0]),
+                    body.addWidget(self._make_qt_run_button("Mark Step as Reviewed", self.mark_design_reviewed)),
+                ),
+            )
+
+            def _high_topology_body(body):
+                self._add_qt_root_selector_row(body, "topology_high_root_menu", "High Root (Topology)", "high_ma")
+                band, lay = self._create_qt_subcheck_band("topology_checked")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Run Topology", self.run_topology_checks))
+                body.addWidget(band)
+            self._build_qt_step_card(3, "Topology Check", _high_topology_body)
+
+            def _high_vcolor_body(body):
+                self._add_qt_root_selector_row(body, "vertex_high_root_menu", "High Root (Vertex Colors)", "high_ma")
+                band, lay = self._create_qt_subcheck_band("vertex_colors_checked")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Run Vertex Color Check", self.check_vertex_colors))
+                lay.addWidget(self._make_qt_run_button("Display Vertex Color", self.display_vertex_colors))
+                lay.addWidget(self._make_qt_run_button("Hide Vertex Color", self.hide_vertex_colors))
+                body.addWidget(band)
+            self._build_qt_step_card(4, "Vertex Colors", _high_vcolor_body)
+
+            def _high_ns_body(body):
+                band, lay = self._create_qt_subcheck_band("no_namespaces")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Scan Namespaces", self.scan_namespaces))
+                lay.addWidget(self._make_qt_run_button("Remove Invalid Namespaces", self.remove_namespaces))
+                body.addWidget(band)
+            self._build_qt_step_card(5, "Namespaces", _high_ns_body)
+
+            def _high_materials_body(body):
+                self._add_qt_root_selector_row(body, "materials_high_root_menu", "High Root (Materials)", "high_ma")
+                band, lay = self._create_qt_subcheck_band("texture_sets_analyzed")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Analyze Materials", lambda: self.analyze_texture_sets(mode="materials")))
+                body.addWidget(band)
+                lst = QtWidgets.QListWidget()
+                lst.setObjectName("StepListWidget")
+                lst.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+                lst.itemSelectionChanged.connect(lambda: self.on_texture_set_selection_changed("high"))
+                self.ui["texture_sets_list"] = lst
+                body.addWidget(lst)
+                body.addWidget(self._make_qt_run_button("Isolate Material", lambda: self.toggle_isolate_selected_material("high")))
+            self._build_qt_step_card(6, "Materials / Texture Sets", _high_materials_body)
+
+            def _high_cmp_fbx_body(body):
+                self._add_qt_root_selector_row(body, "compare_ma_root_menu", "High.ma Root", "high_ma")
+                self._add_qt_root_selector_row(body, "compare_fbx_root_menu", "High.fbx Root", "high_fbx")
+                band, lay = self._create_qt_subcheck_band("ma_fbx_compared")
+                lay.addStretch(1)
+                glb = QtWidgets.QCheckBox("Global")
+                glb.setObjectName("GlobalToggleBox")
+                glb.setChecked(False)
+                self.ui["compare_ma_fbx_global_mode"] = glb
+                lay.addWidget(glb)
+                lay.addWidget(self._make_qt_run_button("Run Compare", self.compare_ma_vs_fbx))
+                body.addWidget(band)
+            self._build_qt_step_card(7, "Compare High.ma vs High.fbx", _high_cmp_fbx_body)
+
+            def _high_cmp_bake_body(body):
+                self._add_qt_root_selector_row(body, "compare_bake_ma_root_menu", "High.ma Root", "high_ma")
+                self._add_qt_root_selector_row(body, "compare_bake_high_root_menu", "Bake High Root", "bake_high")
+                band, lay = self._create_qt_subcheck_band("ma_bake_compared")
+                lay.addStretch(1)
+                glb = QtWidgets.QCheckBox("Global")
+                glb.setObjectName("GlobalToggleBox")
+                glb.setChecked(False)
+                self.ui["compare_ma_bake_global_mode"] = glb
+                lay.addWidget(glb)
+                lay.addWidget(self._make_qt_run_button("Run Compare Bake", self.compare_ma_vs_bake_high))
+                body.addWidget(band)
+            self._build_qt_step_card(8, "Compare High.ma vs Bake Scene High", _high_cmp_bake_body)
+
+            cmds.setParent("..")
+            cmds.setParent("..")
+            return
         cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("high")
@@ -835,6 +1010,82 @@ class HighPolyReviewTool:
             cmds.scrollLayout(scroll_layout, edit=True, scrollByPixel=("up", 99999999))
 
     def _build_guided_low_review_section(self) -> None:
+        if QT_AVAILABLE and QtWidgets is not None:
+            cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+            cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            self._build_tab_visibility_controls("low")
+            cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
+
+            self._build_qt_step_card(1, "Topology Check", lambda body: (
+                self._add_qt_root_selector_row(body, "low_topology_root_menu", "Low Root (Topology)", "low_fbx"),
+                body.addWidget(self._create_qt_subcheck_band("low_topology_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run Topology", self.run_low_topology_checks)),
+            ))
+
+            def _low_ns_body(body):
+                band, lay = self._create_qt_subcheck_band("low_namespaces_checked")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Run Namespace Check", self.scan_low_namespaces))
+                lay.addWidget(self._make_qt_run_button("Remove Invalid Namespaces", self.remove_low_namespaces))
+                body.addWidget(band)
+            self._build_qt_step_card(2, "Namespaces", _low_ns_body)
+
+            def _low_mat_body(body):
+                self._add_qt_root_selector_row(body, "low_materials_root_menu", "Low Root (Materials)", "low_fbx")
+                band, lay = self._create_qt_subcheck_band("low_materials_checked")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Analyze Materials", self.analyze_low_materials))
+                body.addWidget(band)
+                lst = QtWidgets.QListWidget()
+                lst.setObjectName("StepListWidget")
+                lst.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+                lst.itemSelectionChanged.connect(lambda: self.on_texture_set_selection_changed("low"))
+                self.ui["low_texture_sets_list"] = lst
+                body.addWidget(lst)
+                body.addWidget(self._make_qt_run_button("Isolate Material", lambda: self.toggle_isolate_selected_material("low")))
+            self._build_qt_step_card(3, "Materials / Texture Sets", _low_mat_body)
+
+            self._build_qt_step_card(4, "UV Check map1", lambda body: (
+                self._add_qt_root_selector_row(body, "low_uv1_root_menu", "Low Root (UV map1)", "low_fbx"),
+                body.addWidget(self._create_qt_subcheck_band("low_uv_map1_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run UV Map1 Check", self.run_low_uv_map1_check)),
+            ))
+            self._build_qt_step_card(5, "UV map2 / Texel Density", lambda body: (
+                self._add_qt_root_selector_row(body, "low_uv2_root_menu", "Low Root (UV map2)", "low_fbx"),
+                body.addWidget(self._create_qt_subcheck_band("low_uv_map2_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run UV Map2 Check", self.run_low_map2_density_check)),
+            ))
+
+            def _low_bake_cmp(body):
+                self._add_qt_root_selector_row(body, "compare_low_bake_low_root_menu", "Low.fbx Root", "low_fbx")
+                self._add_qt_root_selector_row(body, "compare_low_bake_bake_root_menu", "Bake Low Root", "bake_low")
+                band, lay = self._create_qt_subcheck_band("low_bake_compared")
+                lay.addStretch(1)
+                glb = QtWidgets.QCheckBox("Global")
+                glb.setObjectName("GlobalToggleBox")
+                glb.setChecked(False)
+                self.ui["compare_low_bake_global_mode"] = glb
+                lay.addWidget(glb)
+                lay.addWidget(self._make_qt_run_button("Run Compare Bake", self.compare_low_vs_bake_low))
+                body.addWidget(band)
+            self._build_qt_step_card(6, "Compare Low.fbx vs Bake Scene Low", _low_bake_cmp)
+
+            def _low_final_cmp(body):
+                self._add_qt_root_selector_row(body, "compare_low_final_low_root_menu", "Low.fbx Root", "low_fbx")
+                self._add_qt_root_selector_row(body, "compare_low_final_final_root_menu", "Final Scene Root", "final_ma")
+                band, lay = self._create_qt_subcheck_band("low_final_compared")
+                lay.addStretch(1)
+                glb = QtWidgets.QCheckBox("Global")
+                glb.setObjectName("GlobalToggleBox")
+                glb.setChecked(True)
+                self.ui["compare_low_final_global_mode"] = glb
+                lay.addWidget(glb)
+                lay.addWidget(self._make_qt_run_button("Run Compare Final Asset", self.compare_low_vs_final_asset))
+                body.addWidget(band)
+            self._build_qt_step_card(7, "Compare Low.fbx vs Final Scene Asset", _low_final_cmp)
+            cmds.setParent("..")
+            cmds.setParent("..")
+            return
         cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("low")
@@ -904,6 +1155,95 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_guided_bake_review_section(self) -> None:
+        if QT_AVAILABLE and QtWidgets is not None:
+            cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+            cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            self._build_tab_visibility_controls("bake")
+            cmds.text(label="Guided review of the Bake Scene.", align="left")
+            self._build_qt_step_card(1, "Bake Scene Structure", lambda body: (
+                self._add_qt_root_selector_row(body, "bake_structure_high_root_menu", "Bake High Root", "bake_high"),
+                self._add_qt_root_selector_row(body, "bake_structure_low_root_menu", "Bake Low Root", "bake_low"),
+                body.addWidget(self._create_qt_subcheck_band("bake_structure_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run Structure Check", self.check_bake_scene_structure)),
+            ))
+            self._build_qt_step_card(2, "Low Topology Check", lambda body: (
+                self._add_qt_root_selector_row(body, "bake_low_topology_root_menu", "Bake Low Root (Topology)", "bake_low"),
+                body.addWidget(self._create_qt_subcheck_band("bake_low_topology_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run Low Topology Check", self.run_bake_low_topology_checks)),
+            ))
+            self._build_qt_step_card(3, "Vertex Colors on Bake High", lambda body: (
+                self._add_qt_root_selector_row(body, "bake_high_vertex_root_menu", "Bake High Root (Vertex Colors)", "bake_high"),
+                body.addWidget(self._create_qt_subcheck_band("bake_high_vertex_colors_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run Vertex Color Check", self.run_bake_high_vertex_color_check)),
+                body.addWidget(self._make_qt_run_button("Display Vertex Color", self.display_vertex_colors)),
+                body.addWidget(self._make_qt_run_button("Hide Vertex Color", self.hide_vertex_colors)),
+            ))
+
+            def _bake_mat_high(body):
+                self._add_qt_root_selector_row(body, "bake_high_materials_root_menu", "Bake High Root (Materials)", "bake_high")
+                body.addWidget(self._create_qt_subcheck_band("bake_high_materials_checked")[0])
+                body.addWidget(self._make_qt_run_button("Analyze Materials", self.analyze_bake_high_materials))
+                lst = QtWidgets.QListWidget()
+                lst.setObjectName("StepListWidget")
+                lst.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+                lst.itemSelectionChanged.connect(lambda: self.on_texture_set_selection_changed("bake_high"))
+                self.ui["bake_high_texture_sets_list"] = lst
+                body.addWidget(lst)
+                body.addWidget(self._make_qt_run_button("Isolate Material", lambda: self.toggle_isolate_selected_material("bake_high")))
+            self._build_qt_step_card(4, "Materials on Bake High", _bake_mat_high)
+
+            def _bake_mat_low(body):
+                self._add_qt_root_selector_row(body, "bake_low_materials_root_menu", "Bake Low Root (Materials)", "bake_low")
+                body.addWidget(self._create_qt_subcheck_band("bake_low_materials_checked")[0])
+                body.addWidget(self._make_qt_run_button("Analyze Materials", self.analyze_bake_low_materials))
+                lst = QtWidgets.QListWidget()
+                lst.setObjectName("StepListWidget")
+                lst.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+                lst.itemSelectionChanged.connect(lambda: self.on_texture_set_selection_changed("bake_low"))
+                self.ui["bake_low_texture_sets_list"] = lst
+                body.addWidget(lst)
+                body.addWidget(self._make_qt_run_button("Isolate Material", lambda: self.toggle_isolate_selected_material("bake_low")))
+            self._build_qt_step_card(5, "Materials on Bake Low", _bake_mat_low)
+
+            self._build_qt_step_card(6, "UV Check Map 1 on Bake Low", lambda body: (
+                self._add_qt_root_selector_row(body, "bake_low_uv1_root_menu", "Bake Low Root (UV map1)", "bake_low"),
+                body.addWidget(self._create_qt_subcheck_band("bake_low_uv_map1_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run UV Map1 Check", self.run_bake_low_uv_map1_check)),
+            ))
+            self._build_qt_step_card(7, "UV Check Map 2 on Bake Low", lambda body: (
+                self._add_qt_root_selector_row(body, "bake_low_uv2_root_menu", "Bake Low Root (UV map2)", "bake_low"),
+                body.addWidget(self._create_qt_subcheck_band("bake_low_uv_map2_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run UV Map2 Check", self.run_bake_low_uv_map2_check)),
+            ))
+
+            def _pairing_body(body):
+                self._add_qt_root_selector_row(body, "bake_pairing_high_root_menu", "Bake High Root", "bake_high")
+                self._add_qt_root_selector_row(body, "bake_pairing_low_root_menu", "Bake Low Root", "bake_low")
+                body.addWidget(self._create_qt_subcheck_band("bake_pairing_checked")[0])
+                row = QtWidgets.QHBoxLayout()
+                row.addWidget(self._make_qt_run_button("Check Pairing", self.check_bake_pairing))
+                row.addWidget(QtWidgets.QLabel("BBox Scale"))
+                spin = QtWidgets.QDoubleSpinBox()
+                spin.setObjectName("ToleranceSpin")
+                spin.setRange(1.0, 10.0)
+                spin.setDecimals(3)
+                spin.setSingleStep(0.01)
+                spin.setValue(1.05)
+                self.ui["bake_pairing_bbox_scale"] = spin
+                row.addWidget(spin)
+                row.addStretch(1)
+                body.addLayout(row)
+            self._build_qt_step_card(8, "Naming & Pairing", _pairing_body)
+
+            self._build_qt_step_card(9, "Bake Readiness", lambda body: (
+                self._add_qt_root_selector_row(body, "bake_ready_high_root_menu", "Bake High Root", "bake_high"),
+                self._add_qt_root_selector_row(body, "bake_ready_low_root_menu", "Bake Low Root", "bake_low"),
+                body.addWidget(self._create_qt_subcheck_band("bake_ready_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run Bake Validation", self.check_bake_readiness)),
+            ))
+            cmds.setParent("..")
+            cmds.setParent("..")
+            return
         cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("bake")
@@ -1012,6 +1352,65 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_guided_final_asset_review_section(self) -> None:
+        if QT_AVAILABLE and QtWidgets is not None:
+            cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+            cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            self._build_tab_visibility_controls("final_asset")
+            cmds.text(label="Guided review of the Final Asset delivery.", align="left")
+            self._build_qt_step_card(1, "Topology Check", lambda body: (
+                self._add_qt_root_selector_row(body, "final_topology_root_menu", "Final Asset MA Root (Topology)", "final_ma"),
+                body.addWidget(self._create_qt_subcheck_band("final_topology_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run Topology", self.run_final_asset_topology_checks)),
+            ))
+
+            def _final_ns_body(body):
+                band, lay = self._create_qt_subcheck_band("final_namespaces_checked")
+                lay.addStretch(1)
+                lay.addWidget(self._make_qt_run_button("Run Namespace Check", self.scan_final_asset_namespaces))
+                lay.addWidget(self._make_qt_run_button("Remove Invalid Namespaces", self.remove_final_asset_namespaces))
+                body.addWidget(band)
+            self._build_qt_step_card(2, "Namespaces", _final_ns_body)
+
+            def _final_mat_body(body):
+                self._add_qt_root_selector_row(body, "final_materials_root_menu", "Final Asset MA Root (Materials)", "final_ma")
+                body.addWidget(self._create_qt_subcheck_band("final_materials_checked")[0])
+                body.addWidget(self._make_qt_run_button("Analyze Materials", self.analyze_final_asset_materials))
+                lst = QtWidgets.QListWidget()
+                lst.setObjectName("StepListWidget")
+                lst.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+                lst.itemSelectionChanged.connect(lambda: self.on_texture_set_selection_changed("final_asset"))
+                self.ui["final_texture_sets_list"] = lst
+                body.addWidget(lst)
+                body.addWidget(self._make_qt_run_button("Isolate Material", lambda: self.toggle_isolate_selected_material("final_asset")))
+            self._build_qt_step_card(3, "Materials / Texture Sets", _final_mat_body)
+
+            self._build_qt_step_card(4, "UV Check Map 1", lambda body: (
+                self._add_qt_root_selector_row(body, "final_uv1_root_menu", "Final Asset MA Root (UV map1)", "final_ma"),
+                body.addWidget(self._create_qt_subcheck_band("final_uv_map1_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run UV Map1 Check", self.run_final_asset_uv_map1_check)),
+            ))
+            self._build_qt_step_card(5, "UV Check Map 2", lambda body: (
+                self._add_qt_root_selector_row(body, "final_uv2_root_menu", "Final Asset MA Root (UV map2)", "final_ma"),
+                body.addWidget(self._create_qt_subcheck_band("final_uv_map2_checked")[0]),
+                body.addWidget(self._make_qt_run_button("Run UV Map2 Check", self.run_final_asset_uv_map2_check)),
+            ))
+
+            def _final_cmp(body):
+                self._add_qt_root_selector_row(body, "compare_final_ma_root_menu", "Final Asset .ma Root", "final_ma")
+                self._add_qt_root_selector_row(body, "compare_final_fbx_root_menu", "Final Asset .fbx Root", "final_fbx")
+                band, lay = self._create_qt_subcheck_band("final_ma_fbx_compared")
+                lay.addStretch(1)
+                glb = QtWidgets.QCheckBox("Global")
+                glb.setObjectName("GlobalToggleBox")
+                glb.setChecked(True)
+                self.ui["compare_final_ma_fbx_global_mode"] = glb
+                lay.addWidget(glb)
+                lay.addWidget(self._make_qt_run_button("Run Compare", self.compare_final_asset_ma_vs_fbx))
+                body.addWidget(band)
+            self._build_qt_step_card(6, "Compare Final Asset .ma vs Final Asset .fbx", _final_cmp)
+            cmds.setParent("..")
+            cmds.setParent("..")
+            return
         cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("final_asset")
@@ -1099,6 +1498,66 @@ class HighPolyReviewTool:
             self.subcheck_ui_map[check_key][sub_key] = control_key
             cmds.setParent("..")
         cmds.setParent("..")
+
+    def _set_boolean_control_value(self, control_key: str, value: bool) -> None:
+        control = self.ui.get(control_key)
+        if control is None:
+            return
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QCheckBox):
+            control.blockSignals(True)
+            control.setChecked(bool(value))
+            control.blockSignals(False)
+            return
+        cmds.checkBox(control, e=True, value=bool(value))
+
+    def _query_boolean_control_value(self, control_key: str, default: bool = False) -> bool:
+        control = self.ui.get(control_key)
+        if control is None:
+            return default
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QCheckBox):
+            return bool(control.isChecked())
+        try:
+            return bool(cmds.checkBox(control, q=True, value=True))
+        except RuntimeError:
+            return default
+
+    def _clear_list_control(self, list_ui_key: str) -> None:
+        control = self.ui.get(list_ui_key)
+        if control is None:
+            return
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
+            control.clear()
+            return
+        cmds.textScrollList(control, edit=True, removeAll=True)
+
+    def _append_list_control_item(self, list_ui_key: str, label: str) -> None:
+        control = self.ui.get(list_ui_key)
+        if control is None:
+            return
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
+            control.addItem(label)
+            return
+        cmds.textScrollList(control, edit=True, append=label)
+
+    def _selected_list_control_items(self, list_ui_key: str) -> List[str]:
+        control = self.ui.get(list_ui_key)
+        if control is None:
+            return []
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
+            return [it.text() for it in control.selectedItems()]
+        return cmds.textScrollList(control, query=True, selectItem=True) or []
+
+    def _set_selected_list_control_items(self, list_ui_key: str, labels: List[str]) -> None:
+        control = self.ui.get(list_ui_key)
+        if control is None or not labels:
+            return
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
+            lookup = set(labels)
+            for i in range(control.count()):
+                item = control.item(i)
+                item.setSelected(item.text() in lookup)
+            return
+        cmds.textScrollList(control, edit=True, selectItem=labels)
 
     def _set_subcheck_results(self, check_key: str, results: Dict[str, bool]) -> None:
         if check_key not in self.subcheck_states:
@@ -1509,6 +1968,73 @@ class HighPolyReviewTool:
         cmds.text(label="Tolerance %", align="right")
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
+
+    def _build_qt_step_card(self, step_number: int, title: str, build_body_fn, info_text: str = "") -> None:
+        if not QT_AVAILABLE or QtWidgets is None or wrapInstance is None:
+            return
+        qt_host_layout = cmds.columnLayout(adjustableColumn=True, rowSpacing=0)
+        host_ptr = omui.MQtUtil.findLayout(qt_host_layout)
+        if not host_ptr:
+            cmds.warning(f"Impossible de construire Step {step_number:02d} en Qt: layout Maya introuvable.")
+            cmds.setParent("..")
+            return
+        host_widget = wrapInstance(int(host_ptr), QtWidgets.QWidget)
+        if host_widget.layout() is None:
+            host_widget.setLayout(QtWidgets.QVBoxLayout())
+        host_widget.layout().setContentsMargins(0, 0, 0, 0)
+        host_widget.layout().setSpacing(0)
+        card = ReviewStepCard(step_number, title, info_text)
+        build_body_fn(card.body_layout())
+        host_widget.layout().addWidget(card)
+        cmds.setParent("..")
+
+    def _add_qt_root_selector_row(self, parent_layout, menu_key: str, label: str, source_key: str):
+        row = StepRootSelectorRow(label, menu_key)
+        self.manual_root_menu_sources[menu_key] = source_key
+        self.manual_root_qt_rows[menu_key] = row
+        row.path_combo.currentIndexChanged.connect(lambda *_: self.on_manual_root_changed(menu_key))
+        row.use_selection_btn.clicked.connect(lambda *_: self.set_manual_root_from_selection(menu_key))
+        parent_layout.addWidget(row)
+        return row
+
+    def _create_qt_subcheck_band(self, check_key: str, desc_map: Optional[Dict[str, str]] = None):
+        desc_map = desc_map or {}
+        band = QtWidgets.QFrame()
+        band.setObjectName("SubChecksBand")
+        layout = QtWidgets.QHBoxLayout(band)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
+        defs = self.subcheck_definitions.get(check_key, [])
+        self.qt_subcheck_widgets.setdefault(check_key, {})
+        for idx, (sub_key, sub_label) in enumerate(defs):
+            chk = QtWidgets.QCheckBox(sub_label)
+            chk.setObjectName("StepSubCheckBox")
+            chk.setEnabled(False)
+            chk.setProperty("resultState", "PENDING")
+            self.qt_subcheck_widgets[check_key][sub_key] = chk
+            wrap = QtWidgets.QWidget()
+            wlay = QtWidgets.QVBoxLayout(wrap)
+            wlay.setContentsMargins(0, 0, 0, 0)
+            wlay.setSpacing(2)
+            wlay.addWidget(chk)
+            desc = desc_map.get(sub_key, "")
+            if desc:
+                lbl = QtWidgets.QLabel(desc)
+                lbl.setObjectName("SubCheckDesc")
+                lbl.setWordWrap(True)
+                wlay.addWidget(lbl)
+            layout.addWidget(wrap)
+            if idx < len(defs) - 1:
+                divider = QtWidgets.QFrame()
+                divider.setObjectName("ThinDivider")
+                layout.addWidget(divider)
+        return band, layout
+
+    def _make_qt_run_button(self, label: str, callback):
+        btn = QtWidgets.QPushButton(label)
+        btn.setObjectName("RunCheckButton")
+        btn.clicked.connect(lambda *_: callback())
+        return btn
 
     def _build_global_action_section(self) -> None:
         cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
@@ -2132,11 +2658,19 @@ class HighPolyReviewTool:
             if ctrl not in self.ui:
                 continue
             is_checked = self.check_states[key]["status"] == "OK"
-            cmds.checkBox(self.ui[ctrl], e=True, value=is_checked)
+            self._set_boolean_control_value(ctrl, is_checked)
         for check_key, sub_controls in self.subcheck_ui_map.items():
             for sub_key, ctrl in sub_controls.items():
                 status = self.subcheck_states.get(check_key, {}).get(sub_key, "PENDING")
-                cmds.checkBox(self.ui[ctrl], e=True, value=(status == "OK"))
+                self._set_boolean_control_value(ctrl, status == "OK")
+        for check_key, sub_widgets in self.qt_subcheck_widgets.items():
+            for sub_key, widget in sub_widgets.items():
+                status = self.subcheck_states.get(check_key, {}).get(sub_key, "PENDING")
+                widget.setChecked(status == "OK")
+                widget.setProperty("resultState", status)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
         self._sync_step01_qt_subchecks()
 
         self.refresh_summary()
@@ -2166,7 +2700,7 @@ class HighPolyReviewTool:
         ui_key = self.check_ui_map.get(check_key)
         if not ui_key or ui_key not in self.ui:
             return
-        checked = cmds.checkBox(self.ui[ui_key], q=True, value=True)
+        checked = self._query_boolean_control_value(ui_key, default=False)
         status = "OK" if checked else "PENDING"
         self.check_states[check_key]["status"] = status
         self.log_summary("INFO", "Manual", f"{check_key} défini manuellement à {status}")
@@ -3659,7 +4193,7 @@ class HighPolyReviewTool:
         previous_selection = self._selected_texture_set_names(context_key)
         self.texture_set_label_to_key_by_context[context_key] = {}
         self.texture_set_section_headers_by_context[context_key] = set()
-        cmds.textScrollList(self.ui[list_ui_key], edit=True, removeAll=True)
+        self._clear_list_control(list_ui_key)
         material_sets = self.material_sets_by_context.get(context_key, {})
 
         grouped_keys: Dict[str, List[str]] = {}
@@ -3676,7 +4210,7 @@ class HighPolyReviewTool:
                 continue
             header = f"━━ {self.scope_labels.get(source, source.replace('_', ' ').title())} ━━"
             self.texture_set_section_headers_by_context[context_key].add(header)
-            cmds.textScrollList(self.ui[list_ui_key], edit=True, append=header)
+            self._append_list_control_item(list_ui_key, header)
             for set_name in set_keys:
                 data = material_sets[set_name]
                 method = data.get("method", "unknown")
@@ -3699,14 +4233,14 @@ class HighPolyReviewTool:
                     unique_label = f"{label} [{duplicate_index}]"
                     duplicate_index += 1
                 self.texture_set_label_to_key_by_context[context_key][unique_label] = set_name
-                cmds.textScrollList(self.ui[list_ui_key], edit=True, append=unique_label)
+                self._append_list_control_item(list_ui_key, unique_label)
         self._restore_texture_set_selection(previous_selection, context_key)
 
     def _selected_texture_set_names(self, context_key: str = "high") -> List[str]:
         list_ui_key = self._list_ui_key_for_context(context_key)
         if list_ui_key not in self.ui:
             return []
-        selected = cmds.textScrollList(self.ui[list_ui_key], query=True, selectItem=True) or []
+        selected = self._selected_list_control_items(list_ui_key)
         names: List[str] = []
         labels_map = self.texture_set_label_to_key_by_context.get(context_key, {})
         headers = self.texture_set_section_headers_by_context.get(context_key, set())
@@ -3727,7 +4261,7 @@ class HighPolyReviewTool:
             return
         labels_to_select = [label for label, set_name in self.texture_set_label_to_key_by_context.get(context_key, {}).items() if set_name in set_names]
         if labels_to_select:
-            cmds.textScrollList(self.ui[list_ui_key], edit=True, selectItem=labels_to_select)
+            self._set_selected_list_control_items(list_ui_key, labels_to_select)
 
     def on_texture_set_selection_changed(self, context_key: str = "high") -> None:
         _ = context_key
@@ -4331,13 +4865,7 @@ class HighPolyReviewTool:
         return False
 
     def _is_global_compare_enabled(self, toggle_key: str, default: bool = False) -> bool:
-        control = self.ui.get(toggle_key)
-        if not control:
-            return default
-        try:
-            return bool(cmds.checkBox(control, query=True, value=True))
-        except RuntimeError:
-            return default
+        return self._query_boolean_control_value(toggle_key, default=default)
 
     def _run_pair_compare(
         self,
