@@ -157,7 +157,7 @@ QFrame#RootLabelFrame {
 }
 QLabel#RootLabelIcon, QLabel#RootLabelText {
     color: #dde7fb;
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 600;
 }
 QComboBox#RootPathCombo {
@@ -167,7 +167,7 @@ QComboBox#RootPathCombo {
     color: #e9f1ff;
     padding: 0 34px 0 12px;
     min-height: 40px;
-    font-size: 12px;
+    font-size: 16px;
 }
 QComboBox#RootPathCombo::drop-down {
     subcontrol-origin: padding;
@@ -188,8 +188,8 @@ QPushButton#PrimaryBlueButton {
     color: #ffffff;
     min-height: 40px;
     padding: 0 18px;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
 }
 QPushButton#PrimaryBlueButton:hover {
     background-color: #3380f4;
@@ -210,7 +210,7 @@ QFrame#SubChecksBand {
 }
 QCheckBox#StepSubCheckBox {
     color: #eaf2ff;
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 700;
     spacing: 8px;
 }
@@ -236,7 +236,7 @@ QCheckBox#StepSubCheckBox[resultState="PENDING"]::indicator {
 }
 QLabel#SubCheckDesc {
     color: #a8b6cc;
-    font-size: 11px;
+    font-size: 14px;
 }
 QFrame#ThinDivider {
     background-color: #2a3d57;
@@ -250,8 +250,8 @@ QPushButton#RunCheckButton {
     color: white;
     min-height: 40px;
     padding: 0 18px;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
 }
 QPushButton#RunCheckButton:hover {
     background-color: #3d8cff;
@@ -265,7 +265,7 @@ QPushButton#RunCheckButton:pressed {
 }
 QLabel#ToleranceLabel {
     color: #e0e8f7;
-    font-size: 12px;
+    font-size: 16px;
     font-weight: 600;
 }
 QDoubleSpinBox#ToleranceSpin {
@@ -276,7 +276,8 @@ QDoubleSpinBox#ToleranceSpin {
     min-height: 40px;
     min-width: 90px;
     padding-right: 16px;
-    font-size: 12px;
+    font-size: 16px;
+    font-weight: 600;
 }
 QDoubleSpinBox#ToleranceSpin::up-button,
 QDoubleSpinBox#ToleranceSpin::down-button {
