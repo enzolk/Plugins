@@ -27,6 +27,16 @@ WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
 MAX_UI_TEXT_LENGTH = 90
 MAX_MENU_LABEL_LENGTH = 72
+UI_COLOR_BG_WINDOW = (0.17, 0.17, 0.18)
+UI_COLOR_BG_SECTION = (0.20, 0.20, 0.22)
+UI_COLOR_BG_SUBSECTION = (0.23, 0.23, 0.25)
+UI_COLOR_BG_ACCENT = (0.25, 0.37, 0.56)
+UI_COLOR_BG_ACCENT_SOFT = (0.28, 0.32, 0.38)
+UI_COLOR_BG_WARNING = (0.34, 0.27, 0.16)
+UI_COLOR_BG_LOG = (0.15, 0.15, 0.16)
+UI_COLOR_TEXT_MUTED = (0.77, 0.77, 0.79)
+UI_BUTTON_HEIGHT = 28
+UI_PRIMARY_BUTTON_HEIGHT = 32
 ROOT_SUFFIXES = {
     "high": "_high",
     "low": "_low",
@@ -248,6 +258,7 @@ class HighPolyReviewTool:
             widthHeight=(860, 900),
             minimizeButton=True,
             maximizeButton=True,
+            backgroundColor=UI_COLOR_BG_WINDOW,
         )
 
         root_layout = cmds.formLayout()
@@ -257,7 +268,7 @@ class HighPolyReviewTool:
             verticalScrollBarThickness=12,
         )
 
-        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
         self._build_file_section()
         self._build_review_tabs_section()
         self._build_results_section()
@@ -289,27 +300,36 @@ class HighPolyReviewTool:
         self.refresh_checklist_ui()
 
     def _build_file_section(self) -> None:
-        cmds.frameLayout(label="1) Root Folder", collapsable=False, marginWidth=8)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        cmds.frameLayout(label="1) Root Folder", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
 
         self.ui["root_field"] = cmds.textFieldButtonGrp(
             label="Root Folder",
             buttonLabel="Browse",
             adjustableColumn=2,
+            columnWidth=[(1, 90), (3, 90)],
             buttonCommand=lambda *_: self.pick_root_folder(),
         )
-        cmds.button(label="Scan Delivery Folder", height=30, command=lambda *_: self.scan_delivery_folder())
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(
+            label="Scan Delivery Folder",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
+            command=lambda *_: self.scan_delivery_folder(),
+        )
         cmds.button(
             label="Load Everything",
-            height=30,
-            command=lambda *_: self.load_everything()
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.load_everything(),
         )
+        cmds.setParent("..")
 
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_technical_checks_section(self) -> None:
-        cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=8)
+        cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("high")
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
@@ -403,7 +423,7 @@ class HighPolyReviewTool:
         self._build_global_action_section()
 
     def _build_review_tabs_section(self) -> None:
-        cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=8)
+        cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
         tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6)
 
         high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
@@ -436,7 +456,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_guided_low_review_section(self) -> None:
-        cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=8)
+        cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("low")
         cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
@@ -505,7 +525,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_guided_bake_review_section(self) -> None:
-        cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=8)
+        cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("bake")
 
@@ -613,7 +633,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_guided_final_asset_review_section(self) -> None:
-        cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=8)
+        cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         self._build_tab_visibility_controls("final_asset")
         cmds.text(label="Guided review of the Final Asset delivery.", align="left")
@@ -673,7 +693,7 @@ class HighPolyReviewTool:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
         cmds.text(label=label, align="left")
-        cmds.button(label=f"Run {label}", height=26, command=lambda *_: command())
+        cmds.button(label=f"Run {label}", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
         cmds.setParent("..")
 
     def _build_compare_row(
@@ -693,7 +713,7 @@ class HighPolyReviewTool:
         self.ui[check_key_ui] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle(check_key))
         cmds.text(label="", align="left")
         self.ui[global_toggle_key] = cmds.checkBox(label="Global", value=default_global)
-        cmds.button(label=button_label, height=26, command=lambda *_: command())
+        cmds.button(label=button_label, height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
         cmds.setParent("..")
 
     def _build_tab_visibility_controls(self, context_key: str) -> None:
@@ -719,7 +739,7 @@ class HighPolyReviewTool:
         }.get(context_key, [])
         if not groups:
             return
-        cmds.frameLayout(label="Scene Visibility", collapsable=True, collapse=False, marginWidth=6)
+        cmds.frameLayout(label="Scene Visibility", collapsable=True, collapse=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
         for group_data in groups:
             checkbox_key = f"vis_{context_key}_{group_data['key']}"
@@ -732,7 +752,7 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.rowLayout(
             numberOfColumns=4,
             adjustableColumn=2,
@@ -741,7 +761,7 @@ class HighPolyReviewTool:
         cmds.text(label=label, align="left")
         self.ui[menu_key] = cmds.optionMenu(changeCommand=lambda *_: self.on_manual_root_changed(menu_key))
         cmds.menuItem(label="-- Aucun root --", parent=self.ui[menu_key])
-        cmds.button(label="Use Selection", height=24, command=lambda *_: self.set_manual_root_from_selection(menu_key))
+        cmds.button(label="Use Selection", height=24, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.set_manual_root_from_selection(menu_key))
         toggle_key = f"{menu_key}_fulltext_toggle"
         self.ui[toggle_key] = cmds.button(
             label="▶",
@@ -769,17 +789,18 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_toggles[menu_key] = toggle_key
 
     def _build_global_action_section(self) -> None:
-        cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
-        cmds.button(label="Run All High Steps", height=30, command=lambda *_: self.run_all_checks())
-        cmds.button(label="Clear Results", height=30, command=lambda *_: self.clear_results())
+        cmds.button(label="Run All High Steps", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.run_all_checks())
+        cmds.button(label="Clear Results", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_WARNING, command=lambda *_: self.clear_results())
         cmds.setParent("..")
-        cmds.button(label="Save Review Report", height=30, command=lambda *_: self.save_report())
+        cmds.button(label="Save Review Report", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.save_report())
 
         cmds.button(
             label="Isolate meshes without VColor",
-            height=28,
+            height=UI_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
             command=lambda *_: self.isolate_meshes_without_vertex_color(),
         )
 
@@ -787,10 +808,10 @@ class HighPolyReviewTool:
         cmds.setParent("..")
 
     def _build_results_section(self) -> None:
-        cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="4) Résultats / Log", collapsable=True, collapse=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
 
-        cmds.frameLayout(label="Quick Summary", collapsable=False, marginWidth=6)
+        cmds.frameLayout(label="Quick Summary", collapsable=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         self.ui["summary_scroll"] = cmds.scrollLayout(
             childResizable=True,
@@ -802,31 +823,32 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.setParent("..")
 
-        cmds.frameLayout(label="Detailed Logs", collapsable=False, marginWidth=6)
+        cmds.frameLayout(label="Detailed Logs", collapsable=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         self.ui["results_scroll"] = cmds.scrollLayout(
             childResizable=True,
             height=380,
             verticalScrollBarThickness=16,
+            backgroundColor=UI_COLOR_BG_LOG,
         )
         self.ui["results_column"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         cmds.setParent("..")
-        cmds.text(label="Tip: clique une ligne liée à des objets pour sélectionner en scène.")
+        cmds.text(label="Tip: clique une ligne liée à des objets pour sélectionner en scène.", align="left")
         cmds.setParent("..")
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_notes_section(self) -> None:
-        cmds.frameLayout(label="5) Notes", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="5) Notes", collapsable=True, collapse=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self.ui["notes_field"] = cmds.scrollField(wordWrap=True, height=130, text="")
+        self.ui["notes_field"] = cmds.scrollField(wordWrap=True, height=130, text="", backgroundColor=UI_COLOR_BG_LOG)
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_summary_section(self) -> None:
-        cmds.frameLayout(label="6) Résumé global", collapsable=True, collapse=False, marginWidth=8)
+        cmds.frameLayout(label="6) Résumé global", collapsable=True, collapse=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self.ui["summary_text"] = cmds.text(label="Pending checks", align="left", backgroundColor=(0.22, 0.22, 0.22))
+        self.ui["summary_text"] = cmds.text(label="Pending checks", align="left", backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.setParent("..")
         cmds.setParent("..")
 
