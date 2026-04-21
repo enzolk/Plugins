@@ -21,10 +21,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 import maya.mel as mel
-import maya.OpenMayaUI as omui
-
-from PySide2 import QtCore, QtGui, QtWidgets
-from shiboken2 import wrapInstance
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
@@ -71,200 +67,6 @@ class DetailedLogRowRef:
     row_layout: str
     main_text_control: str
     measured_height: int
-
-
-STEP01_QSS = """
-QFrame#Step01Card {
-    background-color: #151f31;
-    border: 1px solid #273854;
-    border-radius: 12px;
-}
-QFrame#StepBadge {
-    background-color: #121b2c;
-    border: 1px solid #2a4670;
-    border-radius: 8px;
-}
-QLabel#StepBadgeTop {
-    color: #72b1ff;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-}
-QLabel#StepBadgeBottom {
-    color: #72b1ff;
-    font-size: 38px;
-    font-weight: 700;
-}
-QLabel#StepTitle {
-    color: #edf2ff;
-    font-size: 33px;
-    font-weight: 700;
-}
-QToolButton#InfoButton, QToolButton#CollapseButton {
-    border: none;
-    color: #8ea2c0;
-    background: transparent;
-    font-size: 16px;
-}
-QFrame#RootLabelFrame {
-    background-color: #1a2539;
-    border: 1px solid #25374f;
-    border-radius: 8px;
-}
-QLabel#RootLabelIcon, QLabel#RootLabelText {
-    color: #dde7fb;
-    font-size: 13px;
-    font-weight: 600;
-}
-QComboBox#RootPathCombo {
-    background-color: #0d1422;
-    border: 1px solid #2b3f5f;
-    border-radius: 8px;
-    color: #e9f1ff;
-    padding: 0 34px 0 12px;
-    min-height: 40px;
-    font-size: 12px;
-}
-QComboBox#RootPathCombo::drop-down {
-    border: none;
-    width: 30px;
-}
-QComboBox#RootPathCombo::down-arrow {
-    image: none;
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 7px solid #e8efff;
-}
-QPushButton#PrimaryBlueButton {
-    background-color: #2b6fd4;
-    border: 1px solid #3a7ce0;
-    border-radius: 8px;
-    color: #ffffff;
-    min-height: 40px;
-    padding: 0 18px;
-    font-size: 12px;
-    font-weight: 600;
-}
-QPushButton#PrimaryBlueButton:hover {
-    background-color: #3380f4;
-}
-QToolButton#SquareIconButton {
-    background-color: #1f2a3e;
-    border: 1px solid #31435f;
-    border-radius: 8px;
-    color: #dce9ff;
-    min-width: 40px;
-    min-height: 40px;
-    font-size: 15px;
-}
-QFrame#SubChecksBand {
-    background-color: #182335;
-    border: 1px solid #243751;
-    border-radius: 10px;
-}
-QCheckBox#StepSubCheckBox {
-    color: #eaf2ff;
-    font-size: 13px;
-    font-weight: 700;
-    spacing: 8px;
-}
-QCheckBox#StepSubCheckBox::indicator {
-    width: 19px;
-    height: 19px;
-    border-radius: 4px;
-    border: 1px solid #3a4f6d;
-    background-color: #0f1727;
-}
-QCheckBox#StepSubCheckBox::indicator:checked {
-    background-color: #14331f;
-    border: 1px solid #34aa5f;
-    image: none;
-}
-QLabel#SubCheckDesc {
-    color: #a8b6cc;
-    font-size: 11px;
-}
-QFrame#ThinDivider {
-    background-color: #2a3d57;
-    max-width: 1px;
-    min-width: 1px;
-}
-QPushButton#RunCheckButton {
-    background-color: #2b6fd4;
-    border: 1px solid #3a7ce0;
-    border-radius: 8px;
-    color: white;
-    min-height: 40px;
-    padding: 0 18px;
-    font-size: 14px;
-    font-weight: 600;
-}
-QLabel#ToleranceLabel {
-    color: #e0e8f7;
-    font-size: 12px;
-    font-weight: 600;
-}
-QDoubleSpinBox#ToleranceSpin {
-    background-color: #0f1727;
-    border: 1px solid #2f4360;
-    border-radius: 8px;
-    color: #f1f6ff;
-    min-height: 40px;
-    min-width: 90px;
-    padding-right: 16px;
-    font-size: 12px;
-}
-QDoubleSpinBox#ToleranceSpin::up-button,
-QDoubleSpinBox#ToleranceSpin::down-button {
-    width: 18px;
-    border: none;
-    background-color: #101b2d;
-}
-"""
-
-
-class StepRootSelectorRow(QtWidgets.QWidget):
-    def __init__(self, label_text: str, menu_key: str, parent: Optional[QtWidgets.QWidget] = None) -> None:
-        super().__init__(parent)
-        self.menu_key = menu_key
-        row_layout = QtWidgets.QHBoxLayout(self)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(10)
-
-        label_frame = QtWidgets.QFrame()
-        label_frame.setObjectName("RootLabelFrame")
-        label_frame.setFixedWidth(180)
-        label_layout = QtWidgets.QHBoxLayout(label_frame)
-        label_layout.setContentsMargins(14, 8, 14, 8)
-        label_layout.setSpacing(8)
-        icon_lbl = QtWidgets.QLabel("◈")
-        icon_lbl.setObjectName("RootLabelIcon")
-        txt_lbl = QtWidgets.QLabel(label_text)
-        txt_lbl.setObjectName("RootLabelText")
-        label_layout.addWidget(icon_lbl)
-        label_layout.addWidget(txt_lbl)
-        label_layout.addStretch(1)
-
-        self.path_combo = QtWidgets.QComboBox()
-        self.path_combo.setObjectName("RootPathCombo")
-        self.path_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.path_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
-        self.path_combo.setMaxVisibleItems(20)
-
-        self.use_selection_btn = QtWidgets.QPushButton("Use Selection")
-        self.use_selection_btn.setObjectName("PrimaryBlueButton")
-        self.use_selection_btn.setFixedWidth(125)
-
-        self.extra_btn = QtWidgets.QToolButton()
-        self.extra_btn.setObjectName("SquareIconButton")
-        self.extra_btn.setText("⚙")
-
-        row_layout.addWidget(label_frame)
-        row_layout.addWidget(self.path_combo, 1)
-        row_layout.addWidget(self.use_selection_btn, 0)
-        row_layout.addWidget(self.extra_btn, 0)
 
 
 class HighPolyReviewTool:
@@ -482,8 +284,6 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_controls: Dict[str, str] = {}
         self.manual_root_fulltext_layouts: Dict[str, str] = {}
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
-        self.manual_root_qt_rows: Dict[str, StepRootSelectorRow] = {}
-        self.step01_placeholder_widget: Optional[QtWidgets.QWidget] = None
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
 
@@ -575,7 +375,16 @@ class HighPolyReviewTool:
         self._build_tab_visibility_controls("high")
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
         cmds.separator(style="in")
-        self._build_step01_placeholder_match_qt()
+        cmds.text(label="Step 01 — Placeholder Match", align="left")
+        self._build_manual_root_selector("placeholder_high_root_menu", "Select High Root", "high_ma")
+        self._build_manual_root_selector("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma")
+        cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 6), (4, "both", 2), (5, "both", 2)])
+        self._build_subcheck_boxes("placeholder_checked")
+        cmds.text(label="Verify that each high matches its placeholder", align="left")
+        cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match())
+        cmds.text(label="Tolerance %", align="right")
+        self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
+        cmds.setParent("..")
         cmds.separator(style="in")
         cmds.text(label="Step 02 — Design Kit Review (manual)", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -1169,140 +978,6 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_controls[menu_key] = fulltext_key
         self.manual_root_fulltext_layouts[menu_key] = fulltext_layout_key
         self.manual_root_fulltext_toggles[menu_key] = toggle_key
-
-    def _build_step01_placeholder_match_qt(self) -> None:
-        qt_host_layout = cmds.columnLayout(adjustableColumn=True, rowSpacing=0)
-        host_ptr = omui.MQtUtil.findLayout(qt_host_layout)
-        if not host_ptr:
-            cmds.warning("Impossible de construire Step 01 en Qt: layout Maya introuvable.")
-            return
-        host_widget = wrapInstance(int(host_ptr), QtWidgets.QWidget)
-        host_widget.setObjectName("step01_placeholder_host")
-        if host_widget.layout() is None:
-            host_widget.setLayout(QtWidgets.QVBoxLayout())
-        host_widget.layout().setContentsMargins(0, 0, 0, 0)
-        host_widget.layout().setSpacing(0)
-
-        step_card = QtWidgets.QFrame()
-        step_card.setObjectName("Step01Card")
-        step_card.setStyleSheet(STEP01_QSS)
-        card_layout = QtWidgets.QVBoxLayout(step_card)
-        card_layout.setContentsMargins(14, 12, 14, 12)
-        card_layout.setSpacing(12)
-
-        header_layout = QtWidgets.QHBoxLayout()
-        header_layout.setSpacing(10)
-
-        badge = QtWidgets.QFrame()
-        badge.setObjectName("StepBadge")
-        badge.setFixedSize(66, 66)
-        badge_layout = QtWidgets.QVBoxLayout(badge)
-        badge_layout.setContentsMargins(0, 8, 0, 7)
-        badge_layout.setSpacing(0)
-        badge_layout.setAlignment(QtCore.Qt.AlignCenter)
-        badge_top = QtWidgets.QLabel("STEP")
-        badge_top.setObjectName("StepBadgeTop")
-        badge_top.setAlignment(QtCore.Qt.AlignCenter)
-        badge_bottom = QtWidgets.QLabel("01")
-        badge_bottom.setObjectName("StepBadgeBottom")
-        badge_bottom.setAlignment(QtCore.Qt.AlignCenter)
-        badge_layout.addWidget(badge_top)
-        badge_layout.addWidget(badge_bottom)
-
-        title_lbl = QtWidgets.QLabel("Placeholder Match")
-        title_lbl.setObjectName("StepTitle")
-        info_btn = QtWidgets.QToolButton()
-        info_btn.setObjectName("InfoButton")
-        info_btn.setText("ⓘ")
-        info_btn.setToolTip("Placeholder Match")
-        collapse_btn = QtWidgets.QToolButton()
-        collapse_btn.setObjectName("CollapseButton")
-        collapse_btn.setText("⌃")
-
-        header_layout.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
-        header_layout.addWidget(title_lbl, 0, QtCore.Qt.AlignVCenter)
-        header_layout.addWidget(info_btn, 0, QtCore.Qt.AlignVCenter)
-        header_layout.addStretch(1)
-        header_layout.addWidget(collapse_btn, 0, QtCore.Qt.AlignVCenter)
-        card_layout.addLayout(header_layout)
-
-        self.manual_root_menu_sources["placeholder_high_root_menu"] = "high_ma"
-        self.manual_root_menu_sources["placeholder_placeholder_root_menu"] = "placeholder_ma"
-        high_row = StepRootSelectorRow("High Root", "placeholder_high_root_menu")
-        placeholder_row = StepRootSelectorRow("Placeholder Root", "placeholder_placeholder_root_menu")
-        self.manual_root_qt_rows["placeholder_high_root_menu"] = high_row
-        self.manual_root_qt_rows["placeholder_placeholder_root_menu"] = placeholder_row
-        high_row.path_combo.currentIndexChanged.connect(lambda *_: self.on_manual_root_changed("placeholder_high_root_menu"))
-        placeholder_row.path_combo.currentIndexChanged.connect(lambda *_: self.on_manual_root_changed("placeholder_placeholder_root_menu"))
-        high_row.use_selection_btn.clicked.connect(lambda *_: self.set_manual_root_from_selection("placeholder_high_root_menu"))
-        placeholder_row.use_selection_btn.clicked.connect(lambda *_: self.set_manual_root_from_selection("placeholder_placeholder_root_menu"))
-        card_layout.addWidget(high_row)
-        card_layout.addWidget(placeholder_row)
-
-        sub_band = QtWidgets.QFrame()
-        sub_band.setObjectName("SubChecksBand")
-        sub_layout = QtWidgets.QHBoxLayout(sub_band)
-        sub_layout.setContentsMargins(12, 10, 12, 10)
-        sub_layout.setSpacing(12)
-
-        bbox_check = QtWidgets.QCheckBox("BBox")
-        bbox_check.setObjectName("StepSubCheckBox")
-        bbox_check.setChecked(True)
-        bbox_desc = QtWidgets.QLabel("Verify that each high\nmatches its placeholder")
-        bbox_desc.setObjectName("SubCheckDesc")
-        bbox_desc.setWordWrap(True)
-        bbox_group = QtWidgets.QHBoxLayout()
-        bbox_group.setSpacing(10)
-        bbox_group.addWidget(bbox_check, 0, QtCore.Qt.AlignVCenter)
-        bbox_group.addWidget(bbox_desc, 0, QtCore.Qt.AlignVCenter)
-        bbox_wrap = QtWidgets.QWidget()
-        bbox_wrap.setLayout(bbox_group)
-
-        pivot_check = QtWidgets.QCheckBox("Pivot")
-        pivot_check.setObjectName("StepSubCheckBox")
-        pivot_check.setChecked(True)
-        pivot_desc = QtWidgets.QLabel("Verify that each high\nmatches its placeholder pivot")
-        pivot_desc.setObjectName("SubCheckDesc")
-        pivot_desc.setWordWrap(True)
-        pivot_group = QtWidgets.QHBoxLayout()
-        pivot_group.setSpacing(10)
-        pivot_group.addWidget(pivot_check, 0, QtCore.Qt.AlignVCenter)
-        pivot_group.addWidget(pivot_desc, 0, QtCore.Qt.AlignVCenter)
-        pivot_wrap = QtWidgets.QWidget()
-        pivot_wrap.setLayout(pivot_group)
-
-        div_1 = QtWidgets.QFrame()
-        div_1.setObjectName("ThinDivider")
-        div_2 = QtWidgets.QFrame()
-        div_2.setObjectName("ThinDivider")
-
-        run_btn = QtWidgets.QPushButton("▶  Run Placeholder Check")
-        run_btn.setObjectName("RunCheckButton")
-        run_btn.clicked.connect(lambda *_: self.check_placeholder_match())
-        tolerance_lbl = QtWidgets.QLabel("Tolerance %")
-        tolerance_lbl.setObjectName("ToleranceLabel")
-        tolerance_spin = QtWidgets.QDoubleSpinBox()
-        tolerance_spin.setObjectName("ToleranceSpin")
-        tolerance_spin.setRange(0.0, 100.0)
-        tolerance_spin.setDecimals(2)
-        tolerance_spin.setSingleStep(0.25)
-        tolerance_spin.setValue(7.00)
-        self.ui["placeholder_tolerance_qt"] = tolerance_spin
-
-        sub_layout.addWidget(bbox_wrap, 0)
-        sub_layout.addWidget(div_1, 0)
-        sub_layout.addWidget(pivot_wrap, 0)
-        sub_layout.addWidget(div_2, 0)
-        sub_layout.addStretch(1)
-        sub_layout.addWidget(run_btn, 0, QtCore.Qt.AlignVCenter)
-        sub_layout.addSpacing(8)
-        sub_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
-        sub_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
-
-        card_layout.addWidget(sub_band)
-        host_widget.layout().addWidget(step_card)
-        self.step01_placeholder_widget = step_card
-        cmds.setParent("..")
 
     def _build_global_action_section(self) -> None:
         cmds.frameLayout(label="Actions", collapsable=True, collapse=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
@@ -2342,8 +2017,7 @@ class HighPolyReviewTool:
     def refresh_manual_root_menus(self) -> None:
         for menu_key, source_key in self.manual_root_menu_sources.items():
             menu = self.ui.get(menu_key)
-            qt_row = self.manual_root_qt_rows.get(menu_key)
-            if qt_row is None and (not menu or not cmds.optionMenu(menu, exists=True)):
+            if not menu or not cmds.optionMenu(menu, exists=True):
                 continue
             current = self.get_manual_selected_root(menu_key)
             overrides = [n for n in self.manual_root_overrides.get(menu_key, []) if cmds.objExists(n)]
@@ -2352,21 +2026,6 @@ class HighPolyReviewTool:
             values = self._inject_preferred_root(overrides + detected, preferred_group, append_only=True)
             self.manual_root_overrides[menu_key] = overrides
             self.manual_root_menu_values[menu_key] = values
-            if qt_row is not None:
-                combo = qt_row.path_combo
-                combo.blockSignals(True)
-                combo.clear()
-                if not values:
-                    combo.addItem("-- Aucun root --")
-                    combo.setEnabled(False)
-                else:
-                    for node in values:
-                        combo.addItem(self._format_node_menu_label(node), node)
-                    idx = values.index(current) if current in values else 0
-                    combo.setCurrentIndex(idx)
-                    combo.setEnabled(True)
-                combo.blockSignals(False)
-                continue
             self._clear_option_menu(menu)
             if not values:
                 cmds.menuItem(label="-- Aucun root --", parent=menu)
@@ -2389,13 +2048,6 @@ class HighPolyReviewTool:
 
     def get_manual_selected_root(self, menu_key: str) -> Optional[str]:
         values = self.manual_root_menu_values.get(menu_key, [])
-        qt_row = self.manual_root_qt_rows.get(menu_key)
-        if qt_row is not None:
-            if not values:
-                return None
-            idx = max(0, min(qt_row.path_combo.currentIndex(), len(values) - 1))
-            root = values[idx]
-            return root if cmds.objExists(root) else None
         menu = self.ui.get(menu_key)
         if not values or not menu or not cmds.optionMenu(menu, exists=True):
             return None
@@ -2421,11 +2073,7 @@ class HighPolyReviewTool:
         self.refresh_manual_root_menus()
         values = self.manual_root_menu_values.get(menu_key, [])
         if node in values:
-            qt_row = self.manual_root_qt_rows.get(menu_key)
-            if qt_row is not None:
-                qt_row.path_combo.setCurrentIndex(values.index(node))
-            elif menu_key in self.ui:
-                cmds.optionMenu(self.ui[menu_key], e=True, select=values.index(node) + 1)
+            cmds.optionMenu(self.ui[menu_key], e=True, select=values.index(node) + 1)
         self._update_manual_root_fulltext(menu_key)
         self.log("INFO", "RootSelect", f"Root manuel défini: {node}", [node])
 
@@ -5266,10 +4914,7 @@ class HighPolyReviewTool:
             self.log_check_result("placeholder_checked", "FAIL", "Placeholder Check", "high or placeholder root has no meshes")
             return
 
-        if "placeholder_tolerance_qt" in self.ui and self.ui["placeholder_tolerance_qt"] is not None:
-            tolerance_percent = float(self.ui["placeholder_tolerance_qt"].value())
-        else:
-            tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
+        tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
         tolerance = max(0.0, float(tolerance_percent)) / 100.0
 
         def _bbox_dims_for_root(root: str) -> Tuple[float, float, float]:
