@@ -44,6 +44,43 @@ PLACEHOLDER_TOKEN = "placeholder"
 LOW_UV_DISTORTION_THRESHOLD = 1.6
 LOW_MAP2_TARGET_TD = 20.48
 LOW_MAP2_TOLERANCE = 0.50
+MANUAL_ROOT_SELECTOR_SPECS = [
+    ("placeholder_high_root_menu", "Select High Root", "high_ma", "Review 01 — High"),
+    ("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma", "Review 01 — High"),
+    ("topology_high_root_menu", "Select High Root for Topology Check", "high_ma", "Review 01 — High"),
+    ("vertex_high_root_menu", "Select High Root for Vertex Color Check", "high_ma", "Review 01 — High"),
+    ("materials_high_root_menu", "Select High Root for Materials / Texture Sets", "high_ma", "Review 01 — High"),
+    ("compare_ma_root_menu", "Select High.ma Root", "high_ma", "Review 01 — High"),
+    ("compare_fbx_root_menu", "Select High.fbx Root", "high_fbx", "Review 01 — High"),
+    ("compare_bake_ma_root_menu", "Select High.ma Root", "high_ma", "Review 01 — High"),
+    ("compare_bake_high_root_menu", "Select Bake High Root", "bake_high", "Review 01 — High"),
+    ("low_topology_root_menu", "Select Low Root for Topology Check", "low_fbx", "Review 02 — Low"),
+    ("low_materials_root_menu", "Select Low Root for Materials / Texture Sets", "low_fbx", "Review 02 — Low"),
+    ("low_uv1_root_menu", "Select Low Root for UV map1 Check", "low_fbx", "Review 02 — Low"),
+    ("low_uv2_root_menu", "Select Low Root for UV map2 / TD Check", "low_fbx", "Review 02 — Low"),
+    ("compare_low_bake_low_root_menu", "Select Low.fbx Root", "low_fbx", "Review 02 — Low"),
+    ("compare_low_bake_bake_root_menu", "Select Bake Low Root", "bake_low", "Review 02 — Low"),
+    ("compare_low_final_low_root_menu", "Select Low.fbx Root", "low_fbx", "Review 02 — Low"),
+    ("compare_low_final_final_root_menu", "Select Final Scene Root", "final_ma", "Review 02 — Low"),
+    ("bake_structure_high_root_menu", "Select Bake High Root", "bake_high", "Review 03 — Bake Scene"),
+    ("bake_structure_low_root_menu", "Select Bake Low Root", "bake_low", "Review 03 — Bake Scene"),
+    ("bake_low_topology_root_menu", "Select Bake Low Root for Topology Check", "bake_low", "Review 03 — Bake Scene"),
+    ("bake_high_vertex_root_menu", "Select Bake High Root for Vertex Color Check", "bake_high", "Review 03 — Bake Scene"),
+    ("bake_high_materials_root_menu", "Select Bake High Root for Materials / Texture Sets", "bake_high", "Review 03 — Bake Scene"),
+    ("bake_low_materials_root_menu", "Select Bake Low Root for Materials / Texture Sets", "bake_low", "Review 03 — Bake Scene"),
+    ("bake_low_uv1_root_menu", "Select Bake Low Root for UV map1 Check", "bake_low", "Review 03 — Bake Scene"),
+    ("bake_low_uv2_root_menu", "Select Bake Low Root for UV map2 / TD Check", "bake_low", "Review 03 — Bake Scene"),
+    ("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high", "Review 03 — Bake Scene"),
+    ("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low", "Review 03 — Bake Scene"),
+    ("bake_ready_high_root_menu", "Select Bake High Root", "bake_high", "Review 03 — Bake Scene"),
+    ("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low", "Review 03 — Bake Scene"),
+    ("final_topology_root_menu", "Select Final Asset MA Root for Topology Check", "final_ma", "Review 04 — Final Asset"),
+    ("final_materials_root_menu", "Select Final Asset MA Root for Materials / Texture Sets", "final_ma", "Review 04 — Final Asset"),
+    ("final_uv1_root_menu", "Select Final Asset MA Root for UV map1 Check", "final_ma", "Review 04 — Final Asset"),
+    ("final_uv2_root_menu", "Select Final Asset MA Root for UV map2 / TD Check", "final_ma", "Review 04 — Final Asset"),
+    ("compare_final_ma_root_menu", "Select Final Asset .ma Root", "final_ma", "Review 04 — Final Asset"),
+    ("compare_final_fbx_root_menu", "Select Final Asset .fbx Root", "final_fbx", "Review 04 — Final Asset"),
+]
 
 
 @dataclass
@@ -243,6 +280,9 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_controls: Dict[str, str] = {}
         self.manual_root_fulltext_layouts: Dict[str, str] = {}
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
+        self.manual_root_qt_combos: Dict[str, QtWidgets.QComboBox] = {}
+        self.manual_root_qt_fulltext_labels: Dict[str, QtWidgets.QLabel] = {}
+        self.manual_root_qt_toggle_buttons: Dict[str, QtWidgets.QPushButton] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self, show_window: bool = True) -> None:
@@ -979,6 +1019,25 @@ class HighPolyReviewTool:
         toggle_control = self.ui.get(toggle_key) if toggle_key else None
         if toggle_control and cmds.button(toggle_control, exists=True):
             cmds.button(toggle_control, e=True, label="▼" if visible else "▶")
+        qt_label = self.manual_root_qt_fulltext_labels.get(menu_key)
+        if qt_label is not None:
+            qt_label.setVisible(visible)
+        qt_toggle = self.manual_root_qt_toggle_buttons.get(menu_key)
+        if qt_toggle is not None:
+            qt_toggle.setText("▼" if visible else "▶")
+
+    def register_qt_manual_root_selector(
+        self,
+        menu_key: str,
+        source_key: str,
+        combo: QtWidgets.QComboBox,
+        fulltext_label: QtWidgets.QLabel,
+        toggle_button: QtWidgets.QPushButton,
+    ) -> None:
+        self.manual_root_menu_sources[menu_key] = source_key
+        self.manual_root_qt_combos[menu_key] = combo
+        self.manual_root_qt_fulltext_labels[menu_key] = fulltext_label
+        self.manual_root_qt_toggle_buttons[menu_key] = toggle_button
 
     def _organize_high_ma_loaded_roots(self) -> None:
         namespace = self.context["ma_namespace"]
@@ -1779,9 +1838,6 @@ class HighPolyReviewTool:
 
     def refresh_manual_root_menus(self) -> None:
         for menu_key, source_key in self.manual_root_menu_sources.items():
-            menu = self.ui.get(menu_key)
-            if not menu or not cmds.optionMenu(menu, exists=True):
-                continue
             current = self.get_manual_selected_root(menu_key)
             overrides = [n for n in self.manual_root_overrides.get(menu_key, []) if cmds.objExists(n)]
             detected = [n for n in self._manual_root_candidates(source_key) if cmds.objExists(n)]
@@ -1789,32 +1845,56 @@ class HighPolyReviewTool:
             values = self._inject_preferred_root(overrides + detected, preferred_group, append_only=True)
             self.manual_root_overrides[menu_key] = overrides
             self.manual_root_menu_values[menu_key] = values
-            self._clear_option_menu(menu)
-            if not values:
-                cmds.menuItem(label="-- Aucun root --", parent=menu)
-                self._update_manual_root_fulltext(menu_key)
-                continue
-            for node in values:
-                cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
-            idx = values.index(current) + 1 if current in values else 1
-            cmds.optionMenu(menu, e=True, select=idx)
+            menu = self.ui.get(menu_key)
+            if menu and cmds.optionMenu(menu, exists=True):
+                self._clear_option_menu(menu)
+                if not values:
+                    cmds.menuItem(label="-- Aucun root --", parent=menu)
+                else:
+                    for node in values:
+                        cmds.menuItem(label=self._format_node_menu_label(node), parent=menu)
+                    idx = values.index(current) + 1 if current in values else 1
+                    cmds.optionMenu(menu, e=True, select=idx)
+
+            combo = self.manual_root_qt_combos.get(menu_key)
+            if combo is not None:
+                combo.blockSignals(True)
+                combo.clear()
+                if not values:
+                    combo.addItem("-- Aucun root --")
+                else:
+                    for node in values:
+                        combo.addItem(self._format_node_menu_label(node))
+                    idx = values.index(current) if current in values else 0
+                    combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
             self._update_manual_root_fulltext(menu_key)
 
     def _update_manual_root_fulltext(self, menu_key: str) -> None:
-        fulltext_key = self.manual_root_fulltext_controls.get(menu_key)
-        fulltext_control = self.ui.get(fulltext_key) if fulltext_key else None
-        if not fulltext_control or not cmds.scrollField(fulltext_control, exists=True):
-            return
         root = self.get_manual_selected_root(menu_key)
         text = root if root else "-- Aucun root --"
-        cmds.scrollField(fulltext_control, e=True, text=text)
+
+        fulltext_key = self.manual_root_fulltext_controls.get(menu_key)
+        fulltext_control = self.ui.get(fulltext_key) if fulltext_key else None
+        if fulltext_control and cmds.scrollField(fulltext_control, exists=True):
+            cmds.scrollField(fulltext_control, e=True, text=text)
+
+        qt_label = self.manual_root_qt_fulltext_labels.get(menu_key)
+        if qt_label is not None:
+            qt_label.setText(text)
 
     def get_manual_selected_root(self, menu_key: str) -> Optional[str]:
         values = self.manual_root_menu_values.get(menu_key, [])
-        menu = self.ui.get(menu_key)
-        if not values or not menu or not cmds.optionMenu(menu, exists=True):
+        if not values:
             return None
-        index = max(1, cmds.optionMenu(menu, q=True, select=True)) - 1
+        combo = self.manual_root_qt_combos.get(menu_key)
+        if combo is not None:
+            index = combo.currentIndex()
+        else:
+            menu = self.ui.get(menu_key)
+            if not menu or not cmds.optionMenu(menu, exists=True):
+                return None
+            index = max(1, cmds.optionMenu(menu, q=True, select=True)) - 1
         index = max(0, min(index, len(values) - 1))
         root = values[index]
         return root if cmds.objExists(root) else None
@@ -1836,7 +1916,11 @@ class HighPolyReviewTool:
         self.refresh_manual_root_menus()
         values = self.manual_root_menu_values.get(menu_key, [])
         if node in values:
-            cmds.optionMenu(self.ui[menu_key], e=True, select=values.index(node) + 1)
+            combo = self.manual_root_qt_combos.get(menu_key)
+            if combo is not None:
+                combo.setCurrentIndex(values.index(node))
+            elif menu_key in self.ui and cmds.optionMenu(self.ui[menu_key], exists=True):
+                cmds.optionMenu(self.ui[menu_key], e=True, select=values.index(node) + 1)
         self._update_manual_root_fulltext(menu_key)
         self.log("INFO", "RootSelect", f"Root manuel défini: {node}", [node])
 
@@ -5882,10 +5966,9 @@ class OutsourceReviewQtShell(QtWidgets.QDialog):
         guided_group = QtWidgets.QGroupBox("2) Guided Reviews")
         guided_layout = QtWidgets.QVBoxLayout(guided_group)
         self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self._build_tab_panel("Review 01 — High"), "Review 01 — High")
-        self.tabs.addTab(self._build_tab_panel("Review 02 — Low"), "Review 02 — Low")
-        self.tabs.addTab(self._build_tab_panel("Review 03 — Bake Scene"), "Review 03 — Bake Scene")
-        self.tabs.addTab(self._build_tab_panel("Review 04 — Final Asset"), "Review 04 — Final Asset")
+        tab_titles = ["Review 01 — High", "Review 02 — Low", "Review 03 — Bake Scene", "Review 04 — Final Asset"]
+        for title in tab_titles:
+            self.tabs.addTab(self._build_tab_panel(title), title)
         guided_layout.addWidget(self.tabs)
         root_layout.addWidget(guided_group, 1)
 
@@ -5917,15 +6000,57 @@ class OutsourceReviewQtShell(QtWidgets.QDialog):
     def _build_tab_panel(self, title: str) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
-        layout.addWidget(QtWidgets.QLabel(f"{title}: phase 1 keeps the existing review logic and detailed controls in the legacy panel."))
+        selectors = [spec for spec in MANUAL_ROOT_SELECTOR_SPECS if spec[3] == title]
+        if selectors:
+            for menu_key, label, source_key, _tab in selectors:
+                layout.addWidget(self._build_root_selector_widget(menu_key, label, source_key))
+        else:
+            layout.addWidget(QtWidgets.QLabel(f"{title}: phase 1 keeps the existing review logic and detailed controls in the legacy panel."))
         run_btn = QtWidgets.QPushButton("Open Detailed Controls")
         run_btn.clicked.connect(self.tool.show_legacy_window)
         layout.addWidget(run_btn, 0, QtCore.Qt.AlignLeft)
         layout.addStretch(1)
         return widget
 
+    def _build_root_selector_widget(self, menu_key: str, label: str, source_key: str) -> QtWidgets.QWidget:
+        wrapper = QtWidgets.QWidget()
+        wrapper_layout = QtWidgets.QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 2)
+        wrapper_layout.setSpacing(3)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(QtWidgets.QLabel(label), 1)
+
+        combo = QtWidgets.QComboBox()
+        combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        row.addWidget(combo, 2)
+
+        use_selection_btn = QtWidgets.QPushButton("Use Selection")
+        use_selection_btn.setFixedHeight(24)
+        row.addWidget(use_selection_btn)
+
+        toggle_btn = QtWidgets.QPushButton("▶")
+        toggle_btn.setFixedSize(24, 24)
+        row.addWidget(toggle_btn)
+        wrapper_layout.addLayout(row)
+
+        full_path_label = QtWidgets.QLabel("-- Aucun root --")
+        full_path_label.setWordWrap(True)
+        full_path_label.setVisible(False)
+        full_path_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        wrapper_layout.addWidget(full_path_label)
+
+        self.tool.register_qt_manual_root_selector(menu_key, source_key, combo, full_path_label, toggle_btn)
+        combo.currentIndexChanged.connect(lambda *_args, mk=menu_key: self.tool.on_manual_root_changed(mk))
+        use_selection_btn.clicked.connect(lambda *_args, mk=menu_key: self.tool.set_manual_root_from_selection(mk))
+        toggle_btn.clicked.connect(lambda *_args, mk=menu_key: self.tool._toggle_manual_root_fulltext_visibility(mk))
+        return wrapper
+
     def _sync_from_tool(self) -> None:
         self.root_edit.setText(self.tool.get_root_folder())
+        self.tool.refresh_manual_root_menus()
         summary_control = self.tool.ui.get("summary_text")
         if summary_control and cmds.text(summary_control, exists=True):
             self.summary_label.setText(cmds.text(summary_control, q=True, label=True))
