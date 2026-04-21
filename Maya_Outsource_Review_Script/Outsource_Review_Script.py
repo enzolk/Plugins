@@ -424,7 +424,11 @@ class HighPolyReviewTool:
 
     def _build_review_tabs_section(self) -> None:
         cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
-        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6)
+        tabs = cmds.tabLayout(
+            innerMarginWidth=6,
+            innerMarginHeight=6,
+            changeCommand=lambda *_: self._reset_main_scroll_to_top(),
+        )
 
         high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_high_review_section()
@@ -454,6 +458,12 @@ class HighPolyReviewTool:
         )
         cmds.setParent("..")
         cmds.setParent("..")
+
+    def _reset_main_scroll_to_top(self) -> None:
+        """Reset the main scrollLayout to the top after tab changes."""
+        scroll_layout = self.ui.get("scroll")
+        if scroll_layout and cmds.scrollLayout(scroll_layout, exists=True):
+            cmds.scrollLayout(scroll_layout, edit=True, scrollByPixel=("up", 99999999))
 
     def _build_guided_low_review_section(self) -> None:
         cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
