@@ -786,6 +786,50 @@ class HighPolyReviewTool:
             self._refresh_scene_visibility_button(context_key, group_data["key"])
         cmds.setParent("..")
         cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _on_scene_visibility_toggled(self, context_key: str, group_key: str, visible: bool) -> None:
+        self._set_scene_visibility_item(context_key, group_key, visible)
+        self._refresh_scene_visibility_button(context_key, group_key)
+
+    def _set_scene_visibility_item(self, context_key: str, group_key: str, visible: bool) -> None:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            if group_data["key"] != group_key:
+                continue
+            group_data["handler"](visible)
+            return
+
+    def _set_scene_visibility_all(self, context_key: str, visible: bool) -> None:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            self._set_scene_visibility_item(context_key, group_data["key"], visible)
+            self._refresh_scene_visibility_button(context_key, group_data["key"])
+
+    def _refresh_scene_visibility_button(self, context_key: str, group_key: str) -> None:
+        control = self.scene_visibility_controls.get(f"{context_key}:{group_key}")
+        if not control or not cmds.iconTextCheckBox(control, exists=True):
+            return
+        state = self._get_scene_visibility_state(context_key, group_key)
+        label = self._get_scene_visibility_label(context_key, group_key)
+        status = "ON" if state else "OFF"
+        cmds.iconTextCheckBox(
+            control,
+            edit=True,
+            value=state,
+            label=f"{label}  {status}",
+            backgroundColor=UI_COLOR_VIS_ON if state else UI_COLOR_VIS_OFF,
+        )
+
+    def _get_scene_visibility_state(self, context_key: str, group_key: str) -> bool:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            if group_data["key"] == group_key:
+                return bool(group_data["getter"]())
+        return False
+
+    def _get_scene_visibility_label(self, context_key: str, group_key: str) -> str:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            if group_data["key"] == group_key:
+                return str(group_data["label"])
+        return group_key
 
     def _on_scene_visibility_toggled(self, context_key: str, group_key: str, visible: bool) -> None:
         self._set_scene_visibility_item(context_key, group_key, visible)
