@@ -30,6 +30,10 @@ MAX_MENU_LABEL_LENGTH = 72
 UI_COLOR_BG_WINDOW = (0.17, 0.17, 0.18)
 UI_COLOR_BG_SECTION = (0.20, 0.20, 0.22)
 UI_COLOR_BG_SUBSECTION = (0.23, 0.23, 0.25)
+UI_COLOR_BG_STEP = (0.14, 0.14, 0.15)
+UI_COLOR_BG_STEP_HEADER = (0.34, 0.34, 0.35)
+UI_COLOR_BG_STEP_LABEL = (0.30, 0.30, 0.31)
+UI_COLOR_BG_STEP_CONTENT = (0.19, 0.19, 0.20)
 UI_COLOR_BG_ACCENT = (0.25, 0.37, 0.56)
 UI_COLOR_BG_ACCENT_SOFT = (0.28, 0.32, 0.38)
 UI_COLOR_BG_WARNING = (0.34, 0.27, 0.16)
@@ -39,6 +43,7 @@ UI_COLOR_VIS_ON = (0.22, 0.44, 0.30)
 UI_COLOR_VIS_OFF = (0.30, 0.30, 0.32)
 UI_BUTTON_HEIGHT = 28
 UI_PRIMARY_BUTTON_HEIGHT = 32
+UI_STEP_LABEL_WIDTH = 145
 ROOT_SUFFIXES = {
     "high": "_high",
     "low": "_low",
@@ -369,13 +374,49 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.setParent("..")
 
+    def _begin_step_block(self, step_number: int, title: str) -> None:
+        cmds.frameLayout(
+            labelVisible=False,
+            collapsable=False,
+            marginWidth=8,
+            marginHeight=8,
+            backgroundColor=UI_COLOR_BG_STEP,
+        )
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+        cmds.rowLayout(
+            numberOfColumns=2,
+            adjustableColumn=2,
+            columnWidth=[(1, 140)],
+            columnAttach=[(1, "both", 0), (2, "both", 10)],
+        )
+        cmds.text(
+            label=f"STEP {step_number:02d}",
+            align="center",
+            height=34,
+            backgroundColor=UI_COLOR_BG_STEP_LABEL,
+            font="boldLabelFont",
+        )
+        cmds.text(
+            label=title,
+            align="center",
+            height=34,
+            backgroundColor=UI_COLOR_BG_STEP_HEADER,
+            font="boldLabelFont",
+        )
+        cmds.setParent("..")
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=6, backgroundColor=UI_COLOR_BG_STEP_CONTENT)
+
+    def _end_step_block(self) -> None:
+        cmds.setParent("..")
+        cmds.setParent("..")
+        cmds.setParent("..")
+
     def _build_technical_checks_section(self) -> None:
         cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
         self._build_tab_visibility_controls("high")
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
-        cmds.separator(style="in")
-        cmds.text(label="Step 01 — Placeholder Match", align="left")
+        self._begin_step_block(1, "Placeholder Match")
         self._build_manual_root_selector("placeholder_high_root_menu", "Select High Root", "high_ma")
         self._build_manual_root_selector("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma")
         cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 6), (4, "both", 2), (5, "both", 2)])
@@ -385,20 +426,20 @@ class HighPolyReviewTool:
         cmds.text(label="Tolerance %", align="right")
         self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
         cmds.setParent("..")
-        cmds.separator(style="in")
-        cmds.text(label="Step 02 — Design Kit Review (manual)", align="left")
+        self._end_step_block()
+        self._begin_step_block(2, "Design Kit Review (manual)")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self._build_subcheck_boxes("design_kit_checked")
         cmds.text(label="Visually verify high(s) against the design kit.", align="left")
         cmds.button(label="Mark Step as Reviewed", height=26, command=lambda *_: self.mark_design_reviewed())
         cmds.setParent("..")
-        cmds.separator(style="in")
-        cmds.text(label="Step 03 — Topology Check", align="left")
+        self._end_step_block()
+        self._begin_step_block(3, "Topology Check")
         self._build_manual_root_selector("topology_high_root_menu", "Select High Root for Topology Check", "high_ma")
         self._build_subcheck_boxes("topology_checked")
         cmds.button(label="Run Topology", height=26, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.run_topology_checks())
-        cmds.separator(style="in")
-        cmds.text(label="Step 04 — Vertex Colors", align="left")
+        self._end_step_block()
+        self._begin_step_block(4, "Vertex Colors")
         self._build_manual_root_selector("vertex_high_root_menu", "Select High Root for Vertex Color Check", "high_ma")
         cmds.rowLayout(
             numberOfColumns=5,
@@ -412,16 +453,16 @@ class HighPolyReviewTool:
         cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
         cmds.setParent("..")
         cmds.text(label="Manual note: confirm Color ID readability for future bake.", align="left")
-        cmds.separator(style="in")
-        cmds.text(label="Step 05 — Namespaces", align="left")
+        self._end_step_block()
+        self._begin_step_block(5, "Namespaces")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self._build_subcheck_boxes("no_namespaces")
         cmds.text(label="Only tool namespaces should remain", align="left")
         cmds.button(label="Scan Namespaces", height=26, command=lambda *_: self.scan_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_namespaces())
         cmds.setParent("..")
-        cmds.separator(style="in")
-        cmds.text(label="Step 06 — Materials / Texture Sets", align="left")
+        self._end_step_block()
+        self._begin_step_block(6, "Materials / Texture Sets")
         self._build_manual_root_selector("materials_high_root_menu", "Select High Root for Materials / Texture Sets", "high_ma")
         self._build_subcheck_boxes("texture_sets_analyzed")
         cmds.button(label="Run Analyze Materials", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.analyze_texture_sets(mode="materials"))
@@ -431,20 +472,21 @@ class HighPolyReviewTool:
             selectCommand=lambda *_: self.on_texture_set_selection_changed("high"),
         )
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("high"))
-        cmds.separator(style="in")
-        cmds.text(label="Step 07 — Compare High.ma vs High.fbx", align="left")
+        self._end_step_block()
+        self._begin_step_block(7, "Compare High.ma vs High.fbx")
         self._build_manual_root_selector("compare_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_fbx_root_menu", "Select High.fbx Root", "high_fbx")
         self._build_subcheck_boxes("ma_fbx_compared")
         self.ui["compare_ma_fbx_global_mode"] = cmds.checkBox(label="Global", value=False)
         cmds.button(label="Run Compare", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.compare_ma_vs_fbx())
-        cmds.separator(style="in")
-        cmds.text(label="Step 08 — Compare High.ma vs Bake Scene High", align="left")
+        self._end_step_block()
+        self._begin_step_block(8, "Compare High.ma vs Bake Scene High")
         self._build_manual_root_selector("compare_bake_ma_root_menu", "Select High.ma Root", "high_ma")
         self._build_manual_root_selector("compare_bake_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_subcheck_boxes("ma_bake_compared")
         self.ui["compare_ma_bake_global_mode"] = cmds.checkBox(label="Global", value=False)
         cmds.button(label="Run Compare Bake", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.compare_ma_vs_bake_high())
+        self._end_step_block()
         cmds.setParent("..")
         cmds.setParent("..")
     def _build_guided_high_review_section(self) -> None:
@@ -496,25 +538,24 @@ class HighPolyReviewTool:
 
     def _build_guided_low_review_section(self) -> None:
         cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
         self._build_tab_visibility_controls("low")
         cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
-        cmds.separator(style="in")
-        cmds.text(label="Step 01 — Topology Check", align="left")
+        self._begin_step_block(1, "Topology Check")
         self._build_manual_root_selector("low_topology_root_menu", "Select Low Root for Topology Check", "low_fbx")
         self._build_check_row("check_low_topology", "low_topology_checked", "Topology", self.run_low_topology_checks)
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 02 — Namespaces", align="left")
+        self._begin_step_block(2, "Namespaces")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_low_ns"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("low_namespaces_checked"))
         cmds.text(label="Only low review namespaces should remain", align="left")
         cmds.button(label="Run Namespace Check", height=26, command=lambda *_: self.scan_low_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_low_namespaces())
         cmds.setParent("..")
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 03 — Materials / Texture Sets", align="left")
+        self._begin_step_block(3, "Materials / Texture Sets")
         self._build_manual_root_selector("low_materials_root_menu", "Select Low Root for Materials / Texture Sets", "low_fbx")
         self._build_check_row("check_low_materials", "low_materials_checked", "Analyze Materials", self.analyze_low_materials)
         self.ui["low_texture_sets_list"] = cmds.textScrollList(
@@ -523,19 +564,19 @@ class HighPolyReviewTool:
             selectCommand=lambda *_: self.on_texture_set_selection_changed("low"),
         )
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("low"))
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 04 — UV Check map1", align="left")
+        self._begin_step_block(4, "UV Map1")
         self._build_manual_root_selector("low_uv1_root_menu", "Select Low Root for UV map1 Check", "low_fbx")
         self._build_check_row("check_low_uv_map1", "low_uv_map1_checked", "UV Map1 Check", self.run_low_uv_map1_check)
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 05 — UV map2 / Texel Density", align="left")
+        self._begin_step_block(5, "UV Map2 / Texel Density")
         self._build_manual_root_selector("low_uv2_root_menu", "Select Low Root for UV map2 / TD Check", "low_fbx")
         self._build_check_row("check_low_uv_map2", "low_uv_map2_checked", "UV Map2 Check", self.run_low_map2_density_check)
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 06 — Compare Low.fbx vs Bake Scene Low", align="left")
+        self._begin_step_block(6, "Compare Low.fbx vs Bake Scene Low")
         self._build_manual_root_selector("compare_low_bake_low_root_menu", "Select Low.fbx Root", "low_fbx")
         self._build_manual_root_selector("compare_low_bake_bake_root_menu", "Select Bake Low Root", "bake_low")
         self._build_compare_row(
@@ -546,9 +587,9 @@ class HighPolyReviewTool:
             "compare_low_bake_global_mode",
             default_global=False,
         )
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 07 — Compare Low.fbx vs Final Scene Asset", align="left")
+        self._begin_step_block(7, "Compare Low.fbx vs Final Scene Asset")
         self._build_manual_root_selector("compare_low_final_low_root_menu", "Select Low.fbx Root", "low_fbx")
         self._build_manual_root_selector("compare_low_final_final_root_menu", "Select Final Scene Root", "final_ma")
         self._build_compare_row(
@@ -559,19 +600,18 @@ class HighPolyReviewTool:
             "compare_low_final_global_mode",
             default_global=True,
         )
+        self._end_step_block()
 
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_guided_bake_review_section(self) -> None:
         cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
         self._build_tab_visibility_controls("bake")
 
         cmds.text(label="Guided review of the Bake Scene.", align="left")
-        cmds.separator(style="in")
-
-        cmds.text(label="Step 01 — Bake Scene Structure", align="left")
+        self._begin_step_block(1, "Bake Scene Structure")
         self._build_manual_root_selector("bake_structure_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_structure_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -579,14 +619,14 @@ class HighPolyReviewTool:
         cmds.text(label="Bake High / Low structure", align="left")
         cmds.button(label="Run Structure Check", height=26, command=lambda *_: self.check_bake_scene_structure())
         cmds.setParent("..")
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 02 — Low Topology Check", align="left")
+        self._begin_step_block(2, "Low Topology Check")
         self._build_manual_root_selector("bake_low_topology_root_menu", "Select Bake Low Root for Topology Check", "bake_low")
         self._build_check_row("check_bake_low_topology", "bake_low_topology_checked", "Low Topology Check", self.run_bake_low_topology_checks)
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 03 — Vertex Colors on Bake High", align="left")
+        self._begin_step_block(3, "Vertex Colors on Bake High")
         self._build_manual_root_selector("bake_high_vertex_root_menu", "Select Bake High Root for Vertex Color Check", "bake_high")
         cmds.rowLayout(
             numberOfColumns=5,
@@ -603,9 +643,9 @@ class HighPolyReviewTool:
         cmds.button(label="Display Vertex Color", height=26, command=lambda *_: self.display_vertex_colors())
         cmds.button(label="Hide Vertex Color", height=26, command=lambda *_: self.hide_vertex_colors())
         cmds.setParent("..")
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 04 — Materials on Bake High", align="left")
+        self._begin_step_block(4, "Materials on Bake High")
         self._build_manual_root_selector("bake_high_materials_root_menu", "Select Bake High Root for Materials / Texture Sets", "bake_high")
         self._build_check_row("check_bake_high_materials", "bake_high_materials_checked", "Analyze Materials", self.analyze_bake_high_materials)
         self.ui["bake_high_texture_sets_list"] = cmds.textScrollList(
@@ -614,9 +654,9 @@ class HighPolyReviewTool:
             selectCommand=lambda *_: self.on_texture_set_selection_changed("bake_high"),
         )
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("bake_high"))
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 05 — Materials on Bake Low", align="left")
+        self._begin_step_block(5, "Materials on Bake Low")
         self._build_manual_root_selector("bake_low_materials_root_menu", "Select Bake Low Root for Materials / Texture Sets", "bake_low")
         self._build_check_row("check_bake_low_materials", "bake_low_materials_checked", "Analyze Materials", self.analyze_bake_low_materials)
         self.ui["bake_low_texture_sets_list"] = cmds.textScrollList(
@@ -625,19 +665,19 @@ class HighPolyReviewTool:
             selectCommand=lambda *_: self.on_texture_set_selection_changed("bake_low"),
         )
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("bake_low"))
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 06 — UV Check Map 1 on Bake Low", align="left")
+        self._begin_step_block(6, "UV Map1 on Bake Low")
         self._build_manual_root_selector("bake_low_uv1_root_menu", "Select Bake Low Root for UV map1 Check", "bake_low")
         self._build_check_row("check_bake_low_uv_map1", "bake_low_uv_map1_checked", "UV Map1 Check", self.run_bake_low_uv_map1_check)
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 07 — UV Check Map 2 on Bake Low", align="left")
+        self._begin_step_block(7, "UV Map2 on Bake Low")
         self._build_manual_root_selector("bake_low_uv2_root_menu", "Select Bake Low Root for UV map2 / TD Check", "bake_low")
         self._build_check_row("check_bake_low_uv_map2", "bake_low_uv_map2_checked", "UV Map2 Check", self.run_bake_low_uv_map2_check)
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 08 — Naming & Pairing", align="left")
+        self._begin_step_block(8, "Naming & Pairing")
         self._build_manual_root_selector("bake_pairing_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_pairing_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(
@@ -657,9 +697,9 @@ class HighPolyReviewTool:
             width=70,
         )
         cmds.setParent("..")
+        self._end_step_block()
 
-        cmds.separator(style="in")
-        cmds.text(label="Step 09 — Bake Readiness", align="left")
+        self._begin_step_block(9, "Bake Readiness")
         self._build_manual_root_selector("bake_ready_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -667,32 +707,31 @@ class HighPolyReviewTool:
         cmds.text(label="Bake validation", align="left")
         cmds.button(label="Run Bake Validation", height=26, command=lambda *_: self.check_bake_readiness())
         cmds.setParent("..")
+        self._end_step_block()
 
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _build_guided_final_asset_review_section(self) -> None:
         cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
         self._build_tab_visibility_controls("final_asset")
         cmds.text(label="Guided review of the Final Asset delivery.", align="left")
-        cmds.separator(style="in")
-
-        cmds.text(label="Step 01 — Topology Check", align="left")
+        self._begin_step_block(1, "Topology Check")
         self._build_manual_root_selector("final_topology_root_menu", "Select Final Asset MA Root for Topology Check", "final_ma")
         self._build_check_row("check_final_topology", "final_topology_checked", "Topology", self.run_final_asset_topology_checks)
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 02 — Namespaces", align="left")
+        self._begin_step_block(2, "Namespaces")
         cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
         self.ui["check_final_ns"] = cmds.checkBox(label="", value=False, changeCommand=lambda *_: self.on_manual_check_toggle("final_namespaces_checked"))
         cmds.text(label="Only final asset review namespaces should remain", align="left")
         cmds.button(label="Run Namespace Check", height=26, command=lambda *_: self.scan_final_asset_namespaces())
         cmds.button(label="Remove Invalid Namespaces", height=26, command=lambda *_: self.remove_final_asset_namespaces())
         cmds.setParent("..")
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 03 — Materials / Texture Sets", align="left")
+        self._begin_step_block(3, "Materials / Texture Sets")
         self._build_manual_root_selector("final_materials_root_menu", "Select Final Asset MA Root for Materials / Texture Sets", "final_ma")
         self._build_check_row("check_final_materials", "final_materials_checked", "Analyze Materials", self.analyze_final_asset_materials)
         self.ui["final_texture_sets_list"] = cmds.textScrollList(
@@ -701,19 +740,19 @@ class HighPolyReviewTool:
             selectCommand=lambda *_: self.on_texture_set_selection_changed("final_asset"),
         )
         cmds.button(label="Isolate Material", height=26, command=lambda *_: self.toggle_isolate_selected_material("final_asset"))
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 04 — UV Check Map 1", align="left")
+        self._begin_step_block(4, "UV Map1")
         self._build_manual_root_selector("final_uv1_root_menu", "Select Final Asset MA Root for UV map1 Check", "final_ma")
         self._build_check_row("check_final_uv_map1", "final_uv_map1_checked", "UV Map1 Check", self.run_final_asset_uv_map1_check)
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 05 — UV Check Map 2", align="left")
+        self._begin_step_block(5, "UV Map2")
         self._build_manual_root_selector("final_uv2_root_menu", "Select Final Asset MA Root for UV map2 / TD Check", "final_ma")
         self._build_check_row("check_final_uv_map2", "final_uv_map2_checked", "UV Map2 Check", self.run_final_asset_uv_map2_check)
-        cmds.separator(style="in")
+        self._end_step_block()
 
-        cmds.text(label="Step 06 — Compare Final Asset .ma vs Final Asset .fbx", align="left")
+        self._begin_step_block(6, "Compare Final MA vs Final FBX")
         self._build_manual_root_selector("compare_final_ma_root_menu", "Select Final Asset .ma Root", "final_ma")
         self._build_manual_root_selector("compare_final_fbx_root_menu", "Select Final Asset .fbx Root", "final_fbx")
         self._build_compare_row(
@@ -724,6 +763,7 @@ class HighPolyReviewTool:
             "compare_final_ma_fbx_global_mode",
             default_global=True,
         )
+        self._end_step_block()
 
         cmds.setParent("..")
         cmds.setParent("..")
@@ -737,7 +777,7 @@ class HighPolyReviewTool:
             return
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         self.ui[check_key_ui] = cmds.checkBox(label="", value=False, enable=False)
-        cmds.text(label=label, align="left")
+        cmds.text(label=label, align="left", backgroundColor=UI_COLOR_BG_STEP_LABEL, height=26)
         cmds.button(label=f"Run {label}", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
         cmds.setParent("..")
 
@@ -755,7 +795,7 @@ class HighPolyReviewTool:
                 columnAttach=[(1, "both", 0), (2, "both", 4)],
             )
             self.ui[control_key] = cmds.checkBox(label="", value=False, enable=False)
-            cmds.text(label=sub_label, align="left")
+            cmds.text(label=sub_label, align="left", backgroundColor=UI_COLOR_BG_STEP_LABEL, height=22)
             self.subcheck_ui_map[check_key][sub_key] = control_key
             cmds.setParent("..")
         cmds.setParent("..")
@@ -899,57 +939,15 @@ class HighPolyReviewTool:
                 return str(group_data["label"])
         return group_key
 
-    def _on_scene_visibility_toggled(self, context_key: str, group_key: str, visible: bool) -> None:
-        self._set_scene_visibility_item(context_key, group_key, visible)
-        self._refresh_scene_visibility_button(context_key, group_key)
-
-    def _set_scene_visibility_item(self, context_key: str, group_key: str, visible: bool) -> None:
-        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
-            if group_data["key"] != group_key:
-                continue
-            group_data["handler"](visible)
-            return
-
-    def _set_scene_visibility_all(self, context_key: str, visible: bool) -> None:
-        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
-            self._set_scene_visibility_item(context_key, group_data["key"], visible)
-            self._refresh_scene_visibility_button(context_key, group_data["key"])
-
-    def _refresh_scene_visibility_button(self, context_key: str, group_key: str) -> None:
-        control = self.scene_visibility_controls.get(f"{context_key}:{group_key}")
-        if not control or not cmds.iconTextCheckBox(control, exists=True):
-            return
-        state = self._get_scene_visibility_state(context_key, group_key)
-        label = self._get_scene_visibility_label(context_key, group_key)
-        status = "ON" if state else "OFF"
-        cmds.iconTextCheckBox(
-            control,
-            edit=True,
-            value=state,
-            label=f"{label}  {status}",
-            backgroundColor=UI_COLOR_VIS_ON if state else UI_COLOR_VIS_OFF,
-        )
-
-    def _get_scene_visibility_state(self, context_key: str, group_key: str) -> bool:
-        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
-            if group_data["key"] == group_key:
-                return bool(group_data["getter"]())
-        return False
-
-    def _get_scene_visibility_label(self, context_key: str, group_key: str) -> str:
-        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
-            if group_data["key"] == group_key:
-                return str(group_data["label"])
-        return group_key
-
     def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
         cmds.rowLayout(
             numberOfColumns=4,
             adjustableColumn=2,
+            columnWidth=[(1, UI_STEP_LABEL_WIDTH)],
             columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 4)],
         )
-        cmds.text(label=label, align="left")
+        cmds.text(label=label, align="center", height=28, backgroundColor=UI_COLOR_BG_STEP_LABEL, font="boldLabelFont")
         self.ui[menu_key] = cmds.optionMenu(changeCommand=lambda *_: self.on_manual_root_changed(menu_key))
         cmds.menuItem(label="-- Aucun root --", parent=self.ui[menu_key])
         cmds.button(label="Use Selection", height=24, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.set_manual_root_from_selection(menu_key))
