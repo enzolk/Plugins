@@ -296,30 +296,17 @@ class HighPolyReviewTool:
             WINDOW_NAME,
             title=WINDOW_TITLE,
             sizeable=True,
-            widthHeight=(1536, 900),
+            widthHeight=(860, 900),
             minimizeButton=True,
             maximizeButton=True,
-            backgroundColor=(0.05, 0.08, 0.14),
+            backgroundColor=UI_COLOR_BG_WINDOW,
         )
 
-        root_layout = cmds.formLayout(nd=100)
-        self.ui["sidebar"] = cmds.columnLayout(
-            adjustableColumn=True,
-            rowSpacing=8,
-            backgroundColor=(0.03, 0.06, 0.11),
-            width=220,
-        )
-        self._build_sidebar_panel()
-        cmds.setParent(root_layout)
-
-        self.ui["main_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
-        self._build_main_header()
-
+        root_layout = cmds.formLayout()
         self.ui["scroll"] = cmds.scrollLayout(
             childResizable=True,
             horizontalScrollBarThickness=12,
             verticalScrollBarThickness=12,
-            backgroundColor=(0.08, 0.11, 0.18),
         )
 
         self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
@@ -329,72 +316,29 @@ class HighPolyReviewTool:
         self._build_notes_section()
         self._build_summary_section()
 
-        cmds.setParent("..")
-        cmds.setParent("..")
-
+        cmds.setParent(root_layout)
         cmds.formLayout(
             root_layout,
             edit=True,
             attachForm=[
-                (self.ui["sidebar"], "top", 0),
-                (self.ui["sidebar"], "left", 0),
-                (self.ui["sidebar"], "bottom", 0),
-                (self.ui["main_col"], "top", 0),
-                (self.ui["main_col"], "right", 0),
-                (self.ui["main_col"], "bottom", 0),
+                (self.ui["scroll"], "top", 0),
+                (self.ui["scroll"], "left", 0),
+                (self.ui["scroll"], "right", 0),
+                (self.ui["scroll"], "bottom", 0),
             ],
-            attachControl=[(self.ui["main_col"], "left", 0, self.ui["sidebar"])],
-            attachNone=[(self.ui["sidebar"], "right")],
         )
 
         cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
         cmds.showWindow(self.ui["window"])
 
         if cmds.window(self.ui["window"], exists=True):
-            cmds.window(self.ui["window"], edit=True, widthHeight=(1536, 900))
+            cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
 
         self.refresh_detected_file_labels()
         self.refresh_root_ui()
         self.refresh_manual_root_menus()
         self.refresh_summary()
         self.refresh_checklist_ui()
-
-    def _build_sidebar_panel(self) -> None:
-        cmds.separator(style="none", height=12)
-        cmds.text(label="REVIEW", align="left", font="smallPlainLabelFont")
-        tab_targets = {"High": 1, "Low": 2, "Bake": 3, "Final Asset": 4}
-        for label in ("High", "Low", "Bake", "Final Asset"):
-            cmds.button(
-                label=label,
-                height=42,
-                align="left",
-                backgroundColor=(0.10, 0.20, 0.38) if label == "High" else (0.03, 0.06, 0.11),
-                command=lambda *_ , idx=tab_targets[label]: self._set_tab_and_scroll(idx),
-            )
-        cmds.separator(style="in", height=20)
-        cmds.text(label="TOOLS", align="left", font="smallPlainLabelFont")
-        cmds.button(label="Scene Visibility", height=38, align="left", command=lambda *_: self._set_tab_and_scroll(1))
-        cmds.button(label="Logs & Report", height=38, align="left", command=lambda *_: self._set_tab_and_scroll(2))
-        cmds.separator(style="none", height=20)
-        cmds.frameLayout(label="REVIEW SUMMARY", collapsable=False, marginWidth=8, marginHeight=8, backgroundColor=(0.10, 0.13, 0.20))
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self.ui["sidebar_summary_passed"] = cmds.text(label="✔ Passed      0", align="left")
-        self.ui["sidebar_summary_warning"] = cmds.text(label="⚠ Warnings    0", align="left")
-        self.ui["sidebar_summary_failed"] = cmds.text(label="✖ Failed      0", align="left")
-        self.ui["sidebar_summary_pending"] = cmds.text(label="○ Pending     0", align="left")
-        self.ui["sidebar_summary_total"] = cmds.text(label="Total Checks  0", align="left")
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_main_header(self) -> None:
-        cmds.rowLayout(numberOfColumns=6, adjustableColumn=1, columnAttach=[(1, "both", 12), (2, "both", 10), (3, "both", 10), (4, "both", 10), (5, "both", 10), (6, "both", 8)])
-        cmds.text(label="HIGH POLY REVIEW", align="left", font="boldLabelFont")
-        cmds.text(label="✔ Passed", align="right")
-        cmds.text(label="⚠ Warning", align="right")
-        cmds.text(label="✖ Failed", align="right")
-        cmds.text(label="○ Pending", align="right")
-        cmds.button(label="▶  Run All", height=40, width=120, backgroundColor=(0.17, 0.39, 0.79), command=lambda *_: self.run_all_checks())
-        cmds.setParent("..")
 
     def _build_file_section(self) -> None:
         cmds.frameLayout(label="1) Root Folder", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
@@ -514,7 +458,6 @@ class HighPolyReviewTool:
             innerMarginHeight=6,
             changeCommand=lambda *_: self._reset_main_scroll_to_top(),
         )
-        self.ui["review_tabs"] = tabs
 
         high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_high_review_section()
@@ -544,12 +487,6 @@ class HighPolyReviewTool:
         )
         cmds.setParent("..")
         cmds.setParent("..")
-
-    def _set_tab_and_scroll(self, tab_index: int) -> None:
-        tabs = self.ui.get("review_tabs")
-        if tabs and cmds.tabLayout(tabs, exists=True):
-            cmds.tabLayout(tabs, edit=True, selectTabIndex=max(1, min(4, tab_index)))
-        self._reset_main_scroll_to_top()
 
     def _reset_main_scroll_to_top(self) -> None:
         """Reset the main scrollLayout to the top after tab changes."""
@@ -1658,13 +1595,6 @@ class HighPolyReviewTool:
             f"Warnings: {warn_count} | Fails: {fail_count} | Pending: {pending}"
         )
         cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
-        if "sidebar_summary_passed" in self.ui:
-            total = len(self.check_states)
-            cmds.text(self.ui["sidebar_summary_passed"], e=True, label=f"✔ Passed      {ok_count}")
-            cmds.text(self.ui["sidebar_summary_warning"], e=True, label=f"⚠ Warnings    {warn_count}")
-            cmds.text(self.ui["sidebar_summary_failed"], e=True, label=f"✖ Failed      {fail_count}")
-            cmds.text(self.ui["sidebar_summary_pending"], e=True, label=f"○ Pending     {pending}")
-            cmds.text(self.ui["sidebar_summary_total"], e=True, label=f"Total Checks  {total}")
 
     def refresh_checklist_ui(self) -> None:
         for key, ctrl in self.check_ui_map.items():
