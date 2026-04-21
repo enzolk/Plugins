@@ -35,6 +35,8 @@ UI_COLOR_BG_ACCENT_SOFT = (0.28, 0.32, 0.38)
 UI_COLOR_BG_WARNING = (0.34, 0.27, 0.16)
 UI_COLOR_BG_LOG = (0.15, 0.15, 0.16)
 UI_COLOR_TEXT_MUTED = (0.77, 0.77, 0.79)
+UI_COLOR_VIS_ON = (0.22, 0.44, 0.30)
+UI_COLOR_VIS_OFF = (0.30, 0.30, 0.32)
 UI_BUTTON_HEIGHT = 28
 UI_PRIMARY_BUTTON_HEIGHT = 32
 ROOT_SUFFIXES = {
@@ -245,6 +247,8 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_controls: Dict[str, str] = {}
         self.manual_root_fulltext_layouts: Dict[str, str] = {}
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
+        self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
+        self.scene_visibility_controls: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -729,37 +733,102 @@ class HighPolyReviewTool:
     def _build_tab_visibility_controls(self, context_key: str) -> None:
         groups = {
             "high": [
-                {"key": "High_MA_GRP", "label": "High MA", "handler": lambda visible: self._set_group_visibility("High_MA_GRP", visible)},
-                {"key": "High_FBX_GRP", "label": "High FBX", "handler": lambda visible: self._set_group_visibility("High_FBX_GRP", visible)},
-                {"key": "Placeholder_GRP", "label": "Placeholder", "handler": lambda visible: self._set_group_visibility("Placeholder_GRP", visible)},
+                {"key": "High_MA_GRP", "label": "High MA", "handler": lambda visible: self._set_group_visibility("High_MA_GRP", visible), "getter": lambda: self._is_group_visible("High_MA_GRP")},
+                {"key": "High_FBX_GRP", "label": "High FBX", "handler": lambda visible: self._set_group_visibility("High_FBX_GRP", visible), "getter": lambda: self._is_group_visible("High_FBX_GRP")},
+                {"key": "Placeholder_GRP", "label": "Placeholder", "handler": lambda visible: self._set_group_visibility("Placeholder_GRP", visible), "getter": lambda: self._is_group_visible("Placeholder_GRP")},
             ],
             "low": [
-                {"key": "Low_FBX_GRP", "label": "Low FBX", "handler": lambda visible: self._set_group_visibility("Low_FBX_GRP", visible)},
-                {"key": "Final_Asset_MA_GRP", "label": "Final Asset MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible)},
-                {"key": "Final_Asset_FBX_GRP", "label": "Final Asset FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible)},
+                {"key": "Low_FBX_GRP", "label": "Low FBX", "handler": lambda visible: self._set_group_visibility("Low_FBX_GRP", visible), "getter": lambda: self._is_group_visible("Low_FBX_GRP")},
+                {"key": "Final_Asset_MA_GRP", "label": "Final MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible), "getter": lambda: self._is_group_visible("Final_Asset_MA_GRP")},
+                {"key": "Final_Asset_FBX_GRP", "label": "Final FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible), "getter": lambda: self._is_group_visible("Final_Asset_FBX_GRP")},
             ],
             "bake": [
-                {"key": "Bake_High", "label": "High Bake Scene", "handler": lambda visible: self._set_bake_kind_visibility("high", visible)},
-                {"key": "Bake_Low", "label": "Low Bake Scene", "handler": lambda visible: self._set_bake_kind_visibility("low", visible)},
+                {"key": "Bake_High", "label": "Bake High", "handler": lambda visible: self._set_bake_kind_visibility("high", visible), "getter": lambda: self._is_bake_kind_visible("high")},
+                {"key": "Bake_Low", "label": "Bake Low", "handler": lambda visible: self._set_bake_kind_visibility("low", visible), "getter": lambda: self._is_bake_kind_visible("low")},
             ],
             "final_asset": [
-                {"key": "Final_Asset_MA_GRP", "label": "Final Asset MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible)},
-                {"key": "Final_Asset_FBX_GRP", "label": "Final Asset FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible)},
+                {"key": "Final_Asset_MA_GRP", "label": "Final MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible), "getter": lambda: self._is_group_visible("Final_Asset_MA_GRP")},
+                {"key": "Final_Asset_FBX_GRP", "label": "Final FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible), "getter": lambda: self._is_group_visible("Final_Asset_FBX_GRP")},
             ],
         }.get(context_key, [])
         if not groups:
             return
+        self.scene_visibility_groups_by_context[context_key] = groups
         cmds.frameLayout(label="Scene Visibility", collapsable=True, collapse=False, marginWidth=8, marginHeight=6, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 6)])
+        cmds.button(
+            label="Show All",
+            height=24,
+            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
+            command=lambda *_args, ck=context_key: self._set_scene_visibility_all(ck, True),
+        )
+        cmds.button(
+            label="Hide All",
+            height=24,
+            backgroundColor=UI_COLOR_BG_WARNING,
+            command=lambda *_args, ck=context_key: self._set_scene_visibility_all(ck, False),
+        )
+        cmds.setParent("..")
+        cols = max(1, min(3, len(groups)))
+        cmds.gridLayout(numberOfColumns=cols, cellWidthHeight=(140, 30))
         for group_data in groups:
-            checkbox_key = f"vis_{context_key}_{group_data['key']}"
-            self.ui[checkbox_key] = cmds.checkBox(
-                label=f"Show/Hide {group_data['label']}",
-                value=False,
-                changeCommand=lambda val, visibility_handler=group_data["handler"]: visibility_handler(bool(val)),
+            button_key = f"vis_{context_key}_{group_data['key']}"
+            self.ui[button_key] = cmds.iconTextCheckBox(
+                style="textOnly",
+                label=group_data["label"],
+                value=bool(group_data["getter"]()),
+                height=28,
+                backgroundColor=UI_COLOR_VIS_OFF,
+                changeCommand=lambda val, ck=context_key, gk=group_data["key"]: self._on_scene_visibility_toggled(ck, gk, bool(val)),
             )
+            self.scene_visibility_controls[f"{context_key}:{group_data['key']}"] = self.ui[button_key]
+            self._refresh_scene_visibility_button(context_key, group_data["key"])
         cmds.setParent("..")
         cmds.setParent("..")
+
+    def _on_scene_visibility_toggled(self, context_key: str, group_key: str, visible: bool) -> None:
+        self._set_scene_visibility_item(context_key, group_key, visible)
+        self._refresh_scene_visibility_button(context_key, group_key)
+
+    def _set_scene_visibility_item(self, context_key: str, group_key: str, visible: bool) -> None:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            if group_data["key"] != group_key:
+                continue
+            group_data["handler"](visible)
+            return
+
+    def _set_scene_visibility_all(self, context_key: str, visible: bool) -> None:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            self._set_scene_visibility_item(context_key, group_data["key"], visible)
+            self._refresh_scene_visibility_button(context_key, group_data["key"])
+
+    def _refresh_scene_visibility_button(self, context_key: str, group_key: str) -> None:
+        control = self.scene_visibility_controls.get(f"{context_key}:{group_key}")
+        if not control or not cmds.iconTextCheckBox(control, exists=True):
+            return
+        state = self._get_scene_visibility_state(context_key, group_key)
+        label = self._get_scene_visibility_label(context_key, group_key)
+        status = "ON" if state else "OFF"
+        cmds.iconTextCheckBox(
+            control,
+            edit=True,
+            value=state,
+            label=f"{label}  {status}",
+            backgroundColor=UI_COLOR_VIS_ON if state else UI_COLOR_VIS_OFF,
+        )
+
+    def _get_scene_visibility_state(self, context_key: str, group_key: str) -> bool:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            if group_data["key"] == group_key:
+                return bool(group_data["getter"]())
+        return False
+
+    def _get_scene_visibility_label(self, context_key: str, group_key: str) -> str:
+        for group_data in self.scene_visibility_groups_by_context.get(context_key, []):
+            if group_data["key"] == group_key:
+                return str(group_data["label"])
+        return group_key
 
     def _build_manual_root_selector(self, menu_key: str, label: str, source_key: str) -> None:
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
@@ -939,6 +1008,14 @@ class HighPolyReviewTool:
             f"{group_name} and {child_count} child transforms set to {state_label}",
         )
 
+    def _is_group_visible(self, group_name: str) -> bool:
+        if not cmds.objExists(group_name):
+            return False
+        try:
+            return bool(cmds.getAttr(group_name + ".visibility"))
+        except RuntimeError:
+            return False
+
     def _toggle_group_visibility(self, group_name: str) -> None:
         if not cmds.objExists(group_name):
             return
@@ -966,6 +1043,22 @@ class HighPolyReviewTool:
 
         state_label = "visible" if visible else "hidden"
         self.log("INFO", "Visibility", f"Bake {kind.title()} roots ({suffix}) set to {state_label}: {len(roots)} root(s)")
+
+    def _is_bake_kind_visible(self, kind: str) -> bool:
+        namespace = self.context.get("bake_ma_namespace", "")
+        detected_key = "bake_high" if kind == "high" else "bake_low"
+        roots = [r for r in self.detected_roots.get(detected_key, []) if cmds.objExists(r)]
+        if not roots:
+            roots = [r for r in self._find_root_candidates(kind, namespace=namespace) if cmds.objExists(r)]
+        if not roots:
+            return False
+        for root in roots:
+            try:
+                if bool(cmds.getAttr(root + ".visibility")):
+                    return True
+            except RuntimeError:
+                continue
+        return False
 
     def _ensure_parent_visibility_for_bake_roots(self, roots: List[str]) -> None:
         parent_updated = 0
