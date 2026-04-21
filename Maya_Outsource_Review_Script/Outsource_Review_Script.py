@@ -21,14 +21,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import maya.cmds as cmds
 import maya.mel as mel
-import maya.OpenMayaUI as omui
-
-try:
-    from PySide2 import QtCore, QtWidgets
-    import shiboken2 as shiboken
-except ImportError:
-    from PySide6 import QtCore, QtWidgets
-    import shiboken6 as shiboken
 
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
@@ -245,7 +237,7 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
-    def build(self, show_window: bool = True) -> None:
+    def build(self) -> None:
         if cmds.window(WINDOW_NAME, exists=True):
             cmds.deleteUI(WINDOW_NAME)
 
@@ -285,11 +277,10 @@ class HighPolyReviewTool:
         )
 
         cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
-        if show_window:
-            cmds.showWindow(self.ui["window"])
+        cmds.showWindow(self.ui["window"])
 
-            if cmds.window(self.ui["window"], exists=True):
-                cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
+        if cmds.window(self.ui["window"], exists=True):
+            cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
 
         self.refresh_detected_file_labels()
         self.refresh_root_ui()
@@ -5820,149 +5811,15 @@ else
 
         return "\n".join(lines)
 
-    # ------------------------- Qt shell bridge (phase 1) -------------------------
-    def get_root_folder(self) -> str:
-        control = self.ui.get("root_field")
-        if control and cmds.textFieldButtonGrp(control, exists=True):
-            return cmds.textFieldButtonGrp(control, q=True, text=True)
-        return self.paths.get("root", "")
-
-    def set_root_folder(self, path: str) -> None:
-        normalized = path or ""
-        self.paths["root"] = normalized
-        control = self.ui.get("root_field")
-        if control and cmds.textFieldButtonGrp(control, exists=True):
-            cmds.textFieldButtonGrp(control, e=True, text=normalized)
-
-    def show_legacy_window(self) -> None:
-        if cmds.window(WINDOW_NAME, exists=True):
-            cmds.showWindow(WINDOW_NAME)
-
-
-def _maya_main_window() -> Optional[QtWidgets.QWidget]:
-    ptr = omui.MQtUtil.mainWindow()
-    if not ptr:
-        return None
-    return shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
-
-
-class OutsourceReviewQtShell(QtWidgets.QDialog):
-    """Phase 1 Qt shell: modern top-level structure while reusing legacy logic."""
-
-    OBJECT_NAME = "outsourceReviewQtShellWin"
-
-    def __init__(self, tool: HighPolyReviewTool, parent: Optional[QtWidgets.QWidget] = None) -> None:
-        super().__init__(parent or _maya_main_window())
-        self.tool = tool
-        self.setObjectName(self.OBJECT_NAME)
-        self.setWindowTitle(WINDOW_TITLE + " (Qt Phase 1)")
-        self.setMinimumSize(940, 760)
-        self.resize(980, 860)
-        self._build_ui()
-        self._sync_from_tool()
-
-    def _build_ui(self) -> None:
-        root_layout = QtWidgets.QVBoxLayout(self)
-        root_layout.setContentsMargins(10, 10, 10, 10)
-        root_layout.setSpacing(8)
-
-        file_group = QtWidgets.QGroupBox("1) Root Folder / Scan / Load")
-        file_layout = QtWidgets.QGridLayout(file_group)
-        file_layout.addWidget(QtWidgets.QLabel("Root Folder"), 0, 0)
-        self.root_edit = QtWidgets.QLineEdit()
-        file_layout.addWidget(self.root_edit, 0, 1)
-        browse_btn = QtWidgets.QPushButton("Browse")
-        scan_btn = QtWidgets.QPushButton("Scan Delivery Folder")
-        load_btn = QtWidgets.QPushButton("Load Everything")
-        file_layout.addWidget(browse_btn, 0, 2)
-        file_layout.addWidget(scan_btn, 1, 1)
-        file_layout.addWidget(load_btn, 1, 2)
-        root_layout.addWidget(file_group)
-
-        guided_group = QtWidgets.QGroupBox("2) Guided Reviews")
-        guided_layout = QtWidgets.QVBoxLayout(guided_group)
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self._build_tab_panel("Review 01 — High"), "Review 01 — High")
-        self.tabs.addTab(self._build_tab_panel("Review 02 — Low"), "Review 02 — Low")
-        self.tabs.addTab(self._build_tab_panel("Review 03 — Bake Scene"), "Review 03 — Bake Scene")
-        self.tabs.addTab(self._build_tab_panel("Review 04 — Final Asset"), "Review 04 — Final Asset")
-        guided_layout.addWidget(self.tabs)
-        root_layout.addWidget(guided_group, 1)
-
-        results_group = QtWidgets.QGroupBox("4) Results / Logs")
-        results_layout = QtWidgets.QVBoxLayout(results_group)
-        results_layout.addWidget(QtWidgets.QLabel("Detailed logs and line-by-line review remain in the legacy panel for this phase."))
-        root_layout.addWidget(results_group)
-
-        notes_group = QtWidgets.QGroupBox("5) Notes")
-        notes_layout = QtWidgets.QVBoxLayout(notes_group)
-        notes_layout.addWidget(QtWidgets.QLabel("Notes and full report export remain handled by the legacy panel in phase 1."))
-        root_layout.addWidget(notes_group)
-
-        summary_group = QtWidgets.QGroupBox("6) Summary global")
-        summary_layout = QtWidgets.QHBoxLayout(summary_group)
-        self.summary_label = QtWidgets.QLabel("Pending checks")
-        self.summary_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        summary_layout.addWidget(self.summary_label, 1)
-        open_legacy_btn = QtWidgets.QPushButton("Open Legacy Detailed Panel")
-        summary_layout.addWidget(open_legacy_btn)
-        root_layout.addWidget(summary_group)
-
-        browse_btn.clicked.connect(self._browse_root)
-        scan_btn.clicked.connect(self._scan)
-        load_btn.clicked.connect(self._load_everything)
-        open_legacy_btn.clicked.connect(self.tool.show_legacy_window)
-        self.root_edit.editingFinished.connect(self._push_root_to_tool)
-
-    def _build_tab_panel(self, title: str) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(widget)
-        layout.addWidget(QtWidgets.QLabel(f"{title}: phase 1 keeps the existing review logic and detailed controls in the legacy panel."))
-        run_btn = QtWidgets.QPushButton("Open Detailed Controls")
-        run_btn.clicked.connect(self.tool.show_legacy_window)
-        layout.addWidget(run_btn, 0, QtCore.Qt.AlignLeft)
-        layout.addStretch(1)
-        return widget
-
-    def _sync_from_tool(self) -> None:
-        self.root_edit.setText(self.tool.get_root_folder())
-        summary_control = self.tool.ui.get("summary_text")
-        if summary_control and cmds.text(summary_control, exists=True):
-            self.summary_label.setText(cmds.text(summary_control, q=True, label=True))
-
-    def _push_root_to_tool(self) -> None:
-        self.tool.set_root_folder(self.root_edit.text().strip())
-
-    def _browse_root(self) -> None:
-        self.tool.pick_root_folder()
-        self._sync_from_tool()
-
-    def _scan(self) -> None:
-        self._push_root_to_tool()
-        self.tool.scan_delivery_folder()
-        self._sync_from_tool()
-
-    def _load_everything(self) -> None:
-        self._push_root_to_tool()
-        self.tool.load_everything()
-        self._sync_from_tool()
-
 
 _TOOL_INSTANCE: Optional[HighPolyReviewTool] = None
-_QT_SHELL: Optional[OutsourceReviewQtShell] = None
 
 
 def show_outsource_review_tool() -> HighPolyReviewTool:
-    """Launch phase-1 Qt shell and keep a live instance in module scope."""
-    global _TOOL_INSTANCE, _QT_SHELL
+    """Launch tool window and keep a live instance in module scope."""
+    global _TOOL_INSTANCE
     _TOOL_INSTANCE = HighPolyReviewTool()
-    _TOOL_INSTANCE.build(show_window=False)
-    if _QT_SHELL and _QT_SHELL.isVisible():
-        _QT_SHELL.close()
-    _QT_SHELL = OutsourceReviewQtShell(_TOOL_INSTANCE)
-    _QT_SHELL.show()
-    _QT_SHELL.raise_()
-    _QT_SHELL.activateWindow()
+    _TOOL_INSTANCE.build()
     return _TOOL_INSTANCE
 
 
