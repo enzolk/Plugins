@@ -34,16 +34,11 @@ UI_COLOR_BG_ACCENT = (0.25, 0.37, 0.56)
 UI_COLOR_BG_ACCENT_SOFT = (0.28, 0.32, 0.38)
 UI_COLOR_BG_WARNING = (0.34, 0.27, 0.16)
 UI_COLOR_BG_LOG = (0.15, 0.15, 0.16)
-UI_COLOR_BG_STEP_CARD = (0.08, 0.11, 0.16)
-UI_COLOR_BG_STEP_SURFACE = (0.10, 0.13, 0.19)
-UI_COLOR_BG_STEP_INPUT = (0.04, 0.06, 0.09)
-UI_COLOR_BG_STEP_PRIMARY = (0.15, 0.36, 0.76)
 UI_COLOR_TEXT_MUTED = (0.77, 0.77, 0.79)
 UI_COLOR_VIS_ON = (0.22, 0.44, 0.30)
 UI_COLOR_VIS_OFF = (0.30, 0.30, 0.32)
 UI_BUTTON_HEIGHT = 28
 UI_PRIMARY_BUTTON_HEIGHT = 32
-STEP_LABEL_WIDTH = 180
 ROOT_SUFFIXES = {
     "high": "_high",
     "low": "_low",
@@ -380,7 +375,16 @@ class HighPolyReviewTool:
         self._build_tab_visibility_controls("high")
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
         cmds.separator(style="in")
-        self._build_placeholder_step_card()
+        cmds.text(label="Step 01 — Placeholder Match", align="left")
+        self._build_manual_root_selector("placeholder_high_root_menu", "Select High Root", "high_ma")
+        self._build_manual_root_selector("placeholder_placeholder_root_menu", "Select Placeholder Root", "placeholder_ma")
+        cmds.rowLayout(numberOfColumns=5, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 6), (4, "both", 2), (5, "both", 2)])
+        self._build_subcheck_boxes("placeholder_checked")
+        cmds.text(label="Verify that each high matches its placeholder", align="left")
+        cmds.button(label="Run Placeholder Check", height=26, command=lambda *_: self.check_placeholder_match())
+        cmds.text(label="Tolerance %", align="right")
+        self.ui["placeholder_tolerance"] = cmds.floatField(minValue=0.0, value=7.0, precision=2, step=0.25, width=70)
+        cmds.setParent("..")
         cmds.separator(style="in")
         cmds.text(label="Step 02 — Design Kit Review (manual)", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -443,181 +447,6 @@ class HighPolyReviewTool:
         cmds.button(label="Run Compare Bake", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.compare_ma_vs_bake_high())
         cmds.setParent("..")
         cmds.setParent("..")
-
-    def _build_placeholder_step_card(self) -> None:
-        card_key = "step_placeholder_card"
-        body_key = f"{card_key}_body"
-        collapse_key = f"{card_key}_collapse"
-        self.ui[f"{card_key}_collapsed"] = False
-
-        cmds.frameLayout(
-            labelVisible=False,
-            borderVisible=True,
-            borderStyle="etchedIn",
-            marginWidth=18,
-            marginHeight=16,
-            backgroundColor=UI_COLOR_BG_STEP_CARD,
-        )
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=12)
-
-        cmds.rowLayout(
-            numberOfColumns=5,
-            adjustableColumn=4,
-            columnAttach=[(1, "both", 0), (2, "both", 12), (3, "both", 8), (4, "both", 0), (5, "both", 0)],
-        )
-        cmds.frameLayout(
-            labelVisible=False,
-            borderVisible=True,
-            borderStyle="etchedIn",
-            marginWidth=8,
-            marginHeight=8,
-            width=74,
-            height=74,
-            backgroundColor=UI_COLOR_BG_STEP_SURFACE,
-        )
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=0)
-        cmds.text(label="STEP", align="center", height=16)
-        cmds.text(label="01", align="center", height=32)
-        cmds.setParent("..")
-        cmds.setParent("..")
-        cmds.text(label="Placeholder Match", align="left", font="boldLabelFont", height=30)
-        cmds.text(label="ⓘ", align="left", height=30)
-        cmds.text(label="", align="left")
-        self.ui[collapse_key] = cmds.iconTextButton(
-            style="textOnly",
-            label="▾",
-            width=24,
-            height=24,
-            command=lambda *_: self._toggle_step_card_body(body_key, collapse_key, card_key),
-        )
-        cmds.setParent("..")
-        cmds.separator(style="none", height=2)
-
-        self.ui[body_key] = cmds.columnLayout(adjustableColumn=True, rowSpacing=12)
-        self._build_step_root_selector_row("placeholder_high_root_menu", "High Root", "high_ma", "⌁")
-        self._build_step_root_selector_row("placeholder_placeholder_root_menu", "Placeholder Root", "placeholder_ma", "⬡")
-        cmds.separator(style="none", height=6)
-        self._build_placeholder_checks_actions_row()
-        cmds.setParent("..")
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_step_root_selector_row(self, menu_key: str, label: str, source_key: str, icon_label: str) -> None:
-        cmds.rowLayout(
-            numberOfColumns=5,
-            adjustableColumn=3,
-            columnWidth=[(1, STEP_LABEL_WIDTH), (4, 122), (5, 34)],
-            columnAttach=[(1, "both", 0), (2, "both", 10), (3, "both", 10), (4, "both", 10), (5, "both", 0)],
-        )
-        cmds.frameLayout(
-            labelVisible=False,
-            borderVisible=True,
-            borderStyle="etchedIn",
-            marginWidth=14,
-            marginHeight=8,
-            height=40,
-            backgroundColor=UI_COLOR_BG_STEP_SURFACE,
-        )
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
-        cmds.text(label=icon_label, align="center", width=16)
-        cmds.text(label=label, align="left")
-        cmds.setParent("..")
-        cmds.setParent("..")
-        self.ui[menu_key] = cmds.optionMenu(
-            height=40,
-            backgroundColor=UI_COLOR_BG_STEP_INPUT,
-            changeCommand=lambda *_: self.on_manual_root_changed(menu_key),
-        )
-        cmds.menuItem(label="-- Aucun root --", parent=self.ui[menu_key])
-        cmds.button(
-            label="Use Selection",
-            height=40,
-            backgroundColor=UI_COLOR_BG_STEP_PRIMARY,
-            command=lambda *_: self.set_manual_root_from_selection(menu_key),
-        )
-        self.ui[f"{menu_key}_fulltext_toggle"] = cmds.iconTextButton(
-            style="textOnly",
-            label="⚙",
-            width=40,
-            height=40,
-            backgroundColor=UI_COLOR_BG_STEP_SURFACE,
-            command=lambda *_args, mk=menu_key: self._toggle_manual_root_fulltext_visibility(mk),
-        )
-        cmds.setParent("..")
-
-        fulltext_layout_key = f"{menu_key}_fulltext_layout"
-        self.ui[fulltext_layout_key] = cmds.columnLayout(adjustableColumn=True, visible=False)
-        fulltext_key = f"{menu_key}_fulltext"
-        self.ui[fulltext_key] = cmds.scrollField(
-            editable=False,
-            wordWrap=True,
-            height=38,
-            text="-- Aucun root --",
-            backgroundColor=UI_COLOR_BG_STEP_INPUT,
-        )
-        cmds.setParent("..")
-
-        self.manual_root_menu_sources[menu_key] = source_key
-        self.manual_root_fulltext_controls[menu_key] = fulltext_key
-        self.manual_root_fulltext_layouts[menu_key] = fulltext_layout_key
-        self.manual_root_fulltext_toggles[menu_key] = f"{menu_key}_fulltext_toggle"
-
-    def _build_placeholder_checks_actions_row(self) -> None:
-        cmds.rowLayout(
-            numberOfColumns=3,
-            adjustableColumn=1,
-            columnAttach=[(1, "both", 0), (2, "both", 14), (3, "both", 14)],
-            columnWidth=[(2, 1)],
-        )
-        cmds.rowLayout(numberOfColumns=2, columnAttach=[(1, "both", 0), (2, "both", 32)])
-        self._build_step_check_chip("placeholder_checked", "bbox", "BBox", "Verify that each high\nmatches its placeholder")
-        self._build_step_check_chip("placeholder_checked", "pivot", "Pivot", "Verify that each high\nmatches its placeholder pivot")
-        cmds.setParent("..")
-        cmds.separator(style="single", width=1, height=40)
-        cmds.rowLayout(
-            numberOfColumns=3,
-            adjustableColumn=1,
-            columnAttach=[(1, "both", 0), (2, "both", 14), (3, "both", 8)],
-            columnWidth=[(2, 84), (3, 108)],
-        )
-        cmds.iconTextButton(style="textOnly", label="▶  Run Placeholder Check", width=230, height=40, backgroundColor=UI_COLOR_BG_STEP_PRIMARY, command=lambda *_: self.check_placeholder_match())
-        cmds.text(label="Tolerance %", align="right")
-        self.ui["placeholder_tolerance"] = cmds.floatField(
-            minValue=0.0,
-            value=7.0,
-            precision=2,
-            step=0.25,
-            width=74,
-            height=40,
-            backgroundColor=UI_COLOR_BG_STEP_INPUT,
-        )
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-    def _build_step_check_chip(self, check_key: str, sub_key: str, title: str, description: str) -> None:
-        control_key = f"subcheck_{check_key}_{sub_key}"
-        self.subcheck_ui_map.setdefault(check_key, {})
-        cmds.rowLayout(
-            numberOfColumns=3,
-            columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 10)],
-            adjustableColumn=3,
-        )
-        self.ui[control_key] = cmds.checkBox(label="", value=False, enable=False, width=20, height=20)
-        cmds.text(label=title, align="left", font="boldLabelFont")
-        cmds.text(label=description, align="left")
-        self.subcheck_ui_map[check_key][sub_key] = control_key
-        cmds.setParent("..")
-
-    def _toggle_step_card_body(self, body_key: str, button_key: str, card_key: str) -> None:
-        collapsed_key = f"{card_key}_collapsed"
-        is_collapsed = bool(self.ui.get(collapsed_key, False))
-        new_state = not is_collapsed
-        self.ui[collapsed_key] = new_state
-        if body_key in self.ui and cmds.columnLayout(self.ui[body_key], exists=True):
-            cmds.columnLayout(self.ui[body_key], edit=True, visible=not new_state)
-        if button_key in self.ui and cmds.iconTextButton(self.ui[button_key], exists=True):
-            cmds.iconTextButton(self.ui[button_key], edit=True, label="▸" if new_state else "▾")
-
     def _build_guided_high_review_section(self) -> None:
         self._build_technical_checks_section()
         self._build_global_action_section()
