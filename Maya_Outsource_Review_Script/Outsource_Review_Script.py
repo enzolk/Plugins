@@ -122,6 +122,19 @@ QToolButton#InfoButton, QToolButton#CollapseButton {
     background: transparent;
     font-size: 16px;
 }
+QToolButton#CollapseButton {
+    min-width: 30px;
+    min-height: 30px;
+    border-radius: 6px;
+}
+QToolButton#CollapseButton:hover {
+    background-color: #1d2b42;
+    color: #d7e5ff;
+}
+QToolButton#CollapseButton:pressed {
+    background-color: #162236;
+    color: #ffffff;
+}
 QFrame#RootLabelFrame {
     background-color: #1a2539;
     border: 1px solid #25374f;
@@ -198,6 +211,14 @@ QCheckBox#StepSubCheckBox::indicator:checked {
     border: 1px solid #34aa5f;
     image: none;
 }
+QCheckBox#StepSubCheckBox[resultState="FAIL"]::indicator {
+    background-color: #3a1414;
+    border: 1px solid #d75d5d;
+}
+QCheckBox#StepSubCheckBox[resultState="PENDING"]::indicator {
+    background-color: #0f1727;
+    border: 1px solid #3a4f6d;
+}
 QLabel#SubCheckDesc {
     color: #a8b6cc;
     font-size: 11px;
@@ -216,6 +237,16 @@ QPushButton#RunCheckButton {
     padding: 0 18px;
     font-size: 14px;
     font-weight: 600;
+}
+QPushButton#RunCheckButton:hover {
+    background-color: #3d8cff;
+    border: 1px solid #69a9ff;
+}
+QPushButton#RunCheckButton:pressed {
+    background-color: #225cb5;
+    border: 1px solid #1d4e99;
+    padding-top: 1px;
+    padding-left: 1px;
 }
 QLabel#ToleranceLabel {
     color: #e0e8f7;
@@ -504,6 +535,9 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
         self.manual_root_qt_rows: Dict[str, StepRootSelectorRow] = {}
         self.step01_placeholder_widget: Optional[QtWidgets.QWidget] = None
+        self.step01_placeholder_body_widget: Optional[QtWidgets.QWidget] = None
+        self.step01_collapse_button: Optional[QtWidgets.QToolButton] = None
+        self.step01_qt_subcheck_widgets: Dict[str, QtWidgets.QCheckBox] = {}
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
 
@@ -1190,6 +1224,25 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_layouts[menu_key] = fulltext_layout_key
         self.manual_root_fulltext_toggles[menu_key] = toggle_key
 
+    def _set_step01_collapsed(self, collapsed: bool) -> None:
+        if not self.step01_placeholder_body_widget or not self.step01_collapse_button:
+            return
+        self.step01_placeholder_body_widget.setVisible(not collapsed)
+        self.step01_collapse_button.setText("⌄" if collapsed else "⌃")
+        self.step01_collapse_button.setToolTip("Expand Step 01" if collapsed else "Collapse Step 01")
+
+    def _sync_step01_qt_subchecks(self) -> None:
+        if not self.step01_qt_subcheck_widgets:
+            return
+        states = self.subcheck_states.get("placeholder_checked", {})
+        for sub_key, widget in self.step01_qt_subcheck_widgets.items():
+            status = states.get(sub_key, "PENDING")
+            widget.setChecked(status == "OK")
+            widget.setProperty("resultState", status)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
+
     def _build_step01_placeholder_match_qt(self) -> None:
         if not QT_AVAILABLE or QtWidgets is None or wrapInstance is None:
             self.log("WARNING", "UI", "Qt indisponible (PySide2/PySide6). Fallback Maya UI pour Step 01.")
@@ -1243,6 +1296,7 @@ class HighPolyReviewTool:
         collapse_btn = QtWidgets.QToolButton()
         collapse_btn.setObjectName("CollapseButton")
         collapse_btn.setText("⌃")
+        collapse_btn.setToolTip("Collapse Step 01")
 
         header_layout.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
         header_layout.addWidget(title_lbl, 0, QtCore.Qt.AlignVCenter)
@@ -1250,6 +1304,11 @@ class HighPolyReviewTool:
         header_layout.addStretch(1)
         header_layout.addWidget(collapse_btn, 0, QtCore.Qt.AlignVCenter)
         card_layout.addLayout(header_layout)
+
+        body_widget = QtWidgets.QWidget()
+        body_layout = QtWidgets.QVBoxLayout(body_widget)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
 
         self.manual_root_menu_sources["placeholder_high_root_menu"] = "high_ma"
         self.manual_root_menu_sources["placeholder_placeholder_root_menu"] = "placeholder_ma"
@@ -1261,8 +1320,8 @@ class HighPolyReviewTool:
         placeholder_row.path_combo.currentIndexChanged.connect(lambda *_: self.on_manual_root_changed("placeholder_placeholder_root_menu"))
         high_row.use_selection_btn.clicked.connect(lambda *_: self.set_manual_root_from_selection("placeholder_high_root_menu"))
         placeholder_row.use_selection_btn.clicked.connect(lambda *_: self.set_manual_root_from_selection("placeholder_placeholder_root_menu"))
-        card_layout.addWidget(high_row)
-        card_layout.addWidget(placeholder_row)
+        body_layout.addWidget(high_row)
+        body_layout.addWidget(placeholder_row)
 
         sub_band = QtWidgets.QFrame()
         sub_band.setObjectName("SubChecksBand")
@@ -1272,7 +1331,9 @@ class HighPolyReviewTool:
 
         bbox_check = QtWidgets.QCheckBox("BBox")
         bbox_check.setObjectName("StepSubCheckBox")
-        bbox_check.setChecked(True)
+        bbox_check.setChecked(False)
+        bbox_check.setEnabled(False)
+        bbox_check.setProperty("resultState", "PENDING")
         bbox_desc = QtWidgets.QLabel("Verify that each high\nmatches its placeholder")
         bbox_desc.setObjectName("SubCheckDesc")
         bbox_desc.setWordWrap(True)
@@ -1285,7 +1346,9 @@ class HighPolyReviewTool:
 
         pivot_check = QtWidgets.QCheckBox("Pivot")
         pivot_check.setObjectName("StepSubCheckBox")
-        pivot_check.setChecked(True)
+        pivot_check.setChecked(False)
+        pivot_check.setEnabled(False)
+        pivot_check.setProperty("resultState", "PENDING")
         pivot_desc = QtWidgets.QLabel("Verify that each high\nmatches its placeholder pivot")
         pivot_desc.setObjectName("SubCheckDesc")
         pivot_desc.setWordWrap(True)
@@ -1324,9 +1387,15 @@ class HighPolyReviewTool:
         sub_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
         sub_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
 
-        card_layout.addWidget(sub_band)
+        body_layout.addWidget(sub_band)
+        card_layout.addWidget(body_widget)
         host_widget.layout().addWidget(step_card)
         self.step01_placeholder_widget = step_card
+        self.step01_placeholder_body_widget = body_widget
+        self.step01_collapse_button = collapse_btn
+        self.step01_qt_subcheck_widgets = {"bbox": bbox_check, "pivot": pivot_check}
+        collapse_btn.clicked.connect(lambda *_: self._set_step01_collapsed(body_widget.isVisible()))
+        self._sync_step01_qt_subchecks()
         cmds.setParent("..")
 
     def _build_step01_placeholder_match_cmds_fallback(self) -> None:
@@ -1968,6 +2037,7 @@ class HighPolyReviewTool:
             for sub_key, ctrl in sub_controls.items():
                 status = self.subcheck_states.get(check_key, {}).get(sub_key, "PENDING")
                 cmds.checkBox(self.ui[ctrl], e=True, value=(status == "OK"))
+        self._sync_step01_qt_subchecks()
 
         self.refresh_summary()
 
