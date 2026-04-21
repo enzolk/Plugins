@@ -22,24 +22,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import maya.cmds as cmds
 import maya.mel as mel
 
-try:
-    from maya import OpenMayaUI as omui
-except Exception:  # pragma: no cover - Maya-only import
-    omui = None
-
-try:  # Maya 2022/2024
-    from shiboken2 import wrapInstance  # type: ignore
-except Exception:  # pragma: no cover - fallback for newer Maya
-    try:
-        from shiboken6 import wrapInstance  # type: ignore
-    except Exception:  # pragma: no cover
-        wrapInstance = None
-
-try:
-    from PySide6 import QtCore, QtWidgets, QtGui
-except Exception:  # pragma: no cover
-    from PySide2 import QtCore, QtWidgets, QtGui  # type: ignore
-
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
@@ -255,7 +237,7 @@ class HighPolyReviewTool:
         self.manual_root_fulltext_toggles: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
-    def build(self, show_window: bool = True) -> None:
+    def build(self) -> None:
         if cmds.window(WINDOW_NAME, exists=True):
             cmds.deleteUI(WINDOW_NAME)
 
@@ -295,10 +277,10 @@ class HighPolyReviewTool:
         )
 
         cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
-        if show_window:
-            cmds.showWindow(self.ui["window"])
-            if cmds.window(self.ui["window"], exists=True):
-                cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
+        cmds.showWindow(self.ui["window"])
+
+        if cmds.window(self.ui["window"], exists=True):
+            cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
 
         self.refresh_detected_file_labels()
         self.refresh_root_ui()
@@ -5830,189 +5812,14 @@ else
         return "\n".join(lines)
 
 
-def _maya_main_window() -> Optional[QtWidgets.QWidget]:
-    if not (omui and wrapInstance):
-        return None
-    ptr = omui.MQtUtil.mainWindow()
-    if not ptr:
-        return None
-    return wrapInstance(int(ptr), QtWidgets.QWidget)
-
-
-class ModernReviewDialog(QtWidgets.QDialog):
-    """Qt frontend layer keeping the original review logic untouched."""
-
-    def __init__(self, tool: HighPolyReviewTool, parent: Optional[QtWidgets.QWidget] = None) -> None:
-        super().__init__(parent or _maya_main_window())
-        self.tool = tool
-        self.setWindowTitle(WINDOW_TITLE + " — Qt")
-        self.resize(1080, 840)
-        self._build_ui()
-        self.refresh_from_tool()
-
-    def _build_ui(self) -> None:
-        self.setStyleSheet(
-            """
-            QDialog { background:#232629; color:#e8e8e8; }
-            QGroupBox { border:1px solid #3d4248; margin-top:8px; border-radius:6px; font-weight:600; }
-            QGroupBox::title { subcontrol-origin: margin; left:8px; padding:0 4px; }
-            QPushButton { background:#2f3338; border:1px solid #464c53; border-radius:5px; padding:6px 10px; }
-            QPushButton:hover { background:#3a3f45; }
-            QTabWidget::pane { border:1px solid #3d4248; top:-1px; }
-            """
-        )
-        main = QtWidgets.QVBoxLayout(self)
-        main.setContentsMargins(10, 10, 10, 10)
-        main.setSpacing(8)
-
-        file_box = QtWidgets.QGroupBox("1) Delivery")
-        f_lay = QtWidgets.QGridLayout(file_box)
-        self.root_field = QtWidgets.QLineEdit()
-        self.root_field.setReadOnly(True)
-        browse = QtWidgets.QPushButton("Browse")
-        browse.clicked.connect(self._run_and_refresh(self.tool.pick_root_folder))
-        scan = QtWidgets.QPushButton("Scan Delivery Folder")
-        scan.clicked.connect(self._run_and_refresh(self.tool.scan_delivery_folder))
-        load_all = QtWidgets.QPushButton("Load Everything")
-        load_all.clicked.connect(self._run_and_refresh(self.tool.load_everything))
-        f_lay.addWidget(QtWidgets.QLabel("Root Folder"), 0, 0)
-        f_lay.addWidget(self.root_field, 0, 1)
-        f_lay.addWidget(browse, 0, 2)
-        f_lay.addWidget(scan, 1, 1)
-        f_lay.addWidget(load_all, 1, 2)
-        main.addWidget(file_box)
-
-        root_box = QtWidgets.QGroupBox("Root Selectors")
-        r_lay = QtWidgets.QVBoxLayout(root_box)
-        self.root_tree = QtWidgets.QTreeWidget()
-        self.root_tree.setHeaderLabels(["Context", "Root"])
-        self.root_tree.setAlternatingRowColors(True)
-        self.root_tree.setRootIsDecorated(True)
-        r_lay.addWidget(self.root_tree)
-        main.addWidget(root_box)
-
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self._build_action_tab("High", [("Run All High Steps", self.tool.run_all_checks)]), "High")
-        self.tabs.addTab(
-            self._build_action_tab(
-                "Low",
-                [
-                    ("Topology", self.tool.run_low_topology_checks),
-                    ("Namespace Check", self.tool.scan_low_namespaces),
-                    ("UV map1", self.tool.run_low_uv_map1_check),
-                    ("UV map2 / TD", self.tool.run_low_map2_density_check),
-                    ("Compare Low vs Bake", self.tool.compare_low_vs_bake_low),
-                    ("Compare Low vs Final", self.tool.compare_low_vs_final_asset),
-                ],
-            ),
-            "Low",
-        )
-        self.tabs.addTab(
-            self._build_action_tab(
-                "Bake",
-                [
-                    ("Structure", self.tool.check_bake_scene_structure),
-                    ("Low Topology", self.tool.run_bake_low_topology_checks),
-                    ("Bake Pairing", self.tool.check_bake_pairing),
-                    ("Bake Readiness", self.tool.check_bake_readiness),
-                ],
-            ),
-            "Bake",
-        )
-        self.tabs.addTab(
-            self._build_action_tab(
-                "Final",
-                [
-                    ("Final Topology", self.tool.run_final_asset_topology_checks),
-                    ("Final Namespaces", self.tool.scan_final_asset_namespaces),
-                    ("Final UV map1", self.tool.run_final_asset_uv_map1_check),
-                    ("Final UV map2", self.tool.run_final_asset_uv_map2_check),
-                    ("Final MA/FBX Compare", self.tool.compare_final_asset_ma_vs_fbx),
-                ],
-            ),
-            "Final",
-        )
-        main.addWidget(self.tabs, 2)
-
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        summary_box = QtWidgets.QGroupBox("Quick Summary")
-        s_lay = QtWidgets.QVBoxLayout(summary_box)
-        self.summary_view = QtWidgets.QTextEdit()
-        self.summary_view.setReadOnly(True)
-        s_lay.addWidget(self.summary_view)
-        log_box = QtWidgets.QGroupBox("Detailed Logs")
-        l_lay = QtWidgets.QVBoxLayout(log_box)
-        self.log_view = QtWidgets.QTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
-        l_lay.addWidget(self.log_view)
-        splitter.addWidget(summary_box)
-        splitter.addWidget(log_box)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        main.addWidget(splitter, 3)
-
-        refresh_btn = QtWidgets.QPushButton("Refresh UI")
-        refresh_btn.clicked.connect(self.refresh_from_tool)
-        main.addWidget(refresh_btn)
-
-    def _build_action_tab(self, title: str, actions: List[Tuple[str, Any]]) -> QtWidgets.QWidget:
-        w = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(w)
-        lay.addWidget(QtWidgets.QLabel(f"{title} review actions"))
-        grid = QtWidgets.QGridLayout()
-        for idx, (label, func) in enumerate(actions):
-            btn = QtWidgets.QPushButton(label)
-            btn.clicked.connect(self._run_and_refresh(func))
-            grid.addWidget(btn, idx // 2, idx % 2)
-        lay.addLayout(grid)
-        lay.addStretch(1)
-        return w
-
-    def _run_and_refresh(self, callback):
-        def _wrapped():
-            callback()
-            self.refresh_from_tool()
-        return _wrapped
-
-    def refresh_from_tool(self) -> None:
-        self.root_field.setText(self.tool.paths.get("root", ""))
-        self.root_tree.clear()
-        for context_key, roots in sorted(self.tool.detected_roots.items()):
-            parent = QtWidgets.QTreeWidgetItem([context_key, f"{len(roots)} item(s)"])
-            for root in roots:
-                QtWidgets.QTreeWidgetItem(parent, ["", root])
-            self.root_tree.addTopLevelItem(parent)
-            parent.setExpanded(False)
-
-        summary_lines = []
-        for issue in self.tool.summary_items[-40:]:
-            summary_lines.append(f"[{issue.level}] {issue.category} — {issue.message}")
-        self.summary_view.setPlainText("\n".join(summary_lines) if summary_lines else "No summary yet.")
-
-        self.log_view.clear()
-        cursor = self.log_view.textCursor()
-        for issue in self.tool.result_items[-400:]:
-            color = {"FAIL": "#ff6b6b", "WARNING": "#f5c16c", "INFO": "#87c5ff"}.get(issue.level, "#d6d6d6")
-            fmt = QtGui.QTextCharFormat()
-            fmt.setForeground(QtGui.QColor(color))
-            cursor.setCharFormat(fmt)
-            cursor.insertText(f"[{issue.level}] {issue.category}: {issue.message}\n")
-        self.log_view.moveCursor(QtGui.QTextCursor.End)
-
-
 _TOOL_INSTANCE: Optional[HighPolyReviewTool] = None
-_QT_DIALOG: Optional[ModernReviewDialog] = None
 
 
 def show_outsource_review_tool() -> HighPolyReviewTool:
     """Launch tool window and keep a live instance in module scope."""
-    global _TOOL_INSTANCE, _QT_DIALOG
+    global _TOOL_INSTANCE
     _TOOL_INSTANCE = HighPolyReviewTool()
-    _TOOL_INSTANCE.build(show_window=False)
-    _QT_DIALOG = ModernReviewDialog(_TOOL_INSTANCE)
-    _QT_DIALOG.show()
-    _QT_DIALOG.raise_()
+    _TOOL_INSTANCE.build()
     return _TOOL_INSTANCE
 
 
