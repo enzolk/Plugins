@@ -4914,7 +4914,7 @@ class HighPolyReviewTool:
             self.log_check_result("placeholder_checked", "FAIL", "Placeholder Check", "high or placeholder root has no meshes")
             return
 
-        tolerance_percent = cmds.floatField(self.ui["placeholder_tolerance"], q=True, value=True) if "placeholder_tolerance" in self.ui else 7.0
+        tolerance_percent = self._get_placeholder_tolerance_value()
         tolerance = max(0.0, float(tolerance_percent)) / 100.0
 
         def _bbox_dims_for_root(root: str) -> Tuple[float, float, float]:
@@ -6157,6 +6157,284 @@ else
         lines.append("")
 
         return "\n".join(lines)
+
+
+# --------------------------- Qt / PySide2 UI REFACTOR ---------------------------
+try:
+    from PySide2 import QtCore, QtGui, QtWidgets
+    from shiboken2 import wrapInstance
+    import maya.OpenMayaUI as omui
+except Exception:
+    QtCore = QtGui = QtWidgets = None
+    wrapInstance = None
+    omui = None
+
+
+def _maya_main_window() -> Optional["QtWidgets.QWidget"]:
+    if not (omui and wrapInstance and QtWidgets):
+        return None
+    ptr = omui.MQtUtil.mainWindow()
+    if ptr is None:
+        return None
+    return wrapInstance(int(ptr), QtWidgets.QWidget)
+
+
+class StepBadgeWidget(QtWidgets.QFrame):
+    def __init__(self, step_number: int, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("stepBadge")
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(0)
+        label_step = QtWidgets.QLabel("STEP")
+        label_step.setObjectName("stepBadgeLabel")
+        label_num = QtWidgets.QLabel(f"{step_number:02d}")
+        label_num.setObjectName("stepBadgeNumber")
+        lay.addWidget(label_step, alignment=QtCore.Qt.AlignCenter)
+        lay.addWidget(label_num, alignment=QtCore.Qt.AlignCenter)
+
+
+class OutsourceReviewWindow(QtWidgets.QDialog):
+    def __init__(self, tool: HighPolyReviewTool, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent or _maya_main_window())
+        self.tool = tool
+        self.tool.qt = {}
+        self.setObjectName("orsWindow")
+        self.setWindowTitle(WINDOW_TITLE)
+        self.resize(1680, 980)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QtWidgets.QHBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(12)
+
+        side = QtWidgets.QFrame()
+        side.setObjectName("sidebar")
+        side_l = QtWidgets.QVBoxLayout(side)
+        side_l.setContentsMargins(16, 16, 16, 16)
+        side_l.setSpacing(8)
+        title = QtWidgets.QLabel("Outsource Review Script")
+        title.setObjectName("windowTitleLabel")
+        side_l.addWidget(title)
+        for section, items in (("REVIEW", ["High", "Low", "Bake", "Final Asset"]), ("TOOLS", ["Scene Visibility", "Logs & Report"])):
+            hdr = QtWidgets.QLabel(section)
+            hdr.setObjectName("sideHeader")
+            side_l.addWidget(hdr)
+            for it in items:
+                btn = QtWidgets.QPushButton(it)
+                btn.setObjectName("sideBtnActive" if it == "High" else "sideBtn")
+                side_l.addWidget(btn)
+        side_l.addStretch(1)
+        summary = QtWidgets.QFrame()
+        summary.setObjectName("reviewSummary")
+        sm_l = QtWidgets.QVBoxLayout(summary)
+        sm_l.setContentsMargins(12, 12, 12, 12)
+        sm_l.addWidget(QtWidgets.QLabel("REVIEW SUMMARY"))
+        self.tool.qt["summary_text"] = QtWidgets.QLabel("Pending checks")
+        sm_l.addWidget(self.tool.qt["summary_text"])
+        self.tool.qt["notes_field"] = QtWidgets.QPlainTextEdit()
+        self.tool.qt["notes_field"].setPlaceholderText("Notes...")
+        self.tool.qt["notes_field"].setFixedHeight(100)
+        sm_l.addWidget(self.tool.qt["notes_field"])
+        side_l.addWidget(summary)
+
+        main = QtWidgets.QFrame()
+        main.setObjectName("mainPanel")
+        main_l = QtWidgets.QVBoxLayout(main)
+        main_l.setContentsMargins(16, 16, 16, 16)
+        main_l.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        htitle = QtWidgets.QLabel("HIGH POLY REVIEW")
+        htitle.setObjectName("mainHeader")
+        header.addWidget(htitle)
+        header.addStretch(1)
+        for txt in ("Passed", "Warning", "Failed", "Pending"):
+            header.addWidget(QtWidgets.QLabel(txt))
+        run_all = QtWidgets.QPushButton("Run All")
+        run_all.clicked.connect(self.tool.run_all_checks)
+        header.addWidget(run_all)
+        main_l.addLayout(header)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QtWidgets.QWidget()
+        content_l = QtWidgets.QVBoxLayout(content)
+        content_l.setSpacing(8)
+
+        content_l.addWidget(self._build_step01_card())
+        for idx, name, btn, cb in [
+            (2, "Design Kit Review", "Open Design Kit", self.tool.mark_design_reviewed),
+            (3, "Topology Check", "Run Topology Check", self.tool.run_topology_checks),
+            (4, "Vertex Colors", "Run Check", self.tool.check_vertex_colors),
+            (5, "Namespaces", "Run Check", self.tool.scan_namespaces),
+            (6, "Materials / Texture Sets", "Analyze", lambda: self.tool.analyze_texture_sets(mode="materials")),
+            (7, "Compare High.ma vs High.fbx", "Compare", self.tool.compare_ma_vs_fbx),
+            (8, "Compare High.ma vs Bake Scene High", "Compare", self.tool.compare_ma_vs_bake_high),
+        ]:
+            content_l.addWidget(self._build_simple_step(idx, name, btn, cb))
+        content_l.addStretch(1)
+        scroll.setWidget(content)
+        main_l.addWidget(scroll)
+
+        root.addWidget(side, 0)
+        root.addWidget(main, 1)
+        self.setStyleSheet(self._style_sheet())
+
+    def _build_step01_card(self) -> QtWidgets.QFrame:
+        card = QtWidgets.QFrame()
+        card.setObjectName("stepCard")
+        l = QtWidgets.QVBoxLayout(card)
+        l.setContentsMargins(12, 12, 12, 12)
+        top = QtWidgets.QHBoxLayout()
+        top.addWidget(StepBadgeWidget(1))
+        top.addWidget(QtWidgets.QLabel("Placeholder Match"))
+        top.addStretch(1)
+        l.addLayout(top)
+
+        self.tool.qt["placeholder_high_root"] = QtWidgets.QLineEdit()
+        self.tool.qt["placeholder_placeholder_root"] = QtWidgets.QLineEdit()
+        self.tool.qt["placeholder_tolerance"] = QtWidgets.QDoubleSpinBox()
+        self.tool.qt["placeholder_tolerance"].setValue(7.0)
+        self.tool.qt["placeholder_tolerance"].setDecimals(2)
+
+        for key, label in (("placeholder_high_root", "High Root"), ("placeholder_placeholder_root", "Placeholder Root")):
+            row = QtWidgets.QHBoxLayout()
+            row.addWidget(QtWidgets.QLabel(label))
+            row.addWidget(self.tool.qt[key], 1)
+            pick = QtWidgets.QPushButton("Use Selection")
+            if "high" in key:
+                pick.clicked.connect(lambda *_ , k=key: self._use_selection_for(k, "placeholder_high_root_menu"))
+            else:
+                pick.clicked.connect(lambda *_ , k=key: self._use_selection_for(k, "placeholder_placeholder_root_menu"))
+            row.addWidget(pick)
+            l.addLayout(row)
+
+        low = QtWidgets.QHBoxLayout()
+        low.addWidget(QtWidgets.QLabel("BBox"))
+        low.addWidget(QtWidgets.QLabel("Verify that each high matches its placeholder"))
+        low.addWidget(QtWidgets.QLabel("Pivot"))
+        low.addWidget(QtWidgets.QLabel("Verify that each high matches its placeholder pivot"))
+        run = QtWidgets.QPushButton("Run Placeholder Check")
+        run.clicked.connect(self.tool.check_placeholder_match)
+        low.addWidget(run)
+        low.addWidget(QtWidgets.QLabel("Tolerance %"))
+        low.addWidget(self.tool.qt["placeholder_tolerance"])
+        l.addLayout(low)
+        return card
+
+    def _use_selection_for(self, line_key: str, menu_key: str) -> None:
+        selected = cmds.ls(selection=True, long=True) or []
+        if selected:
+            self.tool.manual_root_overrides[menu_key] = [selected[0]]
+            self.tool.qt[line_key].setText(selected[0])
+
+    def _build_simple_step(self, idx: int, title: str, button_text: str, callback) -> QtWidgets.QFrame:
+        card = QtWidgets.QFrame()
+        card.setObjectName("stepCard")
+        l = QtWidgets.QHBoxLayout(card)
+        l.setContentsMargins(12, 10, 12, 10)
+        l.addWidget(StepBadgeWidget(idx))
+        l.addWidget(QtWidgets.QLabel(title), 1)
+        btn = QtWidgets.QPushButton(button_text)
+        btn.clicked.connect(callback)
+        l.addWidget(btn)
+        return card
+
+    def _style_sheet(self) -> str:
+        return """
+        #orsWindow { background-color: #070d1a; color: #d7e1f0; }
+        #sidebar { background-color: #0b1324; border-radius: 14px; min-width: 260px; max-width: 300px; }
+        #mainPanel { background-color: #111d31; border: 1px solid #20314d; border-radius: 16px; }
+        #stepCard { background-color: #17243a; border: 1px solid #24344f; border-radius: 12px; }
+        #stepBadge { background-color: #122846; border: 1px solid #2f5690; border-radius: 8px; min-width: 74px; max-width: 74px; }
+        #stepBadgeLabel { color: #4b88df; font-size: 11px; font-weight: 700; }
+        #stepBadgeNumber { color: #3f90ff; font-size: 34px; font-weight: 700; }
+        #sideBtnActive { background-color: #224c89; border-radius: 8px; min-height: 34px; text-align: left; padding-left: 12px; }
+        #sideBtn { background-color: transparent; min-height: 34px; text-align: left; padding-left: 12px; }
+        QPushButton { background-color: #2d67c2; border-radius: 8px; min-height: 32px; padding: 0 12px; font-weight: 600; }
+        QLineEdit, QPlainTextEdit, QDoubleSpinBox { background-color: #0f1a2c; border: 1px solid #293a59; border-radius: 7px; min-height: 30px; padding: 2px 8px; }
+        #mainHeader { color: #3d87f4; font-size: 32px; font-weight: 700; }
+        #windowTitleLabel { color: #e7eef9; font-size: 22px; font-weight: 700; }
+        #sideHeader { color: #8091b0; font-size: 14px; font-weight: 700; margin-top: 6px; }
+        #reviewSummary { background: #101c31; border: 1px solid #223450; border-radius: 10px; }
+        """
+
+
+def _qt_build(self: HighPolyReviewTool) -> None:
+    if QtWidgets is None:
+        raise RuntimeError("PySide2 indisponible. Impossible de construire l'interface principale.")
+    old = getattr(self, "qt_window", None)
+    if old is not None:
+        old.close()
+        old.deleteLater()
+    self.qt_window = OutsourceReviewWindow(self)
+    self.qt_window.show()
+
+
+def _qt_set_root_folder(self: HighPolyReviewTool, path: str) -> None:
+    self.paths["root"] = path
+
+
+def _qt_refresh_summary(self: HighPolyReviewTool) -> None:
+    ok_count = sum(1 for c in self.check_states.values() if c["status"] == "OK")
+    warn_count = sum(1 for i in self.result_items if i.level == "WARNING")
+    fail_count = sum(1 for i in self.result_items if i.level == "FAIL")
+    pending = sum(1 for c in self.check_states.values() if c["status"] == "PENDING")
+    text = f"Passed: {ok_count} | Warnings: {warn_count} | Failed: {fail_count} | Pending: {pending} | Total Checks: {len(self.check_states)}"
+    if hasattr(self, "qt") and "summary_text" in self.qt:
+        self.qt["summary_text"].setText(text)
+
+
+def _qt_refresh_checklist_ui(self: HighPolyReviewTool) -> None:
+    _qt_refresh_summary(self)
+
+
+def _qt_build_report_payload(self: HighPolyReviewTool) -> Dict:
+    notes = ""
+    if hasattr(self, "qt") and "notes_field" in self.qt:
+        notes = self.qt["notes_field"].toPlainText()
+    return {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "asset_name": self._detect_asset_name(),
+        "file_paths": self.paths,
+        "checklist": self.check_states,
+        "summary": self._summary_dict(),
+        "notes": notes,
+        "results": [
+            {
+                "level": i.level,
+                "category": i.category,
+                "message": i.message,
+                "objects": i.objects,
+            }
+            for i in self.result_items
+        ],
+    }
+
+
+def _qt_pick_root_folder(self: HighPolyReviewTool) -> None:
+    start = self.paths.get("root") or os.path.expanduser("~")
+    picked = QtWidgets.QFileDialog.getExistingDirectory(self.qt_window, "Select Asset Delivery Root Folder", start) if hasattr(self, "qt_window") else ""
+    if picked:
+        self._set_root_folder(picked)
+
+
+def _qt_placeholder_tolerance(self: HighPolyReviewTool) -> float:
+    if hasattr(self, "qt") and "placeholder_tolerance" in self.qt:
+        return float(self.qt["placeholder_tolerance"].value())
+    return 7.0
+
+
+HighPolyReviewTool.build = _qt_build
+HighPolyReviewTool._set_root_folder = _qt_set_root_folder
+HighPolyReviewTool.refresh_summary = _qt_refresh_summary
+HighPolyReviewTool.refresh_checklist_ui = _qt_refresh_checklist_ui
+HighPolyReviewTool.build_report_payload = _qt_build_report_payload
+HighPolyReviewTool.pick_root_folder = _qt_pick_root_folder
+HighPolyReviewTool._get_placeholder_tolerance_value = _qt_placeholder_tolerance
+
 
 
 _TOOL_INSTANCE: Optional[HighPolyReviewTool] = None
