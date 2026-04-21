@@ -122,6 +122,17 @@ QToolButton#InfoButton, QToolButton#CollapseButton {
     background: transparent;
     font-size: 16px;
 }
+QToolButton#InfoButton {
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 12px;
+    color: #b9cff5;
+    font-weight: 700;
+}
+QToolButton#InfoButton:hover {
+    background-color: #1c2a41;
+    color: #e9f2ff;
+}
 QToolButton#CollapseButton {
     min-width: 40px;
     min-height: 40px;
@@ -159,16 +170,16 @@ QComboBox#RootPathCombo {
     font-size: 12px;
 }
 QComboBox#RootPathCombo::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
     border: none;
+    background: transparent;
     width: 30px;
 }
 QComboBox#RootPathCombo::down-arrow {
     image: none;
     width: 0;
     height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 7px solid #e8efff;
 }
 QPushButton#PrimaryBlueButton {
     background-color: #2b6fd4;
@@ -277,6 +288,87 @@ QDoubleSpinBox#ToleranceSpin::down-button {
 
 
 if QT_AVAILABLE and QtWidgets is not None:
+    class StepInfoToolTipPopup(QtWidgets.QFrame):
+        def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+            super().__init__(parent, QtCore.Qt.ToolTip)
+            self.setObjectName("StepInfoToolTipPopup")
+            self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+            self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+            self.setWindowFlag(QtCore.Qt.FramelessWindowHint, True)
+            self.setStyleSheet(
+                "QFrame#StepInfoToolTipPopup {"
+                "background-color: #132238;"
+                "border: 1px solid #34506f;"
+                "border-radius: 10px;"
+                "}" 
+                "QLabel {"
+                "color: #eaf2ff;"
+                "font-size: 12px;"
+                "line-height: 1.35em;"
+                "}"
+            )
+            layout = QtWidgets.QVBoxLayout(self)
+            layout.setContentsMargins(12, 10, 12, 10)
+            self.label = QtWidgets.QLabel()
+            self.label.setWordWrap(True)
+            self.label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+            layout.addWidget(self.label)
+
+        def show_text(self, anchor_widget: QtWidgets.QWidget, message: str) -> None:
+            self.label.setText(message)
+            self.adjustSize()
+            global_pos = anchor_widget.mapToGlobal(QtCore.QPoint(0, anchor_widget.height() + 8))
+            self.move(global_pos)
+            self.show()
+            self.raise_()
+
+
+    class ModernInfoButton(QtWidgets.QToolButton):
+        def __init__(self, tooltip_text: str, parent: Optional[QtWidgets.QWidget] = None) -> None:
+            super().__init__(parent)
+            self._tooltip_text = tooltip_text
+            self._tooltip_popup = StepInfoToolTipPopup(parent)
+            self._tooltip_timer = QtCore.QTimer(self)
+            self._tooltip_timer.setSingleShot(True)
+            self._tooltip_timer.timeout.connect(self._show_tooltip)
+
+        def _show_tooltip(self) -> None:
+            self._tooltip_popup.show_text(self, self._tooltip_text)
+
+        def enterEvent(self, event: QtCore.QEvent) -> None:  # type: ignore[override]
+            self._tooltip_timer.start(140)
+            super().enterEvent(event)
+
+        def leaveEvent(self, event: QtCore.QEvent) -> None:  # type: ignore[override]
+            self._tooltip_timer.stop()
+            self._tooltip_popup.hide()
+            super().leaveEvent(event)
+
+        def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
+            self._tooltip_popup.hide()
+            super().mousePressEvent(event)
+
+
+    class ModernRootComboBox(QtWidgets.QComboBox):
+        def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # type: ignore[override]
+            super().paintEvent(event)
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            arrow_color = QtGui.QColor("#e8efff") if self.isEnabled() else QtGui.QColor("#90a0b8")
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(arrow_color)
+            center_x = self.width() - 16
+            center_y = self.height() // 2 + 1
+            triangle = QtGui.QPolygon([
+                QtCore.QPoint(center_x - 5, center_y - 2),
+                QtCore.QPoint(center_x + 5, center_y - 2),
+                QtCore.QPoint(center_x, center_y + 4),
+            ])
+            painter.drawPolygon(triangle)
+            painter.end()
+
+
+if QT_AVAILABLE and QtWidgets is not None:
     class StepRootSelectorRow(QtWidgets.QWidget):
         def __init__(self, label_text: str, menu_key: str, parent: Optional[QtWidgets.QWidget] = None) -> None:
             super().__init__(parent)
@@ -299,7 +391,7 @@ if QT_AVAILABLE and QtWidgets is not None:
             label_layout.addWidget(txt_lbl)
             label_layout.addStretch(1)
 
-            self.path_combo = QtWidgets.QComboBox()
+            self.path_combo = ModernRootComboBox()
             self.path_combo.setObjectName("RootPathCombo")
             self.path_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             self.path_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
@@ -1288,16 +1380,15 @@ class HighPolyReviewTool:
 
         title_lbl = QtWidgets.QLabel("Placeholder Match")
         title_lbl.setObjectName("StepTitle")
-        info_btn = QtWidgets.QToolButton()
-        info_btn.setObjectName("InfoButton")
-        info_btn.setText("ⓘ")
-        info_btn.setToolTip(
+        info_btn = ModernInfoButton(
             "Cette étape vérifie qu’un High correspond bien à son Placeholder.\n\n"
             "• BBox compare la cohérence globale du volume et des dimensions.\n"
             "• Pivot vérifie que le pivot du High correspond à celui du Placeholder.\n\n"
             "Elle permet de détecter rapidement un mauvais placeholder, un mauvais scale global\n"
             "ou un pivot mal positionné avant de continuer la review."
         )
+        info_btn.setObjectName("InfoButton")
+        info_btn.setText("ⓘ")
         collapse_btn = QtWidgets.QToolButton()
         collapse_btn.setObjectName("CollapseButton")
         collapse_btn.setText("▾")
