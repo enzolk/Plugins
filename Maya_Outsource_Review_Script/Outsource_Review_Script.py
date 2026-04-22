@@ -95,6 +95,7 @@ LOW_UV_DISTORTION_THRESHOLD = 1.6
 LOW_MAP2_TARGET_TD = 20.48
 LOW_MAP2_TOLERANCE = 0.50
 INTEGRATION_QDTOOLS_CATEGORIES = ["Props", "SetDress", "Environment"]
+INTEGRATION_QDTOOLS_PREFIXES = ("ACC_", "ARC_", "VEH_", "WEP_")
 
 
 @dataclass
@@ -1513,24 +1514,24 @@ class HighPolyReviewTool:
         cmds.text(label="Detect catalog assets and update them from Perforce via qdTools.", align="left")
         cmds.separator(style="in")
 
-        cmds.text(label="Step 01 — Detect Catalog Assets", align="left")
-        cmds.text(label="Only principal catalog names are kept (sub-meshes are ignored).", align="left")
+        cmds.text(label="Step 01 — Detect Scene Assets", align="left")
+        cmds.text(label="Scan the full Maya scene and extract principal asset names.", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        cmds.button(label="Detect / Refresh Catalog Assets", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.detect_catalog_assets_for_integration())
+        cmds.button(label="Detect / Refresh Scene Assets", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.detect_catalog_assets_for_integration())
         cmds.button(label="Select All", height=UI_BUTTON_HEIGHT, command=lambda *_: self.select_all_integration_catalog_assets())
         cmds.button(label="Clear Selection", height=UI_BUTTON_HEIGHT, command=lambda *_: self.clear_integration_catalog_selection())
         cmds.setParent("..")
         self.ui["integration_catalog_list"] = cmds.textScrollList(allowMultiSelection=True, height=160)
         cmds.separator(style="in")
 
-        cmds.text(label="Step 02 — Load / Update from P4", align="left")
+        cmds.text(label="Step 02 — Load Selected Asset(s) from P4", align="left")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
         cmds.text(label="qdTools category", align="left")
         self.ui["integration_qd_category_menu"] = cmds.optionMenu()
         for category in INTEGRATION_QDTOOLS_CATEGORIES:
             cmds.menuItem(label=category)
         cmds.setParent("..")
-        cmds.button(label="Update Status from P4 (Selected Catalog Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
+        cmds.button(label="Load / Update from P4 (Selected Scene Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
         cmds.separator(style="in")
 
         cmds.text(label="Step 03 — Logs / Result", align="left")
@@ -1696,6 +1697,12 @@ class HighPolyReviewTool:
             self._append_integration_log(f"- {catalog_name}")
         return self.integration_catalog_assets[:]
 
+    def _integration_catalog_candidates(self, scene_asset: str) -> List[str]:
+        cleaned = self._strip_namespaces_from_name(scene_asset).strip("_ ").upper()
+        if not cleaned:
+            return []
+        return [f"{prefix}{cleaned}" for prefix in INTEGRATION_QDTOOLS_PREFIXES]
+
     def select_all_integration_catalog_assets(self) -> None:
         if not self.integration_catalog_assets:
             return
@@ -1737,36 +1744,42 @@ class HighPolyReviewTool:
 
         self.integration_last_results = []
         self._append_integration_log(f"Launching P4 update for {len(selected_assets)} asset(s) with category='{category}'...")
-        for catalog_name in selected_assets:
-            try:
-                self._append_integration_log(f"[DEBUG] Resolving catalog='{catalog_name}' category='{category}'")
-                loader = QDLoad.by_catalog(catalog_name, category)
-                self._append_integration_log(f"[DEBUG] Loader type for '{catalog_name}': {type(loader).__name__}")
-                self._append_integration_log(f"[DEBUG] Loader repr for '{catalog_name}': {loader!r}")
+        for scene_asset in selected_assets:
+            self._append_integration_log(f"Trying P4 load for {scene_asset}")
+            catalog_candidates = self._integration_catalog_candidates(scene_asset)
+            asset_loaded = False
 
-                if loader is None:
-                    message = "QDLoad.by_catalog returned None (invalid catalog/category resolution)."
-                    self.integration_last_results.append((catalog_name, False, message))
-                    self._append_integration_log(f"[FAIL] {catalog_name} -> {message}")
+            for catalog_name in catalog_candidates:
+                self._append_integration_log(f"[INFO] Trying {catalog_name}")
+                try:
+                    loader = QDLoad.by_catalog(catalog_name, category)
+                    if loader is None:
+                        raise RuntimeError("QDLoad.by_catalog returned None")
+
+                    update_callable = getattr(loader, "update_status", None)
+                    if not callable(update_callable):
+                        raise RuntimeError("Resolved loader has no callable update_status method")
+
+                    update_result = update_callable(b_recursive=True)
+                    if update_result is None and not hasattr(loader, "items"):
+                        # Keep compatibility with loaders returning None while still guarding obviously empty resolutions.
+                        self._append_integration_log(
+                            f"[WARN] {catalog_name} update_status returned None (continuing, loader resolved successfully)."
+                        )
+
+                    self.integration_last_results.append((scene_asset, True, f"Loaded with {catalog_name}"))
+                    self._append_integration_log(f"[OK] Loaded with {catalog_name}")
+                    asset_loaded = True
+                    break
+                except Exception as exc:
+                    self._append_integration_log(f"[FAIL] {catalog_name} failed")
+                    self._append_integration_log(f"[DEBUG] {catalog_name}: {exc}")
                     continue
 
-                update_callable = getattr(loader, "update_status", None)
-                if not callable(update_callable):
-                    message = "Resolved loader has no callable update_status method."
-                    self.integration_last_results.append((catalog_name, False, message))
-                    self._append_integration_log(f"[FAIL] {catalog_name} -> {message}")
-                    self._append_integration_log(f"[DEBUG] Loader dir for '{catalog_name}': {dir(loader)}")
-                    continue
-
-                update_callable(b_recursive=True)
-                self.integration_last_results.append((catalog_name, True, "OK"))
-                self._append_integration_log(
-                    f"[OK] {catalog_name} -> QDLoad.by_catalog('{catalog_name}', '{category}').update_status(b_recursive=True)"
-                )
-            except Exception as exc:
-                self.integration_last_results.append((catalog_name, False, str(exc)))
-                self._append_integration_log(f"[FAIL] {catalog_name} -> {exc}")
-                self._append_integration_log(traceback.format_exc().rstrip())
+            if not asset_loaded:
+                message = f"{scene_asset} could not be loaded with any known prefix"
+                self.integration_last_results.append((scene_asset, False, message))
+                self._append_integration_log(f"[FAIL] {message}")
 
     def _build_compare_row(
         self,
