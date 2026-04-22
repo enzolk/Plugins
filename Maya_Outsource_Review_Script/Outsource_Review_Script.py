@@ -550,8 +550,11 @@ if QT_AVAILABLE and QtWidgets is not None:
             title_lbl = QtWidgets.QLabel(title)
             title_lbl.setObjectName("StepTitle")
             title_lbl.setStyleSheet(f"font-size: {s(18)}px;")
+            title_lbl.setWordWrap(True)
+            title_lbl.setMinimumWidth(0)
+            title_lbl.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
             header.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
-            header.addWidget(title_lbl, 0, QtCore.Qt.AlignVCenter)
+            header.addWidget(title_lbl, 1, QtCore.Qt.AlignVCenter)
             if info_text:
                 info_btn = ModernInfoButton(info_text)
                 info_btn.setObjectName("InfoButton")
@@ -1872,7 +1875,7 @@ QLabel#PageHeaderSubtitle {
         cmds.separator(style="in")
 
         cmds.text(label="Step 01 — Detect Scene Assets", align="left")
-        cmds.text(label="Scan the full Maya scene and extract principal + annexe asset names.", align="left")
+        cmds.text(label="Scan the full Maya scene and extract principal + annexe\nasset names.", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         cmds.button(label="Detect / Refresh Scene Assets", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.detect_catalog_assets_for_integration())
         cmds.button(label="Select All", height=UI_BUTTON_HEIGHT, command=lambda *_: self.select_all_integration_catalog_assets())
@@ -1891,7 +1894,7 @@ QLabel#PageHeaderSubtitle {
         for category in INTEGRATION_QDTOOLS_CATEGORIES:
             cmds.menuItem(label=category)
         cmds.setParent("..")
-        cmds.button(label="Load / Update from P4 (Selected Scene Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
+        cmds.button(label="Load / Update from P4\n(Selected Scene Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
         cmds.separator(style="in")
 
         cmds.text(label="Step 03 — Checkout / Take Rights (manual)", align="left")
@@ -3233,8 +3236,7 @@ QLabel#PageHeaderSubtitle {
     def _make_qt_run_button(self, label: str, callback):
         btn = QtWidgets.QPushButton(label)
         btn.setObjectName("RunCheckButton")
-        btn.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
-        btn.setMinimumWidth(btn.sizeHint().width() + s(6))
+        btn.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         btn.clicked.connect(lambda *_: callback())
         return btn
 
