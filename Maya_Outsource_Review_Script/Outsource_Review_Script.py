@@ -3152,11 +3152,7 @@ QLabel#PageHeaderSubtitle {
         body_layout.addWidget(high_row)
         body_layout.addWidget(placeholder_row)
 
-        sub_band = QtWidgets.QFrame()
-        sub_band.setObjectName("SubChecksBand")
-        sub_layout = QtWidgets.QHBoxLayout(sub_band)
-        sub_layout.setContentsMargins(s(12), s(10), s(12), s(10))
-        sub_layout.setSpacing(s(10))
+        sub_band = ResponsiveSubCheckBand()
 
         bbox_check = QtWidgets.QCheckBox("BBox")
         bbox_check.setObjectName("StepSubCheckBox")
@@ -3214,14 +3210,12 @@ QLabel#PageHeaderSubtitle {
         checks_layout.addWidget(div_1)
         checks_layout.addWidget(pivot_wrap, 0, QtCore.Qt.AlignVCenter)
         checks_layout.addStretch(1)
-        sub_layout.addWidget(checks_container, 1)
+        sub_band.checks_layout.addWidget(checks_container, 1)
 
-        actions_layout = QtWidgets.QHBoxLayout()
-        actions_layout.setSpacing(s(8))
+        actions_layout = sub_band.actions_layout
         actions_layout.addWidget(run_btn, 0, QtCore.Qt.AlignVCenter)
         actions_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
         actions_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
-        sub_layout.addLayout(actions_layout, 0)
 
         body_layout.addWidget(sub_band)
         card_layout.addWidget(body_widget)
