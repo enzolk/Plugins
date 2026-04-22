@@ -764,245 +764,56 @@ class HighPolyReviewTool:
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
-        if QT_AVAILABLE and QtWidgets is not None:
-            self._build_qt_shell()
-        else:
-            if cmds.window(WINDOW_NAME, exists=True):
-                cmds.deleteUI(WINDOW_NAME)
-            self.ui["window"] = cmds.window(
-                WINDOW_NAME,
-                title=WINDOW_TITLE,
-                sizeable=True,
-                widthHeight=(860, 900),
-                minimizeButton=True,
-                maximizeButton=True,
-                backgroundColor=UI_COLOR_BG_WINDOW,
-            )
-            root_layout = cmds.formLayout()
-            self.ui["scroll"] = cmds.scrollLayout(
-                childResizable=True,
-                horizontalScrollBarThickness=12,
-                verticalScrollBarThickness=12,
-            )
-            self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
-            self._build_file_section()
-            self._build_review_tabs_section()
-            self._build_results_section()
-            self._build_notes_section()
-            self._build_summary_section()
-            cmds.setParent(root_layout)
-            cmds.formLayout(
-                root_layout,
-                edit=True,
-                attachForm=[
-                    (self.ui["scroll"], "top", 0),
-                    (self.ui["scroll"], "left", 0),
-                    (self.ui["scroll"], "right", 0),
-                    (self.ui["scroll"], "bottom", 0),
-                ],
-            )
-            cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
-            cmds.showWindow(self.ui["window"])
-            if cmds.window(self.ui["window"], exists=True):
-                cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
+        if cmds.window(WINDOW_NAME, exists=True):
+            cmds.deleteUI(WINDOW_NAME)
+
+        self.ui["window"] = cmds.window(
+            WINDOW_NAME,
+            title=WINDOW_TITLE,
+            sizeable=True,
+            widthHeight=(860, 900),
+            minimizeButton=True,
+            maximizeButton=True,
+            backgroundColor=UI_COLOR_BG_WINDOW,
+        )
+
+        root_layout = cmds.formLayout()
+        self.ui["scroll"] = cmds.scrollLayout(
+            childResizable=True,
+            horizontalScrollBarThickness=12,
+            verticalScrollBarThickness=12,
+        )
+
+        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
+        self._build_file_section()
+        self._build_review_tabs_section()
+        self._build_results_section()
+        self._build_notes_section()
+        self._build_summary_section()
+
+        cmds.setParent(root_layout)
+        cmds.formLayout(
+            root_layout,
+            edit=True,
+            attachForm=[
+                (self.ui["scroll"], "top", 0),
+                (self.ui["scroll"], "left", 0),
+                (self.ui["scroll"], "right", 0),
+                (self.ui["scroll"], "bottom", 0),
+            ],
+        )
+
+        cmds.window(self.ui["window"], edit=True, resizeToFitChildren=False)
+        cmds.showWindow(self.ui["window"])
+
+        if cmds.window(self.ui["window"], exists=True):
+            cmds.window(self.ui["window"], edit=True, widthHeight=(860, 900))
 
         self.refresh_detected_file_labels()
         self.refresh_root_ui()
         self.refresh_manual_root_menus()
         self.refresh_summary()
         self.refresh_checklist_ui()
-
-    def _build_qt_shell(self) -> None:
-        for widget in QtWidgets.QApplication.topLevelWidgets():
-            if widget.objectName() == WINDOW_NAME:
-                widget.close()
-                widget.deleteLater()
-        parent = None
-        try:
-            maya_main_ptr = omui.MQtUtil.mainWindow()
-            if maya_main_ptr and wrapInstance is not None:
-                parent = wrapInstance(int(maya_main_ptr), QtWidgets.QWidget)
-        except Exception:
-            parent = None
-        win = QtWidgets.QDialog(parent)
-        win.setObjectName(WINDOW_NAME)
-        win.setWindowTitle(WINDOW_TITLE)
-        win.resize(s(1620), s(980))
-        win.setMinimumSize(s(1360), s(760))
-        win.setStyleSheet(self._main_qt_stylesheet())
-        self.ui["qt_window"] = win
-
-        outer = QtWidgets.QHBoxLayout(win)
-        outer.setContentsMargins(s(18), s(18), s(18), s(18))
-        outer.setSpacing(s(16))
-        outer.addWidget(self._build_qt_sidebar(), 0)
-        outer.addWidget(self._build_qt_main_panel(), 1)
-        win.show()
-
-    def _main_qt_stylesheet(self) -> str:
-        return _resolve_scaled_tokens("""
-QDialog#highPolyReviewAssistantWin { background-color: #060f1d; }
-QFrame#SidebarPanel { background-color: #0b1424; border: 1px solid #15253e; border-radius: {s(16)}px; }
-QLabel#SidebarTitle { color: #eaf2ff; font-size: {s(28)}px; font-weight: 700; }
-QLabel#SideSectionTitle { color: #647a9c; font-size: {s(13)}px; font-weight: 700; }
-QPushButton#SideNavButton { text-align: left; padding: {s(10)}px {s(14)}px; border-radius: {s(10)}px; border: 1px solid #12233d; color: #d6e4ff; background: #0f1b30; font-size: {s(16)}px; font-weight: 600; }
-QPushButton#SideNavButton:hover { background: #162845; border-color: #24436e; }
-QPushButton#SideNavButton:checked { background: #1f4f96; border-color: #3d79d1; color: #ffffff; }
-QFrame#SummaryBox { background-color: #121f35; border: 1px solid #243a5d; border-radius: {s(12)}px; }
-QLabel#SummaryLabel { color: #dce8ff; font-size: {s(15)}px; font-weight: 600; }
-QFrame#MainPanel { background-color: #0b1527; border: 1px solid #182a47; border-radius: {s(16)}px; }
-QFrame#HeaderPanel { background-color: #111d33; border: 1px solid #223757; border-radius: {s(12)}px; }
-QLabel#HeaderTitle { color: #58a1ff; font-size: {s(34)}px; font-weight: 800; }
-QLabel#TopStat { color: #deebff; font-size: {s(16)}px; font-weight: 600; padding: 0 {s(8)}px; }
-QPushButton#RunAllButton { background-color: #2b6fd4; border: 1px solid #3a7ce0; color: white; border-radius: {s(10)}px; padding: {s(10)}px {s(24)}px; font-size: {s(17)}px; font-weight: 700; }
-QPushButton#RunAllButton:hover { background-color: #3582ef; }
-QScrollArea { border: none; background: transparent; }
-QWidget#ReviewPage { background: transparent; }
-QFrame#SimpleCard { background-color: #131f35; border: 1px solid #263d61; border-radius: {s(10)}px; }
-QLabel#SimpleCardTitle { color: #ecf3ff; font-size: {s(18)}px; font-weight: 700; }
-""")
-
-    def _build_qt_sidebar(self) -> QtWidgets.QWidget:
-        panel = QtWidgets.QFrame()
-        panel.setObjectName("SidebarPanel")
-        panel.setFixedWidth(s(330))
-        lay = QtWidgets.QVBoxLayout(panel)
-        lay.setContentsMargins(s(16), s(16), s(16), s(16))
-        lay.setSpacing(s(12))
-        title = QtWidgets.QLabel("◈  Outsource Review Script")
-        title.setObjectName("SidebarTitle")
-        lay.addWidget(title)
-        lay.addSpacing(s(8))
-        lay.addWidget(self._sidebar_section_label("REVIEW"))
-        self.ui["qt_nav_buttons"] = {}
-        for key, label in [("high", "High"), ("low", "Low"), ("bake", "Bake"), ("final_asset", "Final Asset"), ("integration", "Integration")]:
-            btn = QtWidgets.QPushButton(f"◻  {label}")
-            btn.setObjectName("SideNavButton")
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, k=key: self._switch_review_page(k))
-            self.ui["qt_nav_buttons"][key] = btn
-            lay.addWidget(btn)
-        lay.addSpacing(s(10))
-        lay.addWidget(self._sidebar_section_label("TOOLS"))
-        lay.addWidget(self._make_sidebar_tool("👁  Scene Visibility"))
-        lay.addWidget(self._make_sidebar_tool("🧾  Logs & Report"))
-        lay.addStretch(1)
-        summary = QtWidgets.QFrame()
-        summary.setObjectName("SummaryBox")
-        s_lay = QtWidgets.QVBoxLayout(summary)
-        s_lay.setContentsMargins(s(12), s(12), s(12), s(12))
-        s_lay.addWidget(self._sidebar_section_label("REVIEW SUMMARY"))
-        self.ui["qt_summary_rows"] = {}
-        for key, label in [("passed", "Passed"), ("warnings", "Warnings"), ("failed", "Failed"), ("pending", "Pending"), ("total", "Total Checks")]:
-            row = QtWidgets.QLabel(f"{label}: 0")
-            row.setObjectName("SummaryLabel")
-            s_lay.addWidget(row)
-            self.ui["qt_summary_rows"][key] = row
-        lay.addWidget(summary)
-        return panel
-
-    def _sidebar_section_label(self, text: str) -> QtWidgets.QLabel:
-        lbl = QtWidgets.QLabel(text)
-        lbl.setObjectName("SideSectionTitle")
-        return lbl
-
-    def _make_sidebar_tool(self, text: str) -> QtWidgets.QPushButton:
-        btn = QtWidgets.QPushButton(text)
-        btn.setObjectName("SideNavButton")
-        btn.setEnabled(False)
-        return btn
-
-    def _build_qt_main_panel(self) -> QtWidgets.QWidget:
-        panel = QtWidgets.QFrame()
-        panel.setObjectName("MainPanel")
-        lay = QtWidgets.QVBoxLayout(panel)
-        lay.setContentsMargins(s(16), s(16), s(16), s(16))
-        lay.setSpacing(s(14))
-        header = QtWidgets.QFrame()
-        header.setObjectName("HeaderPanel")
-        h_l = QtWidgets.QHBoxLayout(header)
-        h_l.setContentsMargins(s(16), s(12), s(16), s(12))
-        self.ui["qt_header_title"] = QtWidgets.QLabel("HIGH POLY REVIEW")
-        self.ui["qt_header_title"].setObjectName("HeaderTitle")
-        h_l.addWidget(self.ui["qt_header_title"], 1)
-        self.ui["qt_top_stats"] = {}
-        for key, label in [("passed", "✅ Passed"), ("warning", "⚠ Warning"), ("failed", "❌ Failed"), ("pending", "◌ Pending")]:
-            stat = QtWidgets.QLabel(label)
-            stat.setObjectName("TopStat")
-            h_l.addWidget(stat)
-            self.ui["qt_top_stats"][key] = stat
-        run_all_btn = QtWidgets.QPushButton("▶  Run All")
-        run_all_btn.setObjectName("RunAllButton")
-        run_all_btn.clicked.connect(self.run_all_checks)
-        h_l.addWidget(run_all_btn)
-        lay.addWidget(header)
-        self.ui["qt_stack"] = QtWidgets.QStackedWidget()
-        lay.addWidget(self.ui["qt_stack"], 1)
-        self.ui["qt_page_scrolls"] = {}
-        for key, title in [("high", "HIGH POLY REVIEW"), ("low", "LOW REVIEW"), ("bake", "BAKE REVIEW"), ("final_asset", "FINAL ASSET REVIEW"), ("integration", "INTEGRATION REVIEW")]:
-            self._add_qt_review_page(key, title)
-        self._switch_review_page("high")
-        return panel
-
-    def _add_qt_review_page(self, key: str, title: str) -> None:
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QtWidgets.QWidget()
-        container.setObjectName("ReviewPage")
-        lay = QtWidgets.QVBoxLayout(container)
-        lay.setContentsMargins(s(2), s(2), s(2), s(2))
-        lay.setSpacing(s(10))
-        for card_title, actions in self._review_actions_for_page(key):
-            card = QtWidgets.QFrame()
-            card.setObjectName("SimpleCard")
-            c_l = QtWidgets.QVBoxLayout(card)
-            c_l.setContentsMargins(s(14), s(12), s(14), s(12))
-            c_l.setSpacing(s(8))
-            lbl = QtWidgets.QLabel(card_title)
-            lbl.setObjectName("SimpleCardTitle")
-            c_l.addWidget(lbl)
-            row = QtWidgets.QHBoxLayout()
-            row.addStretch(1)
-            for action_label, callback in actions:
-                btn = QtWidgets.QPushButton(action_label)
-                btn.setObjectName("RunCheckButton")
-                btn.clicked.connect(callback)
-                row.addWidget(btn)
-            c_l.addLayout(row)
-            lay.addWidget(card)
-        lay.addStretch(1)
-        scroll.setWidget(container)
-        self.ui["qt_stack"].addWidget(scroll)
-        self.ui["qt_page_scrolls"][key] = scroll
-        self.ui.setdefault("qt_page_titles", {})[key] = title
-
-    def _review_actions_for_page(self, key: str) -> List[Tuple[str, List[Tuple[str, Any]]]]:
-        if key == "high":
-            return [("Step 01 · Placeholder Match", [("Run Placeholder Check", self.check_placeholder_match)]), ("Step 02 · Design Kit Review", [("Mark Reviewed", self.mark_design_reviewed)]), ("Step 03 · Topology", [("Run Topology", self.run_topology_checks)]), ("Step 04 · Vertex Colors", [("Run Vertex Color Check", self.check_vertex_colors)]), ("Step 05 · Namespaces", [("Scan Namespaces", self.scan_namespaces)]), ("Step 06 · Materials / Texture Sets", [("Analyze", lambda: self.analyze_texture_sets(mode="materials"))]), ("Step 07 · Compare High.ma vs High.fbx", [("Run Compare", self.compare_ma_vs_fbx)]), ("Step 08 · Compare High.ma vs Bake High", [("Run Compare", self.compare_ma_vs_bake_high)])]
-        if key == "low":
-            return [("Step 01 · Topology", [("Run", self.run_low_topology_checks)]), ("Step 02 · Namespaces", [("Scan", self.scan_low_namespaces)]), ("Step 03 · Materials", [("Analyze", lambda: self.analyze_texture_sets(mode="low_materials"))]), ("Step 04 · UV map1", [("Run", self.run_low_uv_map1_check)]), ("Step 05 · UV map2", [("Run", self.run_low_map2_density_check)]), ("Step 06 · Compare Low vs Bake", [("Run", self.compare_low_vs_bake_low)]), ("Step 07 · Compare Low vs Final", [("Run", self.compare_low_vs_final_asset)])]
-        if key == "bake":
-            return [("Step 01 · Structure", [("Run", self.check_bake_scene_structure)]), ("Step 02 · Low Topology", [("Run", self.run_bake_low_topology_checks)]), ("Step 03 · Vertex Colors Bake High", [("Run", self.run_bake_high_vertex_color_check)]), ("Step 04 · Materials Bake High", [("Analyze", self.analyze_bake_high_materials)]), ("Step 05 · Materials Bake Low", [("Analyze", self.analyze_bake_low_materials)]), ("Step 06 · UV Map1 Bake Low", [("Run", self.run_bake_low_uv_map1_check)]), ("Step 07 · UV Map2 Bake Low", [("Run", self.run_bake_low_uv_map2_check)]), ("Step 08 · Naming & Pairing", [("Run", self.check_bake_pairing)]), ("Step 09 · Bake Readiness", [("Run", self.check_bake_readiness)])]
-        if key == "final_asset":
-            return [("Step 01 · Topology", [("Run", self.run_final_asset_topology_checks)]), ("Step 02 · Namespaces", [("Scan", self.scan_final_asset_namespaces)]), ("Step 03 · Materials", [("Analyze", self.analyze_final_asset_materials)]), ("Step 04 · UV map1", [("Run", self.run_final_asset_uv_map1_check)]), ("Step 05 · UV map2", [("Run", self.run_final_asset_uv_map2_check)]), ("Step 06 · Compare .ma vs .fbx", [("Run", self.compare_final_asset_ma_vs_fbx)])]
-        return [("Integration · Catalog", [("Detect / Refresh", self.detect_catalog_assets_for_integration), ("Select All", self.select_all_integration_catalog_assets)]), ("Integration · P4 / Update", [("Load / Update from P4", self.update_selected_catalog_assets_from_p4)]), ("Integration · Rights", [("Confirm Rights Taken", self.confirm_integration_rights_taken)]), ("Integration · Replace Meshes", [("Run Replacement", self.replace_meshes_into_loaded_p4_assets)])]
-
-    def _switch_review_page(self, key: str) -> None:
-        if "qt_stack" not in self.ui:
-            return
-        order = ["high", "low", "bake", "final_asset", "integration"]
-        if key not in order:
-            return
-        idx = order.index(key)
-        self.ui["qt_stack"].setCurrentIndex(idx)
-        for nav_key, btn in self.ui.get("qt_nav_buttons", {}).items():
-            btn.setChecked(nav_key == key)
-        title = self.ui.get("qt_page_titles", {}).get(key, "REVIEW")
-        if "qt_header_title" in self.ui:
-            self.ui["qt_header_title"].setText(title)
-        scroll = self.ui.get("qt_page_scrolls", {}).get(key)
-        if scroll is not None:
-            scroll.verticalScrollBar().setValue(0)
 
     def _build_file_section(self) -> None:
         cmds.frameLayout(label="1) Root Folder", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
@@ -3523,16 +3334,14 @@ QLabel#SimpleCardTitle { color: #ecf3ff; font-size: {s(18)}px; font-weight: 700;
         self.summary_row_fail_cursor = {}
         self.log_rows_by_index = {}
         self.log_row_order = []
-        if "results_column" in self.ui and cmds.columnLayout(self.ui["results_column"], exists=True):
-            rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
-            for row in rows:
-                if cmds.control(row, exists=True):
-                    cmds.deleteUI(row)
-        if "summary_results_column" in self.ui and cmds.columnLayout(self.ui["summary_results_column"], exists=True):
-            summary_rows = cmds.columnLayout(self.ui["summary_results_column"], q=True, childArray=True) or []
-            for row in summary_rows:
-                if cmds.control(row, exists=True):
-                    cmds.deleteUI(row)
+        rows = cmds.columnLayout(self.ui["results_column"], q=True, childArray=True) or []
+        for row in rows:
+            if cmds.control(row, exists=True):
+                cmds.deleteUI(row)
+        summary_rows = cmds.columnLayout(self.ui["summary_results_column"], q=True, childArray=True) or []
+        for row in summary_rows:
+            if cmds.control(row, exists=True):
+                cmds.deleteUI(row)
         self.refresh_summary()
 
     def refresh_summary(self) -> None:
@@ -3558,20 +3367,7 @@ QLabel#SimpleCardTitle { color: #ecf3ff; font-size: {s(18)}px; font-weight: 700;
             f"Global: {global_state} | Checks OK: {ok_count}/{len(self.check_states)} | "
             f"Warnings: {warn_count} | Fails: {fail_count} | Pending: {pending}"
         )
-        if "summary_text" in self.ui and cmds.control(self.ui["summary_text"], exists=True):
-            cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
-        qt_summary = self.ui.get("qt_summary_rows", {})
-        if qt_summary:
-            qt_summary["passed"].setText(f"Passed: {ok_count}")
-            qt_summary["warnings"].setText(f"Warnings: {warn_count}")
-            qt_summary["failed"].setText(f"Failed: {fail_count}")
-            qt_summary["pending"].setText(f"Pending: {pending}")
-            qt_summary["total"].setText(f"Total Checks: {len(self.check_states)}")
-        if "qt_top_stats" in self.ui:
-            self.ui["qt_top_stats"]["passed"].setText(f"✅ Passed {ok_count}")
-            self.ui["qt_top_stats"]["warning"].setText(f"⚠ Warning {warn_count}")
-            self.ui["qt_top_stats"]["failed"].setText(f"❌ Failed {fail_count}")
-            self.ui["qt_top_stats"]["pending"].setText(f"◌ Pending {pending}")
+        cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
 
     def refresh_checklist_ui(self) -> None:
         for key, ctrl in self.check_ui_map.items():
@@ -3644,8 +3440,7 @@ QLabel#SimpleCardTitle { color: #ecf3ff; font-size: {s(18)}px; font-weight: 700;
 
     def _set_root_folder(self, path: str) -> None:
         self.paths["root"] = path
-        if "root_field" in self.ui and cmds.control(self.ui["root_field"], exists=True):
-            cmds.textFieldButtonGrp(self.ui["root_field"], e=True, text=path)
+        cmds.textFieldButtonGrp(self.ui["root_field"], e=True, text=path)
 
     def pick_root_folder(self) -> None:
         picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Asset Delivery Root Folder")
@@ -3814,10 +3609,7 @@ QLabel#SimpleCardTitle { color: #ecf3ff; font-size: {s(18)}px; font-weight: 700;
         self.log("INFO", "Asset", f"Active Asset: {self.active_asset}")
 
     def scan_delivery_folder(self) -> None:
-        if "root_field" in self.ui and cmds.control(self.ui["root_field"], exists=True):
-            root = cmds.textFieldButtonGrp(self.ui["root_field"], q=True, text=True).strip()
-        else:
-            root = self.paths.get("root", "").strip()
+        root = cmds.textFieldButtonGrp(self.ui["root_field"], q=True, text=True).strip()
         if not root:
             self.log("FAIL", "Scan", "Aucun dossier racine renseigné.")
             return
