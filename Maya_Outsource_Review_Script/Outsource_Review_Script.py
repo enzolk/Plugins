@@ -61,7 +61,7 @@ def get_ui_scale() -> float:
     return dpi / 96.0 if dpi > 0 else 1.0
 
 
-UI_SCALE_OVERRIDE = 1.0
+UI_SCALE_OVERRIDE = 0.8
 UI_SCALE = get_ui_scale() * UI_SCALE_OVERRIDE
 
 
