@@ -1815,6 +1815,96 @@ class HighPolyReviewTool:
                 top_nodes.append(node)
         return top_nodes
 
+    def _top_world_transform(self, node: str) -> Optional[str]:
+        if not node or not cmds.objExists(node):
+            return None
+        current = node
+        visited: Set[str] = set()
+        while current and current not in visited:
+            visited.add(current)
+            parents = cmds.listRelatives(current, parent=True, fullPath=True) or []
+            if not parents:
+                return current
+            current = parents[0]
+        return None
+
+    def _is_integration_parent_group(self, node: str) -> bool:
+        short = self._strip_namespaces_from_name(self._short_name(node))
+        return short in {"Main_Assets", "Annexes"}
+
+    def _normalize_loaded_roots(self, nodes: List[str]) -> List[str]:
+        roots: List[str] = []
+        seen: Set[str] = set()
+        for node in nodes:
+            root = self._top_world_transform(node)
+            if not root or root in seen:
+                continue
+            if self._is_integration_parent_group(root):
+                continue
+            seen.add(root)
+            roots.append(root)
+        return sorted(roots)
+
+    def _resolve_loaded_roots_with_fallback(
+        self,
+        scene_asset: str,
+        catalog_name: str,
+        before_transforms: Set[str],
+        after_transforms: Set[str],
+    ) -> List[str]:
+        loaded_top_nodes = self._find_loaded_top_nodes(before_transforms, after_transforms)
+        if loaded_top_nodes:
+            return self._normalize_loaded_roots(loaded_top_nodes)
+
+        self._append_integration_log("[INFO] No newly created top nodes detected, using fallback resolution")
+
+        world_roots = cmds.ls(assemblies=True, long=True) or []
+        before_world_roots = {node for node in before_transforms if node.count("|") == 1}
+        after_world_roots = {node for node in after_transforms if node.count("|") == 1}
+        newly_visible_world_roots = sorted(after_world_roots - before_world_roots)
+
+        normalized_scene_asset = self._strip_namespaces_from_name(scene_asset).upper()
+        tokens = {
+            catalog_name.upper(),
+            self._strip_namespaces_from_name(catalog_name).upper(),
+            normalized_scene_asset,
+        }
+        tokens = {token for token in tokens if token}
+
+        prefix_candidates = [prefix for prefix in INTEGRATION_QDTOOLS_PREFIXES if catalog_name.upper().startswith(prefix)]
+        if normalized_scene_asset:
+            prefix_candidates.extend([f"{prefix}{normalized_scene_asset}" for prefix in INTEGRATION_QDTOOLS_PREFIXES])
+
+        scored: List[Tuple[int, str]] = []
+        for root in world_roots:
+            if not cmds.objExists(root):
+                continue
+            if self._is_integration_parent_group(root):
+                continue
+            short = self._strip_namespaces_from_name(self._short_name(root)).upper()
+            score = 0
+            if root in newly_visible_world_roots:
+                score += 100
+            if short in tokens:
+                score += 80
+            if any(token and token in short for token in tokens):
+                score += 50
+            if any(candidate and short.startswith(candidate) for candidate in prefix_candidates):
+                score += 35
+            if score > 0:
+                scored.append((score, root))
+
+        if not scored:
+            return []
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        top_score = scored[0][0]
+        resolved = [node for score, node in scored if score == top_score]
+        resolved = self._normalize_loaded_roots(resolved)
+        for node in resolved:
+            self._append_integration_log(f"[INFO] Resolved loaded root: {node}")
+        return resolved
+
     def _parent_loaded_nodes_for_asset_kind(self, asset_kind: str, loaded_top_nodes: List[str]) -> None:
         if not loaded_top_nodes:
             return
@@ -1880,9 +1970,14 @@ class HighPolyReviewTool:
 
                         self.integration_last_results.append((scene_asset, True, f"Loaded with {catalog_name}"))
                         self._append_integration_log(f"[OK] Loaded with {catalog_name}")
-                        loaded_top_nodes = self._find_loaded_top_nodes(before_transforms, after_transforms)
+                        loaded_top_nodes = self._resolve_loaded_roots_with_fallback(
+                            scene_asset=scene_asset,
+                            catalog_name=catalog_name,
+                            before_transforms=before_transforms,
+                            after_transforms=after_transforms,
+                        )
                         if not loaded_top_nodes:
-                            self._append_integration_log("[INFO] No newly created top nodes detected for parenting.")
+                            self._append_integration_log("[WARN] Could not resolve loaded roots for parenting.")
                         else:
                             self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
                         asset_loaded = True
