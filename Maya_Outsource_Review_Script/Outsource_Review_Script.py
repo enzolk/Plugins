@@ -751,6 +751,9 @@ class HighPolyReviewTool:
         self.qt_list_widgets: Dict[str, QtWidgets.QListWidget] = {}
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
+        self.integration_catalog_assets: List[str] = []
+        self.integration_detection_sources: Dict[str, Set[str]] = {}
+        self.integration_last_results: List[Tuple[str, bool, str]] = []
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -1019,6 +1022,10 @@ class HighPolyReviewTool:
         self._build_guided_final_asset_review_section()
         cmds.setParent("..")
 
+        integration_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_guided_integration_review_section()
+        cmds.setParent("..")
+
         cmds.tabLayout(
             tabs,
             edit=True,
@@ -1027,6 +1034,7 @@ class HighPolyReviewTool:
                 (low_tab, "Review 02 — Low"),
                 (bake_tab, "Review 03 — Bake Scene"),
                 (final_tab, "Review 04 — Final Asset"),
+                (integration_tab, "Review 05 — Integration"),
             ),
         )
         cmds.setParent("..")
@@ -1496,6 +1504,33 @@ class HighPolyReviewTool:
         cmds.setParent("..")
         cmds.setParent("..")
 
+    def _build_guided_integration_review_section(self) -> None:
+        cmds.frameLayout(label="Review 05 — Integration", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_tab_visibility_controls("final_asset")
+        cmds.text(label="Detect catalog assets and update them from Perforce via qdTools.", align="left")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 01 — Detect Catalog Assets", align="left")
+        cmds.text(label="Only principal catalog names are kept (sub-meshes are ignored).", align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.button(label="Detect / Refresh Catalog Assets", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.detect_catalog_assets_for_integration())
+        cmds.button(label="Select All", height=UI_BUTTON_HEIGHT, command=lambda *_: self.select_all_integration_catalog_assets())
+        cmds.button(label="Clear Selection", height=UI_BUTTON_HEIGHT, command=lambda *_: self.clear_integration_catalog_selection())
+        cmds.setParent("..")
+        self.ui["integration_catalog_list"] = cmds.textScrollList(allowMultiSelection=True, height=160)
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 02 — Load / Update from P4", align="left")
+        cmds.button(label="Update Status from P4 (Selected Catalog Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 03 — Logs / Result", align="left")
+        self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
+
+        cmds.setParent("..")
+        cmds.setParent("..")
+
     def _build_check_row(self, check_key_ui: str, check_key: str, label: str, command) -> None:
         if check_key in self.subcheck_definitions:
             cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
@@ -1602,6 +1637,109 @@ class HighPolyReviewTool:
         else:
             self.check_states[check_key]["status"] = "PENDING"
         self.refresh_checklist_ui()
+
+    # --------------------------- Integration (Review 05) ---------------------------
+    def _extract_catalog_asset_from_name(self, name: str) -> Optional[str]:
+        if not name:
+            return None
+        cleaned = self._strip_namespaces_from_name(name).strip("_ ")
+        if not cleaned:
+            return None
+        match = re.search(r"([A-Z0-9]+(?:_[A-Z0-9]+)*_[A-D])(?:_|$)", cleaned.upper())
+        if not match:
+            return None
+        return match.group(1)
+
+    def _iter_integration_detection_nodes(self) -> List[Tuple[str, str]]:
+        sources: List[Tuple[str, str]] = []
+        for root_key in ("final_asset_fbx", "final_asset_ma", "low", "bake_low", "high"):
+            for root in self.detected_roots.get(root_key, []):
+                if cmds.objExists(root):
+                    sources.append((root_key, root))
+        for scope_key in ("final_asset_fbx", "final_scene_ma", "low_fbx", "bake_ma", "high_ma"):
+            for root in self.review_group_contents.get(scope_key, []):
+                if cmds.objExists(root):
+                    sources.append((scope_key, root))
+
+        deduped: List[Tuple[str, str]] = []
+        seen: Set[str] = set()
+        for source_key, node in sources:
+            if node in seen:
+                continue
+            seen.add(node)
+            deduped.append((source_key, node))
+        return deduped
+
+    def _refresh_integration_catalog_list_ui(self) -> None:
+        self._clear_list_control("integration_catalog_list")
+        for catalog_name in self.integration_catalog_assets:
+            self._append_list_control_item("integration_catalog_list", catalog_name)
+        if self.integration_catalog_assets:
+            self._set_selected_list_control_items("integration_catalog_list", self.integration_catalog_assets)
+
+    def _append_integration_log(self, message: str) -> None:
+        self._append_list_control_item("integration_logs", message)
+        self.log("INFO", "Integration", message)
+
+    def detect_catalog_assets_for_integration(self) -> List[str]:
+        detected: Dict[str, Set[str]] = {}
+        for source_key, root in self._iter_integration_detection_nodes():
+            root_name = self._strip_namespaces_from_name(self._short_name(root))
+            catalog_from_root = self._extract_catalog_asset_from_name(root_name)
+            if catalog_from_root:
+                detected.setdefault(catalog_from_root, set()).add(f"{source_key}:{root}")
+
+        self.integration_catalog_assets = sorted(detected.keys())
+        self.integration_detection_sources = detected
+        self._refresh_integration_catalog_list_ui()
+        self._clear_list_control("integration_logs")
+
+        if not self.integration_catalog_assets:
+            self._append_integration_log("No catalog asset detected. Load reviewed roots first.")
+            return []
+
+        self._append_integration_log(f"Detected {len(self.integration_catalog_assets)} catalog asset(s).")
+        for catalog_name in self.integration_catalog_assets:
+            source_count = len(self.integration_detection_sources.get(catalog_name, set()))
+            self._append_integration_log(f"[DETECT] {catalog_name} (from {source_count} source root(s))")
+        return self.integration_catalog_assets[:]
+
+    def select_all_integration_catalog_assets(self) -> None:
+        if not self.integration_catalog_assets:
+            return
+        self._set_selected_list_control_items("integration_catalog_list", self.integration_catalog_assets)
+
+    def clear_integration_catalog_selection(self) -> None:
+        control = self.ui.get("integration_catalog_list")
+        if control is None:
+            return
+        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
+            control.clearSelection()
+            return
+        cmds.textScrollList(control, edit=True, deselectAll=True)
+
+    def update_selected_catalog_assets_from_p4(self) -> None:
+        selected_assets = self._selected_list_control_items("integration_catalog_list")
+        if not selected_assets:
+            self._append_integration_log("Nothing selected. Select at least one catalog asset.")
+            return
+
+        try:
+            from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
+        except Exception as exc:
+            self._append_integration_log(f"[ERROR] qdTools import failed: {exc}")
+            return
+
+        self.integration_last_results = []
+        self._append_integration_log(f"Launching P4 update for {len(selected_assets)} asset(s)...")
+        for catalog_name in selected_assets:
+            try:
+                QDLoad.by_catalog(catalog_name, "Props").update_status(b_recursive=True)
+                self.integration_last_results.append((catalog_name, True, "OK"))
+                self._append_integration_log(f"[OK] {catalog_name} -> QDLoad.by_catalog(...).update_status(b_recursive=True)")
+            except Exception as exc:
+                self.integration_last_results.append((catalog_name, False, str(exc)))
+                self._append_integration_log(f"[FAIL] {catalog_name} -> {exc}")
 
     def _build_compare_row(
         self,
