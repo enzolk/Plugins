@@ -761,6 +761,10 @@ class HighPolyReviewTool:
         self.integration_annexe_sources: Dict[str, Set[str]] = {}
         self.integration_last_results: List[Tuple[str, bool, str]] = []
         self.integration_rights_confirmed: bool = False
+        self.review_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
+        self.review_tab_children: Dict[str, str] = {}
+        self.review_tab_order: List[str] = []
+        self.sidebar_summary_labels: Dict[str, QtWidgets.QLabel] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -1007,11 +1011,12 @@ class HighPolyReviewTool:
 
     def _build_review_tabs_section(self) -> None:
         cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
-        tabs = cmds.tabLayout(
-            innerMarginWidth=6,
-            innerMarginHeight=6,
-            changeCommand=lambda *_: self._reset_main_scroll_to_top(),
-        )
+        split = cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(250, 900), columnAttach=[(1, "both", 0), (2, "both", 10)])
+        sidebar_host = cmds.columnLayout(adjustableColumn=True)
+        cmds.setParent(split)
+        tabs_host = cmds.columnLayout(adjustableColumn=True)
+        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6, changeCommand=lambda *_: self._on_review_tab_changed())
+        self.ui["review_tabs"] = tabs
 
         high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_high_review_section()
@@ -1036,6 +1041,7 @@ class HighPolyReviewTool:
         cmds.tabLayout(
             tabs,
             edit=True,
+            tabsVisible=False,
             tabLabel=(
                 (high_tab, "Review 01 — High"),
                 (low_tab, "Review 02 — Low"),
@@ -1044,8 +1050,183 @@ class HighPolyReviewTool:
                 (integration_tab, "Review 05 — Integration"),
             ),
         )
+        self.review_tab_children = {
+            "high": high_tab,
+            "low": low_tab,
+            "bake": bake_tab,
+            "final_asset": final_tab,
+            "integration": integration_tab,
+        }
+        self.review_tab_order = ["high", "low", "bake", "final_asset", "integration"]
+        self._build_qt_sidebar(sidebar_host)
+        self._set_active_review_button("high")
         cmds.setParent("..")
         cmds.setParent("..")
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _build_qt_sidebar(self, qt_host_layout: str) -> None:
+        if not QT_AVAILABLE or QtWidgets is None or wrapInstance is None:
+            return
+        host_ptr = omui.MQtUtil.findLayout(qt_host_layout)
+        if not host_ptr:
+            return
+        host_widget = wrapInstance(int(host_ptr), QtWidgets.QWidget)
+        if host_widget is None:
+            return
+        host_layout = host_widget.layout()
+        if host_layout is None:
+            host_layout = QtWidgets.QVBoxLayout(host_widget)
+        while host_layout.count():
+            item = host_layout.takeAt(0)
+            child = item.widget()
+            if child is not None:
+                child.deleteLater()
+
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("MainSidebarPanel")
+        panel_layout = QtWidgets.QVBoxLayout(panel)
+        panel_layout.setContentsMargins(s(12), s(14), s(12), s(14))
+        panel_layout.setSpacing(s(12))
+
+        section_review = QtWidgets.QLabel("REVIEW")
+        section_review.setObjectName("SidebarSectionLabel")
+        panel_layout.addWidget(section_review)
+
+        self.review_nav_buttons = {}
+        nav_entries = [
+            ("high", "High"),
+            ("low", "Low"),
+            ("bake", "Bake"),
+            ("final_asset", "Final Asset"),
+            ("integration", "Integration"),
+        ]
+        for key, label in nav_entries:
+            btn = QtWidgets.QPushButton(label)
+            btn.setObjectName("SidebarReviewButton")
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _checked=False, k=key: self._on_sidebar_review_clicked(k))
+            self.review_nav_buttons[key] = btn
+            panel_layout.addWidget(btn)
+
+        panel_layout.addSpacing(s(6))
+        tools_label = QtWidgets.QLabel("TOOLS")
+        tools_label.setObjectName("SidebarSectionLabel")
+        panel_layout.addWidget(tools_label)
+        for label in ("Scene Visibility", "Logs & Report"):
+            tool_btn = QtWidgets.QPushButton(label)
+            tool_btn.setObjectName("SidebarToolButton")
+            tool_btn.setEnabled(False)
+            panel_layout.addWidget(tool_btn)
+
+        panel_layout.addSpacing(s(6))
+        summary_header = QtWidgets.QLabel("REVIEW SUMMARY")
+        summary_header.setObjectName("SidebarSectionLabel")
+        panel_layout.addWidget(summary_header)
+
+        self.sidebar_summary_labels = {}
+        summary_rows = [
+            ("passed", "Passed"),
+            ("warnings", "Warnings"),
+            ("failed", "Failed"),
+            ("pending", "Pending"),
+            ("total", "Total Checks"),
+        ]
+        for key, label in summary_rows:
+            row = QtWidgets.QHBoxLayout()
+            name = QtWidgets.QLabel(label)
+            name.setObjectName("SidebarSummaryName")
+            value = QtWidgets.QLabel("0")
+            value.setObjectName("SidebarSummaryValue")
+            value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            row.addWidget(name)
+            row.addStretch(1)
+            row.addWidget(value)
+            panel_layout.addLayout(row)
+            self.sidebar_summary_labels[key] = value
+
+        panel_layout.addStretch(1)
+        panel.setStyleSheet(
+            _resolve_scaled_tokens(
+                """
+QFrame#MainSidebarPanel {
+    background-color: #0b1320;
+    border: 1px solid #1b2a40;
+    border-radius: {s(12)}px;
+}
+QLabel#SidebarSectionLabel {
+    color: #7186a8;
+    font-size: {s(12)}px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding-top: {s(2)}px;
+}
+QPushButton#SidebarReviewButton {
+    text-align: left;
+    padding: {s(10)}px {s(12)}px;
+    border-radius: {s(8)}px;
+    border: 1px solid transparent;
+    background-color: #121d2e;
+    color: #c2d4ef;
+    font-size: {s(14)}px;
+    font-weight: 600;
+}
+QPushButton#SidebarReviewButton:hover {
+    background-color: #1a2a42;
+}
+QPushButton#SidebarReviewButton:checked {
+    background-color: #2b6fd4;
+    border: 1px solid #4d87dd;
+    color: #ffffff;
+}
+QPushButton#SidebarToolButton {
+    text-align: left;
+    padding: {s(8)}px {s(12)}px;
+    border-radius: {s(8)}px;
+    border: 1px solid #1d2d45;
+    background-color: #101a2a;
+    color: #8fa3c4;
+    font-size: {s(13)}px;
+}
+QLabel#SidebarSummaryName {
+    color: #a9bddc;
+    font-size: {s(13)}px;
+}
+QLabel#SidebarSummaryValue {
+    color: #d8e6ff;
+    font-size: {s(13)}px;
+    font-weight: 700;
+}
+"""
+            )
+        )
+        host_layout.addWidget(panel)
+
+    def _on_sidebar_review_clicked(self, review_key: str) -> None:
+        tabs = self.ui.get("review_tabs")
+        child = self.review_tab_children.get(review_key)
+        if not tabs or not child:
+            return
+        if cmds.tabLayout(tabs, exists=True):
+            cmds.tabLayout(tabs, edit=True, selectTab=child)
+        self._set_active_review_button(review_key)
+        self._reset_main_scroll_to_top()
+
+    def _on_review_tab_changed(self) -> None:
+        tabs = self.ui.get("review_tabs")
+        if not tabs or not cmds.tabLayout(tabs, exists=True):
+            return
+        active_child = cmds.tabLayout(tabs, query=True, selectTab=True)
+        if active_child:
+            for key, child in self.review_tab_children.items():
+                if child == active_child:
+                    self._set_active_review_button(key)
+                    break
+        self._reset_main_scroll_to_top()
+
+    def _set_active_review_button(self, active_key: str) -> None:
+        for key, button in self.review_nav_buttons.items():
+            button.setChecked(key == active_key)
 
     def _reset_main_scroll_to_top(self) -> None:
         """Reset the main scrollLayout to the top after tab changes."""
@@ -3368,6 +3549,18 @@ class HighPolyReviewTool:
             f"Warnings: {warn_count} | Fails: {fail_count} | Pending: {pending}"
         )
         cmds.text(self.ui["summary_text"], e=True, label=text, backgroundColor=color)
+        if self.sidebar_summary_labels:
+            mapping = {
+                "passed": ok_count,
+                "warnings": warn_count,
+                "failed": fail_count,
+                "pending": pending,
+                "total": len(self.check_states),
+            }
+            for key, value in mapping.items():
+                label = self.sidebar_summary_labels.get(key)
+                if label is not None:
+                    label.setText(str(value))
 
     def refresh_checklist_ui(self) -> None:
         for key, ctrl in self.check_ui_map.items():
