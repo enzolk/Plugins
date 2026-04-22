@@ -5366,11 +5366,13 @@ class HighPolyReviewTool:
 
     def _bake_pair_key(self, mesh: str, root: str, expected_suffix: str) -> Tuple[str, bool]:
         del root
-        key = self._normalized_mesh_leaf_key(mesh)
         suffix = expected_suffix.lower()
-        has_suffix = key.endswith(suffix)
-        if has_suffix:
-            key = key[: -len(suffix)]
+        short_name = self._short_name(mesh)
+        raw_leaf = self._strip_namespaces_from_name(short_name).lower().strip()
+        raw_leaf = re.sub(r"[\s_\-]+", "_", raw_leaf)
+        has_suffix = raw_leaf.endswith(suffix)
+
+        key = self._normalized_mesh_leaf_key(mesh)
         return key.strip("_"), has_suffix
 
     def check_bake_pairing(self) -> None:
