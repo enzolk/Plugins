@@ -800,6 +800,7 @@ class HighPolyReviewTool:
         self.page_tab_children: Dict[str, str] = {}
         self.review_tab_children: Dict[str, str] = {}
         self.review_tab_order: List[str] = []
+        self.current_page_key: str = "high"
         self.sidebar_summary_labels: Dict[str, QtWidgets.QLabel] = {}
         self.scene_visibility_page_groups: List[Dict[str, Any]] = []
         self.scene_visibility_page_controls: Dict[str, str] = {}
@@ -1391,17 +1392,77 @@ QLabel#PageHeaderSubtitle {
             return
         if cmds.tabLayout(tabs, exists=True):
             cmds.tabLayout(tabs, edit=True, selectTab=child)
+        self.current_page_key = page_key
         for key, button in self.page_nav_buttons.items():
             button.setChecked(key == page_key)
-        self._reset_main_scroll_to_top()
         if page_key == "scene_visibility":
             self.refresh_scene_visibility_page()
+        self._refresh_page_layout(page_key)
+        cmds.evalDeferred(lambda: self._refresh_page_layout(page_key), lowestPriority=True)
 
     def _reset_main_scroll_to_top(self) -> None:
         """Reset the Guided Review scrollLayout to the top after tab changes."""
         scroll_layout = self.ui.get("review_scroll")
         if scroll_layout and cmds.scrollLayout(scroll_layout, exists=True):
             cmds.scrollLayout(scroll_layout, edit=True, scrollByPixel=("up", 99999999))
+
+    def _maya_widget_to_qt(self, maya_name: str) -> Optional[QtWidgets.QWidget]:
+        if not QT_AVAILABLE or QtWidgets is None or wrapInstance is None:
+            return None
+        ptr = omui.MQtUtil.findControl(maya_name) or omui.MQtUtil.findLayout(maya_name)
+        if not ptr:
+            return None
+        try:
+            return wrapInstance(int(ptr), QtWidgets.QWidget)
+        except Exception:
+            return None
+
+    def _refresh_page_layout(self, page_key: str) -> None:
+        """Force Maya + Qt relayout after sidebar page switches to keep responsive sizing stable."""
+        if page_key != self.current_page_key:
+            return
+        self._reset_main_scroll_to_top()
+
+        scroll_layout = self.ui.get("review_scroll")
+        tabs = self.ui.get("main_pages_tabs")
+        child = self.page_tab_children.get(page_key)
+
+        if scroll_layout and cmds.scrollLayout(scroll_layout, exists=True):
+            try:
+                cmds.scrollLayout(scroll_layout, edit=True, childResizable=False)
+                cmds.scrollLayout(scroll_layout, edit=True, childResizable=True)
+            except Exception:
+                pass
+
+        if tabs and child and cmds.tabLayout(tabs, exists=True):
+            try:
+                cmds.tabLayout(tabs, edit=True, selectTab=child)
+            except Exception:
+                pass
+
+        if not QT_AVAILABLE or QtWidgets is None:
+            return
+
+        qt_targets = []
+        for maya_name in (child, tabs, scroll_layout, self.ui.get("window")):
+            if not maya_name:
+                continue
+            widget = self._maya_widget_to_qt(maya_name)
+            if widget is not None:
+                qt_targets.append(widget)
+
+        for widget in qt_targets:
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            widget.updateGeometry()
+            widget.adjustSize()
+            widget.update()
+
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.processEvents()
 
     def _build_guided_low_review_section(self) -> None:
         if QT_AVAILABLE and QtWidgets is not None:
