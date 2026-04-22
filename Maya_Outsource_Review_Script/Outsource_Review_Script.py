@@ -425,17 +425,13 @@ if QT_AVAILABLE and QtWidgets is not None:
         def __init__(self, label_text: str, menu_key: str, parent: Optional[QtWidgets.QWidget] = None) -> None:
             super().__init__(parent)
             self.menu_key = menu_key
-            self._compact_mode = False
-            self._root_layout = QtWidgets.QGridLayout(self)
-            self._root_layout.setContentsMargins(0, 0, 0, 0)
-            self._root_layout.setHorizontalSpacing(s(10))
-            self._root_layout.setVerticalSpacing(s(8))
+            row_layout = QtWidgets.QHBoxLayout(self)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(s(10))
 
             label_frame = QtWidgets.QFrame()
             label_frame.setObjectName("RootLabelFrame")
-            label_frame.setMinimumWidth(s(112))
-            label_frame.setMaximumWidth(s(260))
-            label_frame.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+            label_frame.setMinimumWidth(s(180))
             label_layout = QtWidgets.QHBoxLayout(label_frame)
             label_layout.setContentsMargins(s(14), s(8), s(14), s(8))
             label_layout.setSpacing(s(8))
@@ -452,47 +448,16 @@ if QT_AVAILABLE and QtWidgets is not None:
             self.path_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             self.path_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
             self.path_combo.setMaxVisibleItems(20)
-            self.path_combo.setMinimumWidth(s(120))
 
             self.use_selection_btn = QtWidgets.QPushButton("Use Selection")
             self.use_selection_btn.setObjectName("PrimaryBlueButton")
-            self.use_selection_btn.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
+            self.use_selection_btn.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
             button_text_width = self.use_selection_btn.fontMetrics().horizontalAdvance(self.use_selection_btn.text())
-            self.use_selection_btn.setMinimumWidth(button_text_width + s(20))
-            self.use_selection_btn.setMaximumWidth(button_text_width + s(42))
+            self.use_selection_btn.setMinimumWidth(button_text_width + s(32))
 
-            self._label_frame = label_frame
-            self._refresh_layout()
-
-        def _clear_layout(self) -> None:
-            while self._root_layout.count():
-                item = self._root_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.setParent(self)
-
-        def _refresh_layout(self) -> None:
-            self._clear_layout()
-            if self._compact_mode:
-                self._root_layout.addWidget(self._label_frame, 0, 0, 1, 2)
-                self._root_layout.addWidget(self.path_combo, 1, 0, 1, 1)
-                self._root_layout.addWidget(self.use_selection_btn, 1, 1, 1, 1)
-                self._root_layout.setColumnStretch(0, 1)
-                self._root_layout.setColumnStretch(1, 0)
-            else:
-                self._root_layout.addWidget(self._label_frame, 0, 0, 1, 1)
-                self._root_layout.addWidget(self.path_combo, 0, 1, 1, 1)
-                self._root_layout.addWidget(self.use_selection_btn, 0, 2, 1, 1)
-                self._root_layout.setColumnStretch(0, 0)
-                self._root_layout.setColumnStretch(1, 1)
-                self._root_layout.setColumnStretch(2, 0)
-
-        def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
-            compact = self.width() < s(760)
-            if compact != self._compact_mode:
-                self._compact_mode = compact
-                self._refresh_layout()
-            super().resizeEvent(event)
+            row_layout.addWidget(label_frame)
+            row_layout.addWidget(self.path_combo, 1)
+            row_layout.addWidget(self.use_selection_btn, 0)
 else:
     class StepRootSelectorRow:  # type: ignore[no-redef]
         pass
@@ -2828,12 +2793,9 @@ QLabel#SidebarSummaryValue {
 
         sub_band = QtWidgets.QFrame()
         sub_band.setObjectName("SubChecksBand")
-        sub_layout = QtWidgets.QVBoxLayout(sub_band)
+        sub_layout = QtWidgets.QHBoxLayout(sub_band)
         sub_layout.setContentsMargins(s(12), s(10), s(12), s(10))
-        sub_layout.setSpacing(s(8))
-        checks_layout = QtWidgets.QGridLayout()
-        checks_layout.setHorizontalSpacing(s(12))
-        checks_layout.setVerticalSpacing(s(6))
+        sub_layout.setSpacing(s(12))
 
         bbox_check = QtWidgets.QCheckBox("BBox")
         bbox_check.setObjectName("StepSubCheckBox")
@@ -2865,9 +2827,13 @@ QLabel#SidebarSummaryValue {
         pivot_wrap = QtWidgets.QWidget()
         pivot_wrap.setLayout(pivot_group)
 
+        div_1 = QtWidgets.QFrame()
+        div_1.setObjectName("ThinDivider")
+        div_2 = QtWidgets.QFrame()
+        div_2.setObjectName("ThinDivider")
+
         run_btn = QtWidgets.QPushButton("▶  Run Placeholder Check")
         run_btn.setObjectName("RunCheckButton")
-        run_btn.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
         run_btn.clicked.connect(lambda *_: self.check_placeholder_match())
         tolerance_lbl = QtWidgets.QLabel("Tolerance %")
         tolerance_lbl.setObjectName("ToleranceLabel")
@@ -2877,22 +2843,17 @@ QLabel#SidebarSummaryValue {
         tolerance_spin.setDecimals(2)
         tolerance_spin.setSingleStep(0.25)
         tolerance_spin.setValue(7.00)
-        tolerance_spin.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
         self.ui["placeholder_tolerance_qt"] = tolerance_spin
 
-        checks_layout.addWidget(bbox_wrap, 0, 0)
-        checks_layout.addWidget(pivot_wrap, 0, 1)
-        checks_layout.setColumnStretch(0, 1)
-        checks_layout.setColumnStretch(1, 1)
-        sub_layout.addLayout(checks_layout)
-
-        actions_layout = QtWidgets.QHBoxLayout()
-        actions_layout.setSpacing(s(8))
-        actions_layout.addStretch(1)
-        actions_layout.addWidget(run_btn, 0, QtCore.Qt.AlignVCenter)
-        actions_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
-        actions_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
-        sub_layout.addLayout(actions_layout)
+        sub_layout.addWidget(bbox_wrap, 0)
+        sub_layout.addWidget(div_1, 0)
+        sub_layout.addWidget(pivot_wrap, 0)
+        sub_layout.addWidget(div_2, 0)
+        sub_layout.addStretch(1)
+        sub_layout.addWidget(run_btn, 0, QtCore.Qt.AlignVCenter)
+        sub_layout.addSpacing(s(8))
+        sub_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
+        sub_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
 
         body_layout.addWidget(sub_band)
         card_layout.addWidget(body_widget)
@@ -2949,12 +2910,9 @@ QLabel#SidebarSummaryValue {
         desc_map = desc_map or {}
         band = QtWidgets.QFrame()
         band.setObjectName("SubChecksBand")
-        root_layout = QtWidgets.QVBoxLayout(band)
-        root_layout.setContentsMargins(s(12), s(8), s(12), s(8))
-        root_layout.setSpacing(s(8))
-        checks_layout = QtWidgets.QGridLayout()
-        checks_layout.setHorizontalSpacing(s(12))
-        checks_layout.setVerticalSpacing(s(6))
+        layout = QtWidgets.QHBoxLayout(band)
+        layout.setContentsMargins(s(12), s(8), s(12), s(8))
+        layout.setSpacing(s(10))
         defs = self.subcheck_definitions.get(check_key, [])
         self.qt_subcheck_widgets.setdefault(check_key, {})
         for idx, (sub_key, sub_label) in enumerate(defs):
@@ -2974,24 +2932,16 @@ QLabel#SidebarSummaryValue {
                 lbl.setObjectName("SubCheckDesc")
                 lbl.setWordWrap(True)
                 wlay.addWidget(lbl)
-            row = idx // 2
-            col = idx % 2
-            checks_layout.addWidget(wrap, row, col)
-        checks_layout.setColumnStretch(0, 1)
-        checks_layout.setColumnStretch(1, 1)
-        root_layout.addLayout(checks_layout)
-
-        actions_layout = QtWidgets.QHBoxLayout()
-        actions_layout.setSpacing(s(8))
-        actions_layout.addStretch(1)
-        root_layout.addLayout(actions_layout)
-        return band, actions_layout
+            layout.addWidget(wrap)
+            if idx < len(defs) - 1:
+                divider = QtWidgets.QFrame()
+                divider.setObjectName("ThinDivider")
+                layout.addWidget(divider)
+        return band, layout
 
     def _make_qt_run_button(self, label: str, callback):
         btn = QtWidgets.QPushButton(label)
         btn.setObjectName("RunCheckButton")
-        btn.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
-        btn.setMinimumWidth(s(112))
         btn.clicked.connect(lambda *_: callback())
         return btn
 
