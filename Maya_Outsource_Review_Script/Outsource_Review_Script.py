@@ -760,6 +760,7 @@ class HighPolyReviewTool:
         self.integration_detection_sources: Dict[str, Set[str]] = {}
         self.integration_annexe_sources: Dict[str, Set[str]] = {}
         self.integration_last_results: List[Tuple[str, bool, str]] = []
+        self.integration_rights_confirmed: bool = False
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -1540,7 +1541,33 @@ class HighPolyReviewTool:
         cmds.button(label="Load / Update from P4 (Selected Scene Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
         cmds.separator(style="in")
 
-        cmds.text(label="Step 03 — Logs / Result", align="left")
+        cmds.text(label="Step 03 — Checkout / Take Rights (manual)", align="left")
+        cmds.text(
+            label="Before replacing meshes, manually take rights / checkout the loaded P4 assets. Once all loaded assets are writable, validate this step.",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        self.ui["integration_step03_rights_taken"] = cmds.checkBox(label="Rights taken / assets writable", value=False)
+        cmds.button(label="Confirm Rights Taken", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.confirm_integration_rights_taken())
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 04 — Replace Imported Meshes into P4 Assets", align="left")
+        cmds.text(
+            label="Replace mesh content from source scene assets (non-prefixed) into loaded P4 assets (prefixed).",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.button(
+            label="Replace Meshes Into Loaded P4 Assets",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.replace_meshes_into_loaded_p4_assets(),
+        )
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 05 — Logs / Result", align="left")
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
 
         cmds.setParent("..")
@@ -1766,6 +1793,168 @@ class HighPolyReviewTool:
         if not cleaned:
             return []
         return [f"{prefix}{cleaned}" for prefix in INTEGRATION_QDTOOLS_PREFIXES]
+
+    def _integration_remove_prefix(self, catalog_name: str) -> str:
+        cleaned = self._strip_namespaces_from_name(catalog_name).strip("_ ").upper()
+        for prefix in INTEGRATION_QDTOOLS_PREFIXES:
+            if cleaned.startswith(prefix):
+                return cleaned[len(prefix):]
+        return cleaned
+
+    def _integration_best_asset_root(self, nodes: List[str]) -> Optional[str]:
+        existing = [node for node in nodes if node and cmds.objExists(node)]
+        if not existing:
+            return None
+        existing.sort(key=lambda node: (node.count("|"), len(node), node))
+        return existing[0]
+
+    def _integration_collect_asset_roots(self, prefixed: bool) -> Dict[str, str]:
+        asset_to_nodes: Dict[str, List[str]] = {}
+        transforms = cmds.ls(type="transform", long=True) or []
+        for node in transforms:
+            catalog_name = self._extract_catalog_asset_from_name(node)
+            if not catalog_name:
+                continue
+            is_prefixed = self._is_prefixed_catalog_asset(catalog_name)
+            if is_prefixed != prefixed:
+                continue
+            key = self._integration_remove_prefix(catalog_name) if prefixed else catalog_name
+            asset_to_nodes.setdefault(key, []).append(node)
+        resolved: Dict[str, str] = {}
+        for asset_name, nodes in asset_to_nodes.items():
+            best = self._integration_best_asset_root(nodes)
+            if best:
+                resolved[asset_name] = best
+        return resolved
+
+    def _integration_find_mesh_parent(self, loaded_asset_root: str, source_asset_name: str) -> Optional[str]:
+        if not loaded_asset_root or not cmds.objExists(loaded_asset_root):
+            return None
+        target_name = f"{source_asset_name}_MESH".upper()
+        candidates = [loaded_asset_root]
+        candidates.extend(cmds.listRelatives(loaded_asset_root, allDescendents=True, type="transform", fullPath=True) or [])
+        matches: List[str] = []
+        for node in candidates:
+            short = self._strip_namespaces_from_name(self._short_name(node)).upper()
+            if short == target_name:
+                matches.append(node)
+        if matches:
+            matches.sort(key=lambda node: (node.count("|"), len(node), node))
+            return matches[0]
+        return None
+
+    def _integration_choose_target_container(self, mesh_parent: str) -> Tuple[str, Optional[str]]:
+        children = cmds.listRelatives(mesh_parent, children=True, type="transform", fullPath=True) or []
+        if not children:
+            return mesh_parent, None
+        relevant_children: List[str] = []
+        for child in children:
+            descendants = cmds.listRelatives(child, allDescendents=True, type="transform", fullPath=True) or []
+            child_meshes = cmds.listRelatives(child, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            direct_meshes = cmds.listRelatives(child, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            if descendants or child_meshes or direct_meshes:
+                relevant_children.append(child)
+        if len(relevant_children) == 1:
+            selected = relevant_children[0]
+            return selected, self._strip_namespaces_from_name(self._short_name(selected))
+        hull_candidates = [
+            child
+            for child in relevant_children
+            if self._strip_namespaces_from_name(self._short_name(child)).upper() in {"HULL", "GEO", "GEOMETRY", "MESH"}
+        ]
+        if len(hull_candidates) == 1:
+            selected = hull_candidates[0]
+            return selected, self._strip_namespaces_from_name(self._short_name(selected))
+        return mesh_parent, None
+
+    def _integration_clear_target_content(self, target_container: str) -> None:
+        descendants = cmds.listRelatives(target_container, allDescendents=True, type="transform", fullPath=True) or []
+        descendants.sort(key=lambda node: node.count("|"), reverse=True)
+        for node in descendants:
+            if cmds.objExists(node):
+                try:
+                    cmds.delete(node)
+                except Exception:
+                    continue
+        direct_mesh_shapes = cmds.listRelatives(target_container, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+        for shape in direct_mesh_shapes:
+            if cmds.objExists(shape):
+                try:
+                    cmds.delete(shape)
+                except Exception:
+                    continue
+
+    def _integration_copy_source_content(self, source_asset_root: str, target_container: str) -> None:
+        source_children = cmds.listRelatives(source_asset_root, children=True, type="transform", fullPath=True) or []
+        for child in source_children:
+            if not cmds.objExists(child):
+                continue
+            duplicated = cmds.duplicate(child, renameChildren=True) or []
+            if not duplicated:
+                continue
+            dup_root = duplicated[0]
+            try:
+                cmds.parent(dup_root, target_container)
+            except Exception:
+                pass
+            try:
+                cmds.makeIdentity(dup_root, apply=True, translate=False, rotate=False, scale=True, normal=False)
+            except Exception:
+                pass
+
+    def confirm_integration_rights_taken(self) -> None:
+        self.integration_rights_confirmed = True
+        self._set_boolean_control_value("integration_step03_rights_taken", True)
+        self._append_integration_log("[OK] Step 03 confirmed: rights/checkout taken on loaded P4 assets.")
+
+    def replace_meshes_into_loaded_p4_assets(self) -> None:
+        rights_checked = self._query_boolean_control_value("integration_step03_rights_taken", default=False)
+        self.integration_rights_confirmed = bool(rights_checked)
+        if not rights_checked:
+            self._append_integration_log("[WARN] Step 03 is not confirmed. Please take rights/checkout before replacing meshes.")
+            return
+
+        source_roots = self._integration_collect_asset_roots(prefixed=False)
+        loaded_roots = self._integration_collect_asset_roots(prefixed=True)
+        if not loaded_roots:
+            self._append_integration_log("[WARN] No loaded P4 prefixed assets found for replacement.")
+            return
+
+        replaced_count = 0
+        for base_asset_name in sorted(loaded_roots.keys()):
+            source_asset_root = source_roots.get(base_asset_name)
+            loaded_asset_root = loaded_roots.get(base_asset_name)
+            loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root)) if loaded_asset_root else ""
+
+            if not source_asset_root:
+                self._append_integration_log(f"[WARN] No source asset found for loaded P4 asset: {loaded_asset_short}")
+                continue
+            if not loaded_asset_root:
+                continue
+
+            self._append_integration_log(f"[INFO] Source asset found: {base_asset_name}")
+            self._append_integration_log(f"[INFO] Loaded P4 asset found: {loaded_asset_short}")
+            mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
+            if not mesh_parent:
+                self._append_integration_log(f"[WARN] Target mesh parent not found: {base_asset_name}_MESH")
+                continue
+
+            mesh_parent_short = self._strip_namespaces_from_name(self._short_name(mesh_parent))
+            self._append_integration_log(f"[INFO] Target mesh parent found: {mesh_parent_short}")
+            target_container, sub_parent_name = self._integration_choose_target_container(mesh_parent)
+            if sub_parent_name:
+                self._append_integration_log(f"[INFO] Target sub-parent found: {sub_parent_name}")
+            else:
+                self._append_integration_log("[INFO] No dedicated sub-parent found, replacing directly in _MESH")
+
+            self._append_integration_log("[INFO] Removing existing meshes under target")
+            self._integration_clear_target_content(target_container)
+            self._append_integration_log("[INFO] Copying source meshes into target")
+            self._integration_copy_source_content(source_asset_root, target_container)
+            self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
+            replaced_count += 1
+
+        self._append_integration_log(f"[INFO] Mesh replacement finished. Assets replaced: {replaced_count}")
 
     def select_all_integration_catalog_assets(self) -> None:
         if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
