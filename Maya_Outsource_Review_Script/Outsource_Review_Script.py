@@ -2534,16 +2534,16 @@ class HighPolyReviewTool:
         step_card.setStyleSheet(STEP01_QSS)
         card_layout = QtWidgets.QVBoxLayout(step_card)
         card_layout.setContentsMargins(s(14), s(12), s(14), s(12))
-        card_layout.setSpacing(s(12))
+        card_layout.setSpacing(s(10))
 
         header_layout = QtWidgets.QHBoxLayout()
         header_layout.setSpacing(s(10))
 
         badge = QtWidgets.QFrame()
         badge.setObjectName("StepBadge")
-        badge.setFixedSize(s(66), s(66))
+        badge.setFixedSize(s(52), s(52))
         badge_layout = QtWidgets.QVBoxLayout(badge)
-        badge_layout.setContentsMargins(0, s(8), 0, s(7))
+        badge_layout.setContentsMargins(0, s(7), 0, s(6))
         badge_layout.setSpacing(0)
         badge_layout.setAlignment(QtCore.Qt.AlignCenter)
         badge_top = QtWidgets.QLabel("STEP")
@@ -2552,11 +2552,13 @@ class HighPolyReviewTool:
         badge_bottom = QtWidgets.QLabel("01")
         badge_bottom.setObjectName("StepBadgeBottom")
         badge_bottom.setAlignment(QtCore.Qt.AlignCenter)
+        badge_bottom.setStyleSheet(f"font-size: {s(24)}px;")
         badge_layout.addWidget(badge_top)
         badge_layout.addWidget(badge_bottom)
 
         title_lbl = QtWidgets.QLabel("Placeholder Match")
         title_lbl.setObjectName("StepTitle")
+        title_lbl.setStyleSheet(f"font-size: {s(18)}px;")
         info_btn = ModernInfoButton(
             "Cette étape vérifie qu’un High correspond bien à son Placeholder.\n\n"
             "• BBox compare la cohérence globale du volume et des dimensions.\n"
@@ -2581,7 +2583,7 @@ class HighPolyReviewTool:
         body_widget = QtWidgets.QWidget()
         body_layout = QtWidgets.QVBoxLayout(body_widget)
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(s(12))
+        body_layout.setSpacing(s(8))
 
         self.manual_root_menu_sources["placeholder_high_root_menu"] = "high_ma"
         self.manual_root_menu_sources["placeholder_placeholder_root_menu"] = "placeholder_ma"
