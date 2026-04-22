@@ -15,6 +15,7 @@ import json
 import os
 import re
 import textwrap
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -93,6 +94,7 @@ PLACEHOLDER_TOKEN = "placeholder"
 LOW_UV_DISTORTION_THRESHOLD = 1.6
 LOW_MAP2_TARGET_TD = 20.48
 LOW_MAP2_TOLERANCE = 0.50
+INTEGRATION_QDTOOLS_CATEGORIES = ["Props", "SetDress", "Environment"]
 
 
 @dataclass
@@ -1522,6 +1524,12 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
 
         cmds.text(label="Step 02 — Load / Update from P4", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.text(label="qdTools category", align="left")
+        self.ui["integration_qd_category_menu"] = cmds.optionMenu()
+        for category in INTEGRATION_QDTOOLS_CATEGORIES:
+            cmds.menuItem(label=category)
+        cmds.setParent("..")
         cmds.button(label="Update Status from P4 (Selected Catalog Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
         cmds.separator(style="in")
 
@@ -1702,28 +1710,63 @@ class HighPolyReviewTool:
             return
         cmds.textScrollList(control, edit=True, deselectAll=True)
 
+    def _selected_integration_qd_category(self) -> str:
+        control = self.ui.get("integration_qd_category_menu")
+        fallback = INTEGRATION_QDTOOLS_CATEGORIES[0]
+        if not control:
+            return fallback
+        try:
+            selected = cmds.optionMenu(control, query=True, value=True)
+        except RuntimeError:
+            return fallback
+        return selected or fallback
+
     def update_selected_catalog_assets_from_p4(self) -> None:
         selected_assets = self._selected_list_control_items("integration_catalog_list")
         if not selected_assets:
             self._append_integration_log("Nothing selected. Select at least one catalog asset.")
             return
+        category = self._selected_integration_qd_category()
 
         try:
             from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
         except Exception as exc:
             self._append_integration_log(f"[ERROR] qdTools import failed: {exc}")
+            self._append_integration_log(traceback.format_exc().rstrip())
             return
 
         self.integration_last_results = []
-        self._append_integration_log(f"Launching P4 update for {len(selected_assets)} asset(s)...")
+        self._append_integration_log(f"Launching P4 update for {len(selected_assets)} asset(s) with category='{category}'...")
         for catalog_name in selected_assets:
             try:
-                QDLoad.by_catalog(catalog_name, "Props").update_status(b_recursive=True)
+                self._append_integration_log(f"[DEBUG] Resolving catalog='{catalog_name}' category='{category}'")
+                loader = QDLoad.by_catalog(catalog_name, category)
+                self._append_integration_log(f"[DEBUG] Loader type for '{catalog_name}': {type(loader).__name__}")
+                self._append_integration_log(f"[DEBUG] Loader repr for '{catalog_name}': {loader!r}")
+
+                if loader is None:
+                    message = "QDLoad.by_catalog returned None (invalid catalog/category resolution)."
+                    self.integration_last_results.append((catalog_name, False, message))
+                    self._append_integration_log(f"[FAIL] {catalog_name} -> {message}")
+                    continue
+
+                update_callable = getattr(loader, "update_status", None)
+                if not callable(update_callable):
+                    message = "Resolved loader has no callable update_status method."
+                    self.integration_last_results.append((catalog_name, False, message))
+                    self._append_integration_log(f"[FAIL] {catalog_name} -> {message}")
+                    self._append_integration_log(f"[DEBUG] Loader dir for '{catalog_name}': {dir(loader)}")
+                    continue
+
+                update_callable(b_recursive=True)
                 self.integration_last_results.append((catalog_name, True, "OK"))
-                self._append_integration_log(f"[OK] {catalog_name} -> QDLoad.by_catalog(...).update_status(b_recursive=True)")
+                self._append_integration_log(
+                    f"[OK] {catalog_name} -> QDLoad.by_catalog('{catalog_name}', '{category}').update_status(b_recursive=True)"
+                )
             except Exception as exc:
                 self.integration_last_results.append((catalog_name, False, str(exc)))
                 self._append_integration_log(f"[FAIL] {catalog_name} -> {exc}")
+                self._append_integration_log(traceback.format_exc().rstrip())
 
     def _build_compare_row(
         self,
