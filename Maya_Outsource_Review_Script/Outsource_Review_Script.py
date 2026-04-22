@@ -500,7 +500,18 @@ if QT_AVAILABLE and QtWidgets is not None:
                     width = parent.width()
             if width <= 1:
                 return
-            compact = width < s(620)
+            spacing = self._root_layout.horizontalSpacing()
+            margins = self._root_layout.contentsMargins()
+            required_width = (
+                self._label_frame.minimumSizeHint().width()
+                + self.path_combo.minimumSizeHint().width()
+                + self.use_selection_btn.minimumSizeHint().width()
+                + max(0, spacing) * 2
+                + margins.left()
+                + margins.right()
+                + s(12)
+            )
+            compact = width < required_width
             if compact != self._compact_mode:
                 self._compact_mode = compact
                 self._refresh_layout()
@@ -515,6 +526,79 @@ if QT_AVAILABLE and QtWidgets is not None:
 else:
     class StepRootSelectorRow:  # type: ignore[no-redef]
         pass
+
+
+if QT_AVAILABLE and QtWidgets is not None:
+    class ResponsiveSubCheckBand(QtWidgets.QFrame):
+        def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("SubChecksBand")
+            self._compact_mode = False
+
+            self._root_layout = QtWidgets.QGridLayout(self)
+            self._root_layout.setContentsMargins(s(12), s(8), s(12), s(8))
+            self._root_layout.setHorizontalSpacing(s(10))
+            self._root_layout.setVerticalSpacing(s(6))
+
+            self.checks_container = QtWidgets.QWidget()
+            self.checks_layout = QtWidgets.QHBoxLayout(self.checks_container)
+            self.checks_layout.setContentsMargins(0, 0, 0, 0)
+            self.checks_layout.setSpacing(s(8))
+
+            self.actions_container = QtWidgets.QWidget()
+            self.actions_layout = QtWidgets.QHBoxLayout(self.actions_container)
+            self.actions_layout.setContentsMargins(0, 0, 0, 0)
+            self.actions_layout.setSpacing(s(8))
+
+            self._refresh_layout()
+
+        def _refresh_layout(self) -> None:
+            while self._root_layout.count():
+                item = self._root_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(self)
+            if self._compact_mode:
+                self._root_layout.addWidget(self.checks_container, 0, 0, 1, 1)
+                self._root_layout.addWidget(self.actions_container, 1, 0, 1, 1)
+                self._root_layout.setColumnStretch(0, 1)
+            else:
+                self._root_layout.addWidget(self.checks_container, 0, 0, 1, 1)
+                self._root_layout.addWidget(self.actions_container, 0, 1, 1, 1)
+                self._root_layout.setColumnStretch(0, 1)
+                self._root_layout.setColumnStretch(1, 0)
+
+        def _update_compact_mode(self) -> None:
+            width = self.width()
+            if width <= 1:
+                parent = self.parentWidget()
+                if parent is not None:
+                    width = parent.width()
+            if width <= 1:
+                return
+
+            spacing = self._root_layout.horizontalSpacing()
+            margins = self._root_layout.contentsMargins()
+            required_width = (
+                self.checks_container.minimumSizeHint().width()
+                + self.actions_container.minimumSizeHint().width()
+                + max(0, spacing)
+                + margins.left()
+                + margins.right()
+                + s(10)
+            )
+            compact = width < required_width
+            if compact != self._compact_mode:
+                self._compact_mode = compact
+                self._refresh_layout()
+
+        def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
+            self._update_compact_mode()
+            super().resizeEvent(event)
+
+        def showEvent(self, event: QtGui.QShowEvent) -> None:  # type: ignore[override]
+            self._update_compact_mode()
+            super().showEvent(event)
 
 
 if QT_AVAILABLE and QtWidgets is not None:
@@ -3068,11 +3152,7 @@ QLabel#PageHeaderSubtitle {
         body_layout.addWidget(high_row)
         body_layout.addWidget(placeholder_row)
 
-        sub_band = QtWidgets.QFrame()
-        sub_band.setObjectName("SubChecksBand")
-        sub_layout = QtWidgets.QHBoxLayout(sub_band)
-        sub_layout.setContentsMargins(s(12), s(10), s(12), s(10))
-        sub_layout.setSpacing(s(10))
+        sub_band = ResponsiveSubCheckBand()
 
         bbox_check = QtWidgets.QCheckBox("BBox")
         bbox_check.setObjectName("StepSubCheckBox")
@@ -3130,14 +3210,12 @@ QLabel#PageHeaderSubtitle {
         checks_layout.addWidget(div_1)
         checks_layout.addWidget(pivot_wrap, 0, QtCore.Qt.AlignVCenter)
         checks_layout.addStretch(1)
-        sub_layout.addWidget(checks_container, 1)
+        sub_band.checks_layout.addWidget(checks_container, 1)
 
-        actions_layout = QtWidgets.QHBoxLayout()
-        actions_layout.setSpacing(s(8))
+        actions_layout = sub_band.actions_layout
         actions_layout.addWidget(run_btn, 0, QtCore.Qt.AlignVCenter)
         actions_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
         actions_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
-        sub_layout.addLayout(actions_layout, 0)
 
         body_layout.addWidget(sub_band)
         card_layout.addWidget(body_widget)
@@ -3192,15 +3270,8 @@ QLabel#PageHeaderSubtitle {
 
     def _create_qt_subcheck_band(self, check_key: str, desc_map: Optional[Dict[str, str]] = None):
         desc_map = desc_map or {}
-        band = QtWidgets.QFrame()
-        band.setObjectName("SubChecksBand")
-        root_layout = QtWidgets.QHBoxLayout(band)
-        root_layout.setContentsMargins(s(12), s(8), s(12), s(8))
-        root_layout.setSpacing(s(10))
-        checks_container = QtWidgets.QWidget()
-        checks_layout = QtWidgets.QHBoxLayout(checks_container)
-        checks_layout.setContentsMargins(0, 0, 0, 0)
-        checks_layout.setSpacing(s(8))
+        band = ResponsiveSubCheckBand()
+        checks_layout = band.checks_layout
         defs = self.subcheck_definitions.get(check_key, [])
         self.qt_subcheck_widgets.setdefault(check_key, {})
         for idx, (sub_key, sub_label) in enumerate(defs):
@@ -3226,12 +3297,7 @@ QLabel#PageHeaderSubtitle {
                 divider.setObjectName("ThinDivider")
                 checks_layout.addWidget(divider)
         checks_layout.addStretch(1)
-        root_layout.addWidget(checks_container, 1)
-
-        actions_layout = QtWidgets.QHBoxLayout()
-        actions_layout.setSpacing(s(8))
-        root_layout.addLayout(actions_layout, 0)
-        return band, actions_layout
+        return band, band.actions_layout
 
     def _make_qt_run_button(self, label: str, callback):
         btn = QtWidgets.QPushButton(label)
