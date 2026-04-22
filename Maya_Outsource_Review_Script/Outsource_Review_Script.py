@@ -73,13 +73,13 @@ WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
 MAX_UI_TEXT_LENGTH = 90
 MAX_MENU_LABEL_LENGTH = 72
-UI_COLOR_BG_WINDOW = (0.17, 0.17, 0.18)
-UI_COLOR_BG_SECTION = (0.20, 0.20, 0.22)
-UI_COLOR_BG_SUBSECTION = (0.23, 0.23, 0.25)
+UI_COLOR_BG_WINDOW = (0.07, 0.10, 0.16)
+UI_COLOR_BG_SECTION = (0.09, 0.13, 0.20)
+UI_COLOR_BG_SUBSECTION = (0.11, 0.16, 0.24)
 UI_COLOR_BG_ACCENT = (0.25, 0.37, 0.56)
 UI_COLOR_BG_ACCENT_SOFT = (0.28, 0.32, 0.38)
 UI_COLOR_BG_WARNING = (0.34, 0.27, 0.16)
-UI_COLOR_BG_LOG = (0.15, 0.15, 0.16)
+UI_COLOR_BG_LOG = (0.08, 0.12, 0.19)
 UI_COLOR_TEXT_MUTED = (0.77, 0.77, 0.79)
 UI_COLOR_VIS_ON = (0.22, 0.44, 0.30)
 UI_COLOR_VIS_OFF = (0.30, 0.30, 0.32)
@@ -1258,8 +1258,8 @@ class HighPolyReviewTool:
             _resolve_scaled_tokens(
                 """
 QFrame#MainSidebarPanel {
-    background-color: #0b1320;
-    border: 1px solid #1b2a40;
+    background-color: #0a1526;
+    border: 1px solid #1c314d;
     border-radius: {s(12)}px;
 }
 QLabel#SidebarSectionLabel {
@@ -1270,8 +1270,8 @@ QLabel#SidebarSectionLabel {
     padding-top: {s(2)}px;
 }
 QFrame#SidebarToolHeader {
-    background-color: #101b2c;
-    border: 1px solid #21314a;
+    background-color: #0f1c30;
+    border: 1px solid #243a59;
     border-radius: {s(10)}px;
 }
 QLabel#SidebarToolHeaderIcon {
@@ -1289,7 +1289,7 @@ QPushButton#SidebarReviewButton {
     padding: {s(10)}px {s(12)}px;
     border-radius: {s(8)}px;
     border: 1px solid transparent;
-    background-color: #121d2e;
+    background-color: #112036;
     color: #c2d4ef;
     font-size: {s(14)}px;
     font-weight: 600;
@@ -1306,8 +1306,8 @@ QPushButton#SidebarToolButton {
     text-align: left;
     padding: {s(8)}px {s(12)}px;
     border-radius: {s(8)}px;
-    border: 1px solid #1d2d45;
-    background-color: #101a2a;
+    border: 1px solid #243654;
+    background-color: #0f1b2e;
     color: #8fa3c4;
     font-size: {s(13)}px;
 }
@@ -1352,8 +1352,8 @@ QLabel#SidebarSummaryValue {
             _resolve_scaled_tokens(
                 """
 QFrame#PageHeaderFrame {
-    background-color: #121e31;
-    border: 1px solid #24364f;
+    background-color: #13233a;
+    border: 1px solid #2a4060;
     border-radius: {s(12)}px;
 }
 QLabel#PageHeaderTitle {
