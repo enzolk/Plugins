@@ -42,31 +42,6 @@ except Exception:
         QtCore = QtGui = QtWidgets = None  # type: ignore[assignment]
         wrapInstance = None  # type: ignore[assignment]
 
-if QT_AVAILABLE and QtWidgets is not None and QtCore is not None:
-    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
-    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
-
-
-def get_ui_scale() -> float:
-    if not QT_AVAILABLE or QtWidgets is None:
-        return 1.0
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        return 1.0
-    screen = app.primaryScreen() or QtWidgets.QApplication.primaryScreen()
-    if screen is None:
-        return 1.0
-    dpi = screen.logicalDotsPerInch()
-    return dpi / 96.0 if dpi > 0 else 1.0
-
-
-UI_SCALE_OVERRIDE = 1.0
-UI_SCALE = get_ui_scale() * UI_SCALE_OVERRIDE
-
-
-def s(value: float) -> int:
-    return max(1, int(round(value * UI_SCALE)))
-
 
 WINDOW_NAME = "highPolyReviewAssistantWin"
 WINDOW_TITLE = "Outsource Review Script"
@@ -114,48 +89,48 @@ class DetailedLogRowRef:
     measured_height: int
 
 
-STEP01_QSS = f"""
+STEP01_QSS = """
 QFrame#Step01Card {
     background-color: #151f31;
     border: 1px solid #273854;
-    border-radius: {s(12)}px;
+    border-radius: 12px;
 }
 QFrame#StepCard {
     background-color: #151f31;
     border: 1px solid #273854;
-    border-radius: {s(12)}px;
+    border-radius: 12px;
 }
 QFrame#StepBadge {
     background-color: #121b2c;
     border: 1px solid #2a4670;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
 }
 QLabel#StepBadgeTop {
     color: #72b1ff;
-    font-size: {s(10)}px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.8px;
 }
 QLabel#StepBadgeBottom {
     color: #72b1ff;
-    font-size: {s(38)}px;
+    font-size: 38px;
     font-weight: 700;
 }
 QLabel#StepTitle {
     color: #edf2ff;
-    font-size: {s(33)}px;
+    font-size: 33px;
     font-weight: 700;
 }
 QToolButton#InfoButton, QToolButton#CollapseButton {
     border: none;
     color: #8ea2c0;
     background: transparent;
-    font-size: {s(16)}px;
+    font-size: 16px;
 }
 QToolButton#InfoButton {
-    min-width: {s(24)}px;
-    min-height: {s(24)}px;
-    border-radius: {s(12)}px;
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 12px;
     color: #b9cff5;
     font-weight: 700;
 }
@@ -164,11 +139,11 @@ QToolButton#InfoButton:hover {
     color: #e9f2ff;
 }
 QToolButton#CollapseButton {
-    min-width: {s(40)}px;
-    min-height: {s(40)}px;
-    padding: {s(2)}px;
-    border-radius: {s(10)}px;
-    font-size: {s(28)}px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 2px;
+    border-radius: 10px;
+    font-size: 28px;
     font-weight: 700;
     color: #c9dbfb;
 }
@@ -183,28 +158,28 @@ QToolButton#CollapseButton:pressed {
 QFrame#RootLabelFrame {
     background-color: #1a2539;
     border: 1px solid #25374f;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
 }
 QLabel#RootLabelIcon, QLabel#RootLabelText {
     color: #dde7fb;
-    font-size: {s(16)}px;
+    font-size: 16px;
     font-weight: 600;
 }
 QComboBox#RootPathCombo {
     background-color: #0d1422;
     border: 1px solid #2b3f5f;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
     color: #e9f1ff;
-    padding: 0 {s(34)}px 0 {s(12)}px;
-    min-height: {s(40)}px;
-    font-size: {s(16)}px;
+    padding: 0 34px 0 12px;
+    min-height: 40px;
+    font-size: 16px;
 }
 QComboBox#RootPathCombo::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     border: none;
     background: transparent;
-    width: {s(30)}px;
+    width: 30px;
 }
 QComboBox#RootPathCombo::down-arrow {
     image: none;
@@ -214,12 +189,12 @@ QComboBox#RootPathCombo::down-arrow {
 QPushButton#PrimaryBlueButton {
     background-color: #2b6fd4;
     border: 1px solid #3a7ce0;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
     color: #ffffff;
-    min-height: {s(40)}px;
-    padding-left: {s(16)}px;
-    padding-right: {s(16)}px;
-    font-size: {s(16)}px;
+    min-height: 40px;
+    padding-left: 16px;
+    padding-right: 16px;
+    font-size: 16px;
     font-weight: 700;
 }
 QPushButton#PrimaryBlueButton:hover {
@@ -228,40 +203,40 @@ QPushButton#PrimaryBlueButton:hover {
 QToolButton#SquareIconButton {
     background-color: #1f2a3e;
     border: 1px solid #31435f;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
     color: #dce9ff;
-    min-width: {s(40)}px;
-    min-height: {s(40)}px;
-    font-size: {s(15)}px;
+    min-width: 40px;
+    min-height: 40px;
+    font-size: 15px;
 }
 QFrame#SubChecksBand {
     background-color: #182335;
     border: 1px solid #243751;
-    border-radius: {s(10)}px;
+    border-radius: 10px;
 }
 QListWidget#StepListWidget {
     background-color: #0f1727;
     border: 1px solid #2f4360;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
     color: #dce9ff;
-    font-size: {s(13)}px;
-    padding: {s(4)}px;
+    font-size: 13px;
+    padding: 4px;
 }
 QCheckBox#GlobalToggleBox {
     color: #c7d8f3;
-    font-size: {s(13)}px;
+    font-size: 13px;
     font-weight: 600;
 }
 QCheckBox#StepSubCheckBox {
     color: #eaf2ff;
-    font-size: {s(16)}px;
+    font-size: 16px;
     font-weight: 700;
-    spacing: {s(8)}px;
+    spacing: 8px;
 }
 QCheckBox#StepSubCheckBox::indicator {
-    width: {s(19)}px;
-    height: {s(19)}px;
-    border-radius: {s(4)}px;
+    width: 19px;
+    height: 19px;
+    border-radius: 4px;
     border: 1px solid #3a4f6d;
     background-color: #0f1727;
 }
@@ -280,7 +255,7 @@ QCheckBox#StepSubCheckBox[resultState="PENDING"]::indicator {
 }
 QLabel#SubCheckDesc {
     color: #a8b6cc;
-    font-size: {s(14)}px;
+    font-size: 14px;
 }
 QFrame#ThinDivider {
     background-color: #2a3d57;
@@ -290,11 +265,11 @@ QFrame#ThinDivider {
 QPushButton#RunCheckButton {
     background-color: #2b6fd4;
     border: 1px solid #3a7ce0;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
     color: white;
-    min-height: {s(40)}px;
-    padding: 0 {s(18)}px;
-    font-size: {s(16)}px;
+    min-height: 40px;
+    padding: 0 18px;
+    font-size: 16px;
     font-weight: 700;
 }
 QPushButton#RunCheckButton:hover {
@@ -304,28 +279,28 @@ QPushButton#RunCheckButton:hover {
 QPushButton#RunCheckButton:pressed {
     background-color: #225cb5;
     border: 1px solid #1d4e99;
-    padding-top: {s(1)}px;
-    padding-left: {s(1)}px;
+    padding-top: 1px;
+    padding-left: 1px;
 }
 QLabel#ToleranceLabel {
     color: #e0e8f7;
-    font-size: {s(16)}px;
+    font-size: 16px;
     font-weight: 600;
 }
 QDoubleSpinBox#ToleranceSpin {
     background-color: #0f1727;
     border: 1px solid #2f4360;
-    border-radius: {s(8)}px;
+    border-radius: 8px;
     color: #f1f6ff;
-    min-height: {s(40)}px;
-    min-width: {s(90)}px;
-    padding-right: {s(16)}px;
-    font-size: {s(16)}px;
+    min-height: 40px;
+    min-width: 90px;
+    padding-right: 16px;
+    font-size: 16px;
     font-weight: 600;
 }
 QDoubleSpinBox#ToleranceSpin::up-button,
 QDoubleSpinBox#ToleranceSpin::down-button {
-    width: {s(18)}px;
+    width: 18px;
     border: none;
     background-color: #101b2d;
 }
@@ -344,16 +319,16 @@ if QT_AVAILABLE and QtWidgets is not None:
                 "QFrame#StepInfoToolTipPopup {"
                 "background-color: #132238;"
                 "border: 1px solid #34506f;"
-                f"border-radius: {s(10)}px;"
+                "border-radius: 10px;"
                 "}" 
                 "QLabel {"
                 "color: #eaf2ff;"
-                f"font-size: {s(12)}px;"
+                "font-size: 12px;"
                 "line-height: 1.35em;"
                 "}"
             )
             layout = QtWidgets.QVBoxLayout(self)
-            layout.setContentsMargins(s(12), s(10), s(12), s(10))
+            layout.setContentsMargins(12, 10, 12, 10)
             self.label = QtWidgets.QLabel()
             self.label.setWordWrap(True)
             self.label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
@@ -362,7 +337,7 @@ if QT_AVAILABLE and QtWidgets is not None:
         def show_text(self, anchor_widget: QtWidgets.QWidget, message: str) -> None:
             self.label.setText(message)
             self.adjustSize()
-            global_pos = anchor_widget.mapToGlobal(QtCore.QPoint(0, anchor_widget.height() + s(8)))
+            global_pos = anchor_widget.mapToGlobal(QtCore.QPoint(0, anchor_widget.height() + 8))
             self.move(global_pos)
             self.show()
             self.raise_()
@@ -381,7 +356,7 @@ if QT_AVAILABLE and QtWidgets is not None:
             self._tooltip_popup.show_text(self, self._tooltip_text)
 
         def enterEvent(self, event: QtCore.QEvent) -> None:  # type: ignore[override]
-            self._tooltip_timer.start(s(140))
+            self._tooltip_timer.start(140)
             super().enterEvent(event)
 
         def leaveEvent(self, event: QtCore.QEvent) -> None:  # type: ignore[override]
@@ -402,12 +377,12 @@ if QT_AVAILABLE and QtWidgets is not None:
             arrow_color = QtGui.QColor("#e8efff") if self.isEnabled() else QtGui.QColor("#90a0b8")
             painter.setPen(QtCore.Qt.NoPen)
             painter.setBrush(arrow_color)
-            center_x = self.width() - s(16)
-            center_y = self.height() // 2 + s(1)
+            center_x = self.width() - 16
+            center_y = self.height() // 2 + 1
             triangle = QtGui.QPolygon([
-                QtCore.QPoint(center_x - s(5), center_y - s(2)),
-                QtCore.QPoint(center_x + s(5), center_y - s(2)),
-                QtCore.QPoint(center_x, center_y + s(4)),
+                QtCore.QPoint(center_x - 5, center_y - 2),
+                QtCore.QPoint(center_x + 5, center_y - 2),
+                QtCore.QPoint(center_x, center_y + 4),
             ])
             painter.drawPolygon(triangle)
             painter.end()
@@ -420,14 +395,14 @@ if QT_AVAILABLE and QtWidgets is not None:
             self.menu_key = menu_key
             row_layout = QtWidgets.QHBoxLayout(self)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(s(10))
+            row_layout.setSpacing(10)
 
             label_frame = QtWidgets.QFrame()
             label_frame.setObjectName("RootLabelFrame")
-            label_frame.setMinimumWidth(s(180))
+            label_frame.setFixedWidth(180)
             label_layout = QtWidgets.QHBoxLayout(label_frame)
-            label_layout.setContentsMargins(s(14), s(8), s(14), s(8))
-            label_layout.setSpacing(s(8))
+            label_layout.setContentsMargins(14, 8, 14, 8)
+            label_layout.setSpacing(8)
             icon_lbl = QtWidgets.QLabel("◈")
             icon_lbl.setObjectName("RootLabelIcon")
             txt_lbl = QtWidgets.QLabel(label_text)
@@ -446,7 +421,7 @@ if QT_AVAILABLE and QtWidgets is not None:
             self.use_selection_btn.setObjectName("PrimaryBlueButton")
             self.use_selection_btn.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
             button_text_width = self.use_selection_btn.fontMetrics().horizontalAdvance(self.use_selection_btn.text())
-            self.use_selection_btn.setMinimumWidth(button_text_width + s(32))
+            self.use_selection_btn.setMinimumWidth(button_text_width + 32)
 
             row_layout.addWidget(label_frame)
             row_layout.addWidget(self.path_combo, 1)
@@ -464,16 +439,16 @@ if QT_AVAILABLE and QtWidgets is not None:
             self.setStyleSheet(STEP01_QSS)
             self.body_widget = QtWidgets.QWidget()
             root = QtWidgets.QVBoxLayout(self)
-            root.setContentsMargins(s(14), s(12), s(14), s(12))
-            root.setSpacing(s(10))
+            root.setContentsMargins(14, 12, 14, 12)
+            root.setSpacing(10)
 
             header = QtWidgets.QHBoxLayout()
-            header.setSpacing(s(10))
+            header.setSpacing(10)
             badge = QtWidgets.QFrame()
             badge.setObjectName("StepBadge")
-            badge.setFixedSize(s(52), s(52))
+            badge.setFixedSize(52, 52)
             b_l = QtWidgets.QVBoxLayout(badge)
-            b_l.setContentsMargins(0, s(7), 0, s(6))
+            b_l.setContentsMargins(0, 7, 0, 6)
             b_l.setSpacing(0)
             b_l.setAlignment(QtCore.Qt.AlignCenter)
             t = QtWidgets.QLabel("STEP")
@@ -482,13 +457,13 @@ if QT_AVAILABLE and QtWidgets is not None:
             n = QtWidgets.QLabel(f"{step_num:02d}")
             n.setObjectName("StepBadgeBottom")
             n.setAlignment(QtCore.Qt.AlignCenter)
-            n.setStyleSheet(f"font-size: {s(24)}px;")
+            n.setStyleSheet("font-size: 24px;")
             b_l.addWidget(t)
             b_l.addWidget(n)
 
             title_lbl = QtWidgets.QLabel(title)
             title_lbl.setObjectName("StepTitle")
-            title_lbl.setStyleSheet(f"font-size: {s(18)}px;")
+            title_lbl.setStyleSheet("font-size: 18px;")
             header.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
             header.addWidget(title_lbl, 0, QtCore.Qt.AlignVCenter)
             if info_text:
@@ -506,7 +481,7 @@ if QT_AVAILABLE and QtWidgets is not None:
 
             body_l = QtWidgets.QVBoxLayout(self.body_widget)
             body_l.setContentsMargins(0, 0, 0, 0)
-            body_l.setSpacing(s(8))
+            body_l.setSpacing(8)
             root.addWidget(self.body_widget)
 
         def body_layout(self) -> QtWidgets.QVBoxLayout:
@@ -1844,17 +1819,17 @@ class HighPolyReviewTool:
         step_card.setObjectName("Step01Card")
         step_card.setStyleSheet(STEP01_QSS)
         card_layout = QtWidgets.QVBoxLayout(step_card)
-        card_layout.setContentsMargins(s(14), s(12), s(14), s(12))
-        card_layout.setSpacing(s(12))
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(12)
 
         header_layout = QtWidgets.QHBoxLayout()
-        header_layout.setSpacing(s(10))
+        header_layout.setSpacing(10)
 
         badge = QtWidgets.QFrame()
         badge.setObjectName("StepBadge")
-        badge.setFixedSize(s(66), s(66))
+        badge.setFixedSize(66, 66)
         badge_layout = QtWidgets.QVBoxLayout(badge)
-        badge_layout.setContentsMargins(0, s(8), 0, s(7))
+        badge_layout.setContentsMargins(0, 8, 0, 7)
         badge_layout.setSpacing(0)
         badge_layout.setAlignment(QtCore.Qt.AlignCenter)
         badge_top = QtWidgets.QLabel("STEP")
@@ -1892,7 +1867,7 @@ class HighPolyReviewTool:
         body_widget = QtWidgets.QWidget()
         body_layout = QtWidgets.QVBoxLayout(body_widget)
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(s(12))
+        body_layout.setSpacing(12)
 
         self.manual_root_menu_sources["placeholder_high_root_menu"] = "high_ma"
         self.manual_root_menu_sources["placeholder_placeholder_root_menu"] = "placeholder_ma"
@@ -1910,8 +1885,8 @@ class HighPolyReviewTool:
         sub_band = QtWidgets.QFrame()
         sub_band.setObjectName("SubChecksBand")
         sub_layout = QtWidgets.QHBoxLayout(sub_band)
-        sub_layout.setContentsMargins(s(12), s(10), s(12), s(10))
-        sub_layout.setSpacing(s(12))
+        sub_layout.setContentsMargins(12, 10, 12, 10)
+        sub_layout.setSpacing(12)
 
         bbox_check = QtWidgets.QCheckBox("BBox")
         bbox_check.setObjectName("StepSubCheckBox")
@@ -1922,7 +1897,7 @@ class HighPolyReviewTool:
         bbox_desc.setObjectName("SubCheckDesc")
         bbox_desc.setWordWrap(True)
         bbox_group = QtWidgets.QHBoxLayout()
-        bbox_group.setSpacing(s(10))
+        bbox_group.setSpacing(10)
         bbox_group.addWidget(bbox_check, 0, QtCore.Qt.AlignVCenter)
         bbox_group.addWidget(bbox_desc, 0, QtCore.Qt.AlignVCenter)
         bbox_wrap = QtWidgets.QWidget()
@@ -1937,7 +1912,7 @@ class HighPolyReviewTool:
         pivot_desc.setObjectName("SubCheckDesc")
         pivot_desc.setWordWrap(True)
         pivot_group = QtWidgets.QHBoxLayout()
-        pivot_group.setSpacing(s(10))
+        pivot_group.setSpacing(10)
         pivot_group.addWidget(pivot_check, 0, QtCore.Qt.AlignVCenter)
         pivot_group.addWidget(pivot_desc, 0, QtCore.Qt.AlignVCenter)
         pivot_wrap = QtWidgets.QWidget()
@@ -1967,7 +1942,7 @@ class HighPolyReviewTool:
         sub_layout.addWidget(div_2, 0)
         sub_layout.addStretch(1)
         sub_layout.addWidget(run_btn, 0, QtCore.Qt.AlignVCenter)
-        sub_layout.addSpacing(s(8))
+        sub_layout.addSpacing(8)
         sub_layout.addWidget(tolerance_lbl, 0, QtCore.Qt.AlignVCenter)
         sub_layout.addWidget(tolerance_spin, 0, QtCore.Qt.AlignVCenter)
 
@@ -2027,8 +2002,8 @@ class HighPolyReviewTool:
         band = QtWidgets.QFrame()
         band.setObjectName("SubChecksBand")
         layout = QtWidgets.QHBoxLayout(band)
-        layout.setContentsMargins(s(12), s(8), s(12), s(8))
-        layout.setSpacing(s(10))
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
         defs = self.subcheck_definitions.get(check_key, [])
         self.qt_subcheck_widgets.setdefault(check_key, {})
         for idx, (sub_key, sub_label) in enumerate(defs):
@@ -2040,7 +2015,7 @@ class HighPolyReviewTool:
             wrap = QtWidgets.QWidget()
             wlay = QtWidgets.QVBoxLayout(wrap)
             wlay.setContentsMargins(0, 0, 0, 0)
-            wlay.setSpacing(s(2))
+            wlay.setSpacing(2)
             wlay.addWidget(chk)
             desc = desc_map.get(sub_key, "")
             if desc:
