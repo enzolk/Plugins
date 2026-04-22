@@ -1005,8 +1005,8 @@ class HighPolyReviewTool:
 
     def _build_review_tabs_section(self) -> None:
         cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
-        split = cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(250, 900), columnAttach=[(1, "both", 0), (2, "both", 10)])
-        sidebar_host = cmds.columnLayout(adjustableColumn=True)
+        split = cmds.formLayout()
+        sidebar_host = cmds.columnLayout(adjustableColumn=True, width=250)
         cmds.setParent(split)
         self.ui["review_scroll"] = cmds.scrollLayout(
             childResizable=True,
@@ -1059,6 +1059,19 @@ class HighPolyReviewTool:
         self.review_tab_order = ["high", "low", "bake", "final_asset", "integration"]
         self._build_qt_sidebar(sidebar_host)
         self._set_active_review_button("high")
+        cmds.formLayout(
+            split,
+            edit=True,
+            attachForm=[
+                (sidebar_host, "top", 0),
+                (sidebar_host, "left", 0),
+                (sidebar_host, "bottom", 0),
+                (self.ui["review_scroll"], "top", 0),
+                (self.ui["review_scroll"], "right", 0),
+                (self.ui["review_scroll"], "bottom", 0),
+            ],
+            attachControl=[(self.ui["review_scroll"], "left", 10, sidebar_host)],
+        )
         cmds.setParent("..")
         cmds.setParent("..")
         cmds.setParent("..")
