@@ -1884,23 +1884,112 @@ class HighPolyReviewTool:
                 except Exception:
                     continue
 
-    def _integration_copy_source_content(self, source_asset_root: str, target_container: str) -> None:
-        source_children = cmds.listRelatives(source_asset_root, children=True, type="transform", fullPath=True) or []
-        for child in source_children:
-            if not cmds.objExists(child):
+    def _integration_copy_source_content(self, source_asset_root: str, target_container: str) -> bool:
+        def _mesh_shapes_under(node: str) -> List[str]:
+            direct = cmds.listRelatives(node, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            descendants = cmds.listRelatives(node, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            merged: List[str] = []
+            seen: Set[str] = set()
+            for shape in direct + descendants:
+                if shape not in seen:
+                    seen.add(shape)
+                    merged.append(shape)
+            return merged
+
+        def _mesh_transforms_under(node: str) -> List[str]:
+            transforms: List[str] = []
+            seen: Set[str] = set()
+            for shape in _mesh_shapes_under(node):
+                parents = cmds.listRelatives(shape, parent=True, type="transform", fullPath=True) or []
+                for parent in parents:
+                    if parent not in seen:
+                        seen.add(parent)
+                        transforms.append(parent)
+            return transforms
+
+        source_mesh_transforms = _mesh_transforms_under(source_asset_root)
+        self._append_integration_log(f"[INFO] Source mesh transforms found: {len(source_mesh_transforms)}")
+        if not source_mesh_transforms:
+            self._append_integration_log("[FAIL] No source mesh transforms found under source asset root.")
+            return False
+
+        source_root_prefix = f"{source_asset_root}|"
+        copy_roots: Set[str] = set()
+        for mesh_transform in source_mesh_transforms:
+            if mesh_transform == source_asset_root:
+                copy_roots.add(mesh_transform)
                 continue
-            duplicated = cmds.duplicate(child, renameChildren=True) or []
+            if not mesh_transform.startswith(source_root_prefix):
+                continue
+            relative = mesh_transform[len(source_root_prefix):]
+            if not relative:
+                continue
+            first_segment = relative.split("|", 1)[0]
+            copy_roots.add(f"{source_asset_root}|{first_segment}")
+
+        ordered_copy_roots = sorted(copy_roots, key=lambda node: (node.count("|"), len(node), node))
+        self._append_integration_log(f"[INFO] Source copy roots selected: {len(ordered_copy_roots)}")
+        if not ordered_copy_roots:
+            self._append_integration_log("[FAIL] Could not resolve source copy roots for mesh duplication.")
+            return False
+
+        copied_nodes = 0
+        for source_node in ordered_copy_roots:
+            if not cmds.objExists(source_node):
+                self._append_integration_log(f"[FAIL] Source node no longer exists before duplication: {source_node}")
+                continue
+
+            source_shape_count = len(_mesh_shapes_under(source_node))
+            self._append_integration_log(f"[INFO] Duplicating source node: {source_node}")
+            self._append_integration_log(f"[INFO] Mesh shapes found on source node before copy: {source_shape_count}")
+            if source_shape_count == 0:
+                self._append_integration_log(f"[WARN] Skipping source node with no mesh shapes: {source_node}")
+                continue
+
+            try:
+                duplicated = cmds.duplicate(source_node, renameChildren=True) or []
+            except Exception as exc:
+                self._append_integration_log(f"[FAIL] Could not duplicate source node {source_node}: {exc}")
+                continue
             if not duplicated:
+                self._append_integration_log(f"[FAIL] Duplicate command returned no nodes for source: {source_node}")
                 continue
+
             dup_root = duplicated[0]
+            self._append_integration_log(f"[INFO] Duplicated node created: {dup_root}")
             try:
-                cmds.parent(dup_root, target_container)
-            except Exception:
-                pass
+                parented = cmds.parent(dup_root, target_container) or []
+            except Exception as exc:
+                self._append_integration_log(f"[FAIL] Could not parent duplicated node under target container: {exc}")
+                continue
+
+            final_node = parented[0] if parented else dup_root
+            self._append_integration_log("[INFO] Parented duplicated node under target container")
+            if not (final_node == target_container or final_node.startswith(f"{target_container}|")):
+                self._append_integration_log(
+                    f"[FAIL] Duplicated node is not under target container after parenting: {final_node}"
+                )
+                continue
+
+            duplicated_shape_count = len(_mesh_shapes_under(final_node))
+            self._append_integration_log(
+                f"[INFO] Mesh shapes found on duplicated node after parenting: {duplicated_shape_count}"
+            )
+            if duplicated_shape_count == 0:
+                self._append_integration_log("[FAIL] Duplicated node has no mesh shapes after copy")
+                continue
+
             try:
-                cmds.makeIdentity(dup_root, apply=True, translate=False, rotate=False, scale=True, normal=False)
-            except Exception:
-                pass
+                cmds.makeIdentity(final_node, apply=True, translate=False, rotate=False, scale=True, normal=False)
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Could not freeze scale on duplicated node {final_node}: {exc}")
+
+            copied_nodes += 1
+
+        if copied_nodes == 0:
+            self._append_integration_log("[FAIL] No source mesh content was successfully copied into target.")
+            return False
+        return True
 
     def confirm_integration_rights_taken(self) -> None:
         self.integration_rights_confirmed = True
@@ -1950,9 +2039,12 @@ class HighPolyReviewTool:
             self._append_integration_log("[INFO] Removing existing meshes under target")
             self._integration_clear_target_content(target_container)
             self._append_integration_log("[INFO] Copying source meshes into target")
-            self._integration_copy_source_content(source_asset_root, target_container)
-            self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
-            replaced_count += 1
+            copied = self._integration_copy_source_content(source_asset_root, target_container)
+            if copied:
+                self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
+                replaced_count += 1
+            else:
+                self._append_integration_log(f"[FAIL] Replacement failed for {base_asset_name}")
 
         self._append_integration_log(f"[INFO] Mesh replacement finished. Assets replaced: {replaced_count}")
 
