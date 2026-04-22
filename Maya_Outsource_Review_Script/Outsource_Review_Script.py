@@ -755,7 +755,10 @@ class HighPolyReviewTool:
         self.scene_visibility_groups_by_context: Dict[str, List[Dict[str, Any]]] = {}
         self.scene_visibility_controls: Dict[str, str] = {}
         self.integration_catalog_assets: List[str] = []
+        self.integration_main_catalog_assets: List[str] = []
+        self.integration_annexe_catalog_assets: List[str] = []
         self.integration_detection_sources: Dict[str, Set[str]] = {}
+        self.integration_annexe_sources: Dict[str, Set[str]] = {}
         self.integration_last_results: List[Tuple[str, bool, str]] = []
 
     # --------------------------- UI BUILD ---------------------------
@@ -1515,13 +1518,16 @@ class HighPolyReviewTool:
         cmds.separator(style="in")
 
         cmds.text(label="Step 01 — Detect Scene Assets", align="left")
-        cmds.text(label="Scan the full Maya scene and extract principal asset names.", align="left")
+        cmds.text(label="Scan the full Maya scene and extract principal + annexe asset names.", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         cmds.button(label="Detect / Refresh Scene Assets", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.detect_catalog_assets_for_integration())
         cmds.button(label="Select All", height=UI_BUTTON_HEIGHT, command=lambda *_: self.select_all_integration_catalog_assets())
         cmds.button(label="Clear Selection", height=UI_BUTTON_HEIGHT, command=lambda *_: self.clear_integration_catalog_selection())
         cmds.setParent("..")
+        cmds.text(label="Main Assets", align="left")
         self.ui["integration_catalog_list"] = cmds.textScrollList(allowMultiSelection=True, height=160)
+        cmds.text(label="Annexe", align="left")
+        self.ui["integration_annexe_catalog_list"] = cmds.textScrollList(allowMultiSelection=True, height=120)
         cmds.separator(style="in")
 
         cmds.text(label="Step 02 — Load Selected Asset(s) from P4", align="left")
@@ -1664,10 +1670,15 @@ class HighPolyReviewTool:
 
     def _refresh_integration_catalog_list_ui(self) -> None:
         self._clear_list_control("integration_catalog_list")
-        for catalog_name in self.integration_catalog_assets:
+        self._clear_list_control("integration_annexe_catalog_list")
+        for catalog_name in self.integration_main_catalog_assets:
             self._append_list_control_item("integration_catalog_list", catalog_name)
-        if self.integration_catalog_assets:
-            self._set_selected_list_control_items("integration_catalog_list", self.integration_catalog_assets)
+        for catalog_name in self.integration_annexe_catalog_assets:
+            self._append_list_control_item("integration_annexe_catalog_list", catalog_name)
+        if self.integration_main_catalog_assets:
+            self._set_selected_list_control_items("integration_catalog_list", self.integration_main_catalog_assets)
+        if self.integration_annexe_catalog_assets:
+            self._set_selected_list_control_items("integration_annexe_catalog_list", self.integration_annexe_catalog_assets)
 
     def _append_integration_log(self, message: str) -> None:
         self._append_list_control_item("integration_logs", message)
@@ -1675,6 +1686,7 @@ class HighPolyReviewTool:
 
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
+        annexe_sources: Dict[str, Set[str]] = {}
         transforms = cmds.ls(type="transform", long=True) or []
         for node in transforms:
             if not cmds.objExists(node):
@@ -1683,17 +1695,40 @@ class HighPolyReviewTool:
             if catalog_name:
                 detected.setdefault(catalog_name, set()).add(node)
 
+        annexe_assets: Set[str] = set()
+        for catalog_name, source_nodes in detected.items():
+            for source_node in source_nodes:
+                descendants = cmds.listRelatives(source_node, allDescendents=True, fullPath=True, type="transform") or []
+                for child in descendants:
+                    child_catalog = self._extract_catalog_asset_from_name(child)
+                    if not child_catalog or child_catalog == catalog_name:
+                        continue
+                    if child_catalog.startswith(f"{catalog_name}_"):
+                        # Technical child naming variation of the main asset.
+                        continue
+                    if child_catalog not in detected:
+                        continue
+                    annexe_assets.add(child_catalog)
+                    annexe_sources.setdefault(child_catalog, set()).add(catalog_name)
+
         self.integration_catalog_assets = sorted(detected.keys())
+        self.integration_annexe_catalog_assets = sorted(annexe_assets)
+        self.integration_main_catalog_assets = sorted(set(self.integration_catalog_assets) - annexe_assets)
         self.integration_detection_sources = detected
+        self.integration_annexe_sources = annexe_sources
         self._refresh_integration_catalog_list_ui()
         self._clear_list_control("integration_logs")
 
-        if not self.integration_catalog_assets:
+        if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
             self._append_integration_log("No catalog asset detected in current scene.")
             return []
 
-        self._append_integration_log("Detected catalog assets:")
-        for catalog_name in self.integration_catalog_assets:
+        self._append_integration_log("Detected main assets:")
+        for catalog_name in self.integration_main_catalog_assets:
+            self._append_integration_log(f"- {catalog_name}")
+        self._append_integration_log("")
+        self._append_integration_log("Detected annexe assets:")
+        for catalog_name in self.integration_annexe_catalog_assets:
             self._append_integration_log(f"- {catalog_name}")
         return self.integration_catalog_assets[:]
 
@@ -1704,18 +1739,20 @@ class HighPolyReviewTool:
         return [f"{prefix}{cleaned}" for prefix in INTEGRATION_QDTOOLS_PREFIXES]
 
     def select_all_integration_catalog_assets(self) -> None:
-        if not self.integration_catalog_assets:
+        if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
             return
-        self._set_selected_list_control_items("integration_catalog_list", self.integration_catalog_assets)
+        self._set_selected_list_control_items("integration_catalog_list", self.integration_main_catalog_assets)
+        self._set_selected_list_control_items("integration_annexe_catalog_list", self.integration_annexe_catalog_assets)
 
     def clear_integration_catalog_selection(self) -> None:
-        control = self.ui.get("integration_catalog_list")
-        if control is None:
-            return
-        if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
-            control.clearSelection()
-            return
-        cmds.textScrollList(control, edit=True, deselectAll=True)
+        for ui_key in ("integration_catalog_list", "integration_annexe_catalog_list"):
+            control = self.ui.get(ui_key)
+            if control is None:
+                continue
+            if QT_AVAILABLE and QtWidgets is not None and isinstance(control, QtWidgets.QListWidget):
+                control.clearSelection()
+                continue
+            cmds.textScrollList(control, edit=True, deselectAll=True)
 
     def _selected_integration_qd_category(self) -> str:
         control = self.ui.get("integration_qd_category_menu")
@@ -1729,8 +1766,9 @@ class HighPolyReviewTool:
         return selected or fallback
 
     def update_selected_catalog_assets_from_p4(self) -> None:
-        selected_assets = self._selected_list_control_items("integration_catalog_list")
-        if not selected_assets:
+        selected_main_assets = self._selected_list_control_items("integration_catalog_list")
+        selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
+        if not selected_main_assets and not selected_annexe_assets:
             self._append_integration_log("Nothing selected. Select at least one catalog asset.")
             return
         category = self._selected_integration_qd_category()
@@ -1743,43 +1781,45 @@ class HighPolyReviewTool:
             return
 
         self.integration_last_results = []
-        self._append_integration_log(f"Launching P4 update for {len(selected_assets)} asset(s) with category='{category}'...")
-        for scene_asset in selected_assets:
-            self._append_integration_log(f"Trying P4 load for {scene_asset}")
-            catalog_candidates = self._integration_catalog_candidates(scene_asset)
-            asset_loaded = False
+        total_selected_assets = len(selected_main_assets) + len(selected_annexe_assets)
+        self._append_integration_log(f"Launching P4 update for {total_selected_assets} asset(s) with category='{category}'...")
+        for asset_kind, selected_assets in (("main asset", selected_main_assets), ("annexe asset", selected_annexe_assets)):
+            for scene_asset in selected_assets:
+                self._append_integration_log(f"Trying P4 load for {asset_kind} {scene_asset}")
+                catalog_candidates = self._integration_catalog_candidates(scene_asset)
+                asset_loaded = False
 
-            for catalog_name in catalog_candidates:
-                self._append_integration_log(f"[INFO] Trying {catalog_name}")
-                try:
-                    loader = QDLoad.by_catalog(catalog_name, category)
-                    if loader is None:
-                        raise RuntimeError("QDLoad.by_catalog returned None")
+                for catalog_name in catalog_candidates:
+                    self._append_integration_log(f"[INFO] Trying {catalog_name}")
+                    try:
+                        loader = QDLoad.by_catalog(catalog_name, category)
+                        if loader is None:
+                            raise RuntimeError("QDLoad.by_catalog returned None")
 
-                    update_callable = getattr(loader, "update_status", None)
-                    if not callable(update_callable):
-                        raise RuntimeError("Resolved loader has no callable update_status method")
+                        update_callable = getattr(loader, "update_status", None)
+                        if not callable(update_callable):
+                            raise RuntimeError("Resolved loader has no callable update_status method")
 
-                    update_result = update_callable(b_recursive=True)
-                    if update_result is None and not hasattr(loader, "items"):
-                        # Keep compatibility with loaders returning None while still guarding obviously empty resolutions.
-                        self._append_integration_log(
-                            f"[WARN] {catalog_name} update_status returned None (continuing, loader resolved successfully)."
-                        )
+                        update_result = update_callable(b_recursive=True)
+                        if update_result is None and not hasattr(loader, "items"):
+                            # Keep compatibility with loaders returning None while still guarding obviously empty resolutions.
+                            self._append_integration_log(
+                                f"[WARN] {catalog_name} update_status returned None (continuing, loader resolved successfully)."
+                            )
 
-                    self.integration_last_results.append((scene_asset, True, f"Loaded with {catalog_name}"))
-                    self._append_integration_log(f"[OK] Loaded with {catalog_name}")
-                    asset_loaded = True
-                    break
-                except Exception as exc:
-                    self._append_integration_log(f"[FAIL] {catalog_name} failed")
-                    self._append_integration_log(f"[DEBUG] {catalog_name}: {exc}")
-                    continue
+                        self.integration_last_results.append((scene_asset, True, f"Loaded with {catalog_name}"))
+                        self._append_integration_log(f"[OK] Loaded with {catalog_name}")
+                        asset_loaded = True
+                        break
+                    except Exception as exc:
+                        self._append_integration_log(f"[FAIL] {catalog_name} failed")
+                        self._append_integration_log(f"[DEBUG] {catalog_name}: {exc}")
+                        continue
 
-            if not asset_loaded:
-                message = f"{scene_asset} could not be loaded with any known prefix"
-                self.integration_last_results.append((scene_asset, False, message))
-                self._append_integration_log(f"[FAIL] {message}")
+                if not asset_loaded:
+                    message = f"{scene_asset} could not be loaded with any known prefix"
+                    self.integration_last_results.append((scene_asset, False, message))
+                    self._append_integration_log(f"[FAIL] {message}")
 
     def _build_compare_row(
         self,
