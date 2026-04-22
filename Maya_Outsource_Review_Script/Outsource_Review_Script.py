@@ -796,9 +796,13 @@ class HighPolyReviewTool:
         self.integration_last_results: List[Tuple[str, bool, str]] = []
         self.integration_rights_confirmed: bool = False
         self.review_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
+        self.page_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
+        self.page_tab_children: Dict[str, str] = {}
         self.review_tab_children: Dict[str, str] = {}
         self.review_tab_order: List[str] = []
         self.sidebar_summary_labels: Dict[str, QtWidgets.QLabel] = {}
+        self.scene_visibility_page_groups: List[Dict[str, Any]] = []
+        self.scene_visibility_page_controls: Dict[str, str] = {}
 
     # --------------------------- UI BUILD ---------------------------
     def build(self) -> None:
@@ -817,11 +821,7 @@ class HighPolyReviewTool:
 
         root_layout = cmds.formLayout()
         self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
-        self._build_file_section()
         self._build_review_tabs_section()
-        self._build_results_section()
-        self._build_notes_section()
-        self._build_summary_section()
 
         cmds.setParent(root_layout)
         cmds.formLayout(
@@ -846,6 +846,7 @@ class HighPolyReviewTool:
         self.refresh_manual_root_menus()
         self.refresh_summary()
         self.refresh_checklist_ui()
+        self.refresh_scene_visibility_page()
 
     def _build_file_section(self) -> None:
         cmds.frameLayout(label="1) Root Folder", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
@@ -880,7 +881,6 @@ class HighPolyReviewTool:
         if QT_AVAILABLE and QtWidgets is not None:
             cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            self._build_tab_visibility_controls("high")
             cmds.text(label="Guided review of the High.ma delivery.", align="left")
             self._build_step01_placeholder_match_qt()
 
@@ -967,7 +967,6 @@ class HighPolyReviewTool:
             return
         cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self._build_tab_visibility_controls("high")
         cmds.text(label="Guided review of the High.ma delivery.", align="left")
         cmds.separator(style="in")
         self._build_step01_placeholder_match_qt()
@@ -1038,7 +1037,7 @@ class HighPolyReviewTool:
         self._build_global_action_section()
 
     def _build_review_tabs_section(self) -> None:
-        cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
+        cmds.frameLayout(label="Outsource Review", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
         split = cmds.formLayout()
         sidebar_host = cmds.columnLayout(adjustableColumn=True, width=250)
         cmds.setParent(split)
@@ -1048,8 +1047,12 @@ class HighPolyReviewTool:
             verticalScrollBarThickness=12,
         )
         tabs_host = cmds.columnLayout(adjustableColumn=True)
-        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6, changeCommand=lambda *_: self._on_review_tab_changed())
-        self.ui["review_tabs"] = tabs
+        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6)
+        self.ui["main_pages_tabs"] = tabs
+
+        root_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+        self._build_file_section()
+        cmds.setParent("..")
 
         high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_high_review_section()
@@ -1071,18 +1074,41 @@ class HighPolyReviewTool:
         self._build_guided_integration_review_section()
         cmds.setParent("..")
 
+        scene_visibility_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_scene_visibility_page()
+        cmds.setParent("..")
+
+        logs_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        self._build_results_section()
+        self._build_notes_section()
+        self._build_summary_section()
+        cmds.setParent("..")
+
         cmds.tabLayout(
             tabs,
             edit=True,
             tabsVisible=False,
             tabLabel=(
+                (root_tab, "Root Folder"),
                 (high_tab, "Review 01 — High"),
                 (low_tab, "Review 02 — Low"),
                 (bake_tab, "Review 03 — Bake Scene"),
                 (final_tab, "Review 04 — Final Asset"),
                 (integration_tab, "Review 05 — Integration"),
+                (scene_visibility_tab, "Scene Visibility"),
+                (logs_tab, "Logs Report"),
             ),
         )
+        self.page_tab_children = {
+            "root_folder": root_tab,
+            "high": high_tab,
+            "low": low_tab,
+            "bake": bake_tab,
+            "final_asset": final_tab,
+            "integration": integration_tab,
+            "scene_visibility": scene_visibility_tab,
+            "logs_report": logs_tab,
+        }
         self.review_tab_children = {
             "high": high_tab,
             "low": low_tab,
@@ -1092,7 +1118,7 @@ class HighPolyReviewTool:
         }
         self.review_tab_order = ["high", "low", "bake", "final_asset", "integration"]
         self._build_qt_sidebar(sidebar_host)
-        self._set_active_review_button("high")
+        self._show_page("high")
         cmds.formLayout(
             split,
             edit=True,
@@ -1135,6 +1161,15 @@ class HighPolyReviewTool:
         panel_layout.setContentsMargins(s(12), s(14), s(12), s(14))
         panel_layout.setSpacing(s(12))
 
+        self.page_nav_buttons = {}
+        root_btn = QtWidgets.QPushButton("Root Folder")
+        root_btn.setObjectName("SidebarToolButton")
+        root_btn.setCheckable(True)
+        root_btn.clicked.connect(lambda _checked=False: self._show_page("root_folder"))
+        self.page_nav_buttons["root_folder"] = root_btn
+        panel_layout.addWidget(root_btn)
+
+        panel_layout.addSpacing(s(6))
         section_review = QtWidgets.QLabel("REVIEW")
         section_review.setObjectName("SidebarSectionLabel")
         panel_layout.addWidget(section_review)
@@ -1151,18 +1186,22 @@ class HighPolyReviewTool:
             btn = QtWidgets.QPushButton(label)
             btn.setObjectName("SidebarReviewButton")
             btn.setCheckable(True)
-            btn.clicked.connect(lambda _checked=False, k=key: self._on_sidebar_review_clicked(k))
+            btn.clicked.connect(lambda _checked=False, k=key: self._show_page(k))
             self.review_nav_buttons[key] = btn
+            self.page_nav_buttons[key] = btn
             panel_layout.addWidget(btn)
 
         panel_layout.addSpacing(s(6))
         tools_label = QtWidgets.QLabel("TOOLS")
         tools_label.setObjectName("SidebarSectionLabel")
         panel_layout.addWidget(tools_label)
-        for label in ("Scene Visibility", "Logs & Report"):
+        tool_entries = [("scene_visibility", "Scene Visibility"), ("logs_report", "Logs Report")]
+        for key, label in tool_entries:
             tool_btn = QtWidgets.QPushButton(label)
             tool_btn.setObjectName("SidebarToolButton")
-            tool_btn.setEnabled(False)
+            tool_btn.setCheckable(True)
+            tool_btn.clicked.connect(lambda _checked=False, k=key: self._show_page(k))
+            self.page_nav_buttons[key] = tool_btn
             panel_layout.addWidget(tool_btn)
 
         panel_layout.addSpacing(s(6))
@@ -1234,6 +1273,11 @@ QPushButton#SidebarToolButton {
     color: #8fa3c4;
     font-size: {s(13)}px;
 }
+QPushButton#SidebarToolButton:checked {
+    background-color: #244e8f;
+    border: 1px solid #4678bf;
+    color: #ffffff;
+}
 QLabel#SidebarSummaryName {
     color: #a9bddc;
     font-size: {s(13)}px;
@@ -1248,31 +1292,18 @@ QLabel#SidebarSummaryValue {
         )
         host_layout.addWidget(panel, 0, QtCore.Qt.AlignTop)
 
-    def _on_sidebar_review_clicked(self, review_key: str) -> None:
-        tabs = self.ui.get("review_tabs")
-        child = self.review_tab_children.get(review_key)
+    def _show_page(self, page_key: str) -> None:
+        tabs = self.ui.get("main_pages_tabs")
+        child = self.page_tab_children.get(page_key)
         if not tabs or not child:
             return
         if cmds.tabLayout(tabs, exists=True):
             cmds.tabLayout(tabs, edit=True, selectTab=child)
-        self._set_active_review_button(review_key)
+        for key, button in self.page_nav_buttons.items():
+            button.setChecked(key == page_key)
         self._reset_main_scroll_to_top()
-
-    def _on_review_tab_changed(self) -> None:
-        tabs = self.ui.get("review_tabs")
-        if not tabs or not cmds.tabLayout(tabs, exists=True):
-            return
-        active_child = cmds.tabLayout(tabs, query=True, selectTab=True)
-        if active_child:
-            for key, child in self.review_tab_children.items():
-                if child == active_child:
-                    self._set_active_review_button(key)
-                    break
-        self._reset_main_scroll_to_top()
-
-    def _set_active_review_button(self, active_key: str) -> None:
-        for key, button in self.review_nav_buttons.items():
-            button.setChecked(key == active_key)
+        if page_key == "scene_visibility":
+            self.refresh_scene_visibility_page()
 
     def _reset_main_scroll_to_top(self) -> None:
         """Reset the Guided Review scrollLayout to the top after tab changes."""
@@ -1284,7 +1315,6 @@ QLabel#SidebarSummaryValue {
         if QT_AVAILABLE and QtWidgets is not None:
             cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            self._build_tab_visibility_controls("low")
             cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
 
             self._build_qt_step_card(1, "Topology Check", lambda body: (
@@ -1359,7 +1389,6 @@ QLabel#SidebarSummaryValue {
             return
         cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self._build_tab_visibility_controls("low")
         cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
         cmds.separator(style="in")
         cmds.text(label="Step 01 — Topology Check", align="left")
@@ -1429,7 +1458,6 @@ QLabel#SidebarSummaryValue {
         if QT_AVAILABLE and QtWidgets is not None:
             cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            self._build_tab_visibility_controls("bake")
             cmds.text(label="Guided review of the Bake Scene.", align="left")
             self._build_qt_step_card(1, "Bake Scene Structure", lambda body: (
                 self._add_qt_root_selector_row(body, "bake_structure_high_root_menu", "Bake High Root", "bake_high"),
@@ -1517,7 +1545,6 @@ QLabel#SidebarSummaryValue {
             return
         cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self._build_tab_visibility_controls("bake")
 
         cmds.text(label="Guided review of the Bake Scene.", align="left")
         cmds.separator(style="in")
@@ -1626,7 +1653,6 @@ QLabel#SidebarSummaryValue {
         if QT_AVAILABLE and QtWidgets is not None:
             cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            self._build_tab_visibility_controls("final_asset")
             cmds.text(label="Guided review of the Final Asset delivery.", align="left")
             self._build_qt_step_card(1, "Topology Check", lambda body: (
                 self._add_qt_root_selector_row(body, "final_topology_root_menu", "Final Asset MA Root (Topology)", "final_ma"),
@@ -1684,7 +1710,6 @@ QLabel#SidebarSummaryValue {
             return
         cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-        self._build_tab_visibility_controls("final_asset")
         cmds.text(label="Guided review of the Final Asset delivery.", align="left")
         cmds.separator(style="in")
 
@@ -1741,7 +1766,6 @@ QLabel#SidebarSummaryValue {
     def _build_guided_integration_review_section(self) -> None:
         cmds.frameLayout(label="Review 05 — Integration", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        self._build_tab_visibility_controls("final_asset")
         cmds.text(label="Detect catalog assets and update them from Perforce via qdTools.", align="left")
         cmds.separator(style="in")
 
@@ -2537,6 +2561,119 @@ QLabel#SidebarSummaryValue {
         self.ui[global_toggle_key] = cmds.checkBox(label="Global", value=default_global)
         cmds.button(label=button_label, height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: command())
         cmds.setParent("..")
+
+    def _build_scene_visibility_page(self) -> None:
+        self.scene_visibility_page_groups = [
+            {"key": "High_MA_GRP", "label": "High MA", "handler": lambda visible: self._set_group_visibility("High_MA_GRP", visible), "getter": lambda: self._is_group_visible("High_MA_GRP")},
+            {"key": "High_FBX_GRP", "label": "High FBX", "handler": lambda visible: self._set_group_visibility("High_FBX_GRP", visible), "getter": lambda: self._is_group_visible("High_FBX_GRP")},
+            {"key": "Placeholder_GRP", "label": "Placeholder", "handler": lambda visible: self._set_group_visibility("Placeholder_GRP", visible), "getter": lambda: self._is_group_visible("Placeholder_GRP")},
+            {"key": "Low_FBX_GRP", "label": "Low FBX", "handler": lambda visible: self._set_group_visibility("Low_FBX_GRP", visible), "getter": lambda: self._is_group_visible("Low_FBX_GRP")},
+            {"key": "Low_MA_GRP", "label": "Low MA", "handler": lambda visible: self._set_group_visibility("Low_MA_GRP", visible), "getter": lambda: self._is_group_visible("Low_MA_GRP")},
+            {"key": "Bake_Low", "label": "Bake MA Low", "handler": lambda visible: self._set_bake_kind_visibility("low", visible), "getter": lambda: self._is_bake_kind_visible("low")},
+            {"key": "Bake_High", "label": "Bake MA High", "handler": lambda visible: self._set_bake_kind_visibility("high", visible), "getter": lambda: self._is_bake_kind_visible("high")},
+            {"key": "Final_Asset_MA_GRP", "label": "Final Asset MA", "handler": lambda visible: self._set_group_visibility("Final_Asset_MA_GRP", visible), "getter": lambda: self._is_group_visible("Final_Asset_MA_GRP")},
+            {"key": "Final_Asset_FBX_GRP", "label": "Final Asset FBX", "handler": lambda visible: self._set_group_visibility("Final_Asset_FBX_GRP", visible), "getter": lambda: self._is_group_visible("Final_Asset_FBX_GRP")},
+        ]
+        self.scene_visibility_page_controls = {}
+
+        cmds.frameLayout(label="Scene Visibility", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(label="Show All", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self._set_scene_visibility_page_all(True))
+        cmds.button(label="Hide All", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_WARNING, command=lambda *_: self._set_scene_visibility_page_all(False))
+        cmds.setParent("..")
+
+        for group_data in self.scene_visibility_page_groups:
+            row_key = group_data["key"]
+            cmds.rowLayout(numberOfColumns=5, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 12), (3, "both", 8), (4, "both", 8), (5, "both", 8)])
+            cmds.text(label=group_data["label"], align="left")
+            self.scene_visibility_page_controls[f"state:{row_key}"] = cmds.text(label="Hidden", align="left")
+            self.scene_visibility_page_controls[f"toggle:{row_key}"] = cmds.button(
+                label="OFF",
+                height=UI_BUTTON_HEIGHT,
+                backgroundColor=UI_COLOR_VIS_OFF,
+                command=lambda *_args, gk=row_key: self._toggle_scene_visibility_page_item(gk),
+            )
+            cmds.button(
+                label="Focus",
+                height=UI_BUTTON_HEIGHT,
+                backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
+                command=lambda *_args, gk=row_key: self._focus_scene_visibility_group(gk),
+            )
+            self.scene_visibility_page_controls[f"eye:{row_key}"] = cmds.text(label="🙈", align="center")
+            cmds.setParent("..")
+
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+    def _scene_visibility_page_item(self, group_key: str) -> Optional[Dict[str, Any]]:
+        for group_data in self.scene_visibility_page_groups:
+            if group_data["key"] == group_key:
+                return group_data
+        return None
+
+    def _set_scene_visibility_page_item(self, group_key: str, visible: bool) -> None:
+        group_data = self._scene_visibility_page_item(group_key)
+        if not group_data:
+            return
+        group_data["handler"](visible)
+        self._refresh_scene_visibility_page_row(group_key)
+
+    def _toggle_scene_visibility_page_item(self, group_key: str) -> None:
+        group_data = self._scene_visibility_page_item(group_key)
+        if not group_data:
+            return
+        current_state = bool(group_data["getter"]())
+        self._set_scene_visibility_page_item(group_key, not current_state)
+
+    def _set_scene_visibility_page_all(self, visible: bool) -> None:
+        for group_data in self.scene_visibility_page_groups:
+            group_data["handler"](visible)
+        self.refresh_scene_visibility_page()
+
+    def _refresh_scene_visibility_page_row(self, group_key: str) -> None:
+        group_data = self._scene_visibility_page_item(group_key)
+        if not group_data:
+            return
+        state = bool(group_data["getter"]())
+        state_text = self.scene_visibility_page_controls.get(f"state:{group_key}")
+        toggle_btn = self.scene_visibility_page_controls.get(f"toggle:{group_key}")
+        eye_text = self.scene_visibility_page_controls.get(f"eye:{group_key}")
+        if state_text and cmds.text(state_text, exists=True):
+            cmds.text(state_text, edit=True, label="Visible" if state else "Hidden")
+        if eye_text and cmds.text(eye_text, exists=True):
+            cmds.text(eye_text, edit=True, label="👁" if state else "🙈")
+        if toggle_btn and cmds.button(toggle_btn, exists=True):
+            cmds.button(
+                toggle_btn,
+                edit=True,
+                label="ON" if state else "OFF",
+                backgroundColor=UI_COLOR_VIS_ON if state else UI_COLOR_VIS_OFF,
+            )
+
+    def refresh_scene_visibility_page(self) -> None:
+        for group_data in self.scene_visibility_page_groups:
+            self._refresh_scene_visibility_page_row(group_data["key"])
+
+    def _focus_scene_visibility_group(self, group_key: str) -> None:
+        if group_key == "Bake_High":
+            targets = self.bake_roots_by_kind.get("high", [])
+        elif group_key == "Bake_Low":
+            targets = self.bake_roots_by_kind.get("low", [])
+        else:
+            targets = [group_key] if cmds.objExists(group_key) else []
+        if not targets:
+            cmds.warning(f"Focus impossible : groupe introuvable ({group_key}).")
+            return
+        existing = [node for node in targets if cmds.objExists(node)]
+        if not existing:
+            cmds.warning(f"Focus impossible : aucun noeud valide ({group_key}).")
+            return
+        cmds.select(existing, replace=True)
+        try:
+            mel.eval("FrameSelected;")
+        except Exception:
+            pass
 
     def _build_tab_visibility_controls(self, context_key: str) -> None:
         groups = {
