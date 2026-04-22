@@ -486,12 +486,32 @@ if QT_AVAILABLE and QtWidgets is not None:
                 self._root_layout.setColumnStretch(1, 1)
                 self._root_layout.setColumnStretch(2, 0)
 
-        def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
-            compact = self.width() < s(620)
+        def _update_compact_mode(self) -> None:
+            """Switch compact mode only when we have a real visible width.
+
+            During Maya tab/page switches wrapped Qt rows can transiently report a
+            width of 0. If we treat that as a real resize, rows get stuck in
+            compact mode and the whole page becomes vertically oversized.
+            """
+            width = self.width()
+            if width <= 1:
+                parent = self.parentWidget()
+                if parent is not None:
+                    width = parent.width()
+            if width <= 1:
+                return
+            compact = width < s(620)
             if compact != self._compact_mode:
                 self._compact_mode = compact
                 self._refresh_layout()
+
+        def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
+            self._update_compact_mode()
             super().resizeEvent(event)
+
+        def showEvent(self, event: QtGui.QShowEvent) -> None:  # type: ignore[override]
+            self._update_compact_mode()
+            super().showEvent(event)
 else:
     class StepRootSelectorRow:  # type: ignore[no-redef]
         pass
@@ -1045,8 +1065,9 @@ class HighPolyReviewTool:
             verticalScrollBarThickness=12,
         )
         tabs_host = cmds.columnLayout(adjustableColumn=True)
-        tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6)
-        self.ui["main_pages_tabs"] = tabs
+        pages_container = cmds.columnLayout(adjustableColumn=True, rowSpacing=0)
+        self.ui["main_pages_tabs"] = ""
+        self.ui["main_pages_container"] = pages_container
 
         root_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
         self._build_file_section()
@@ -1082,21 +1103,6 @@ class HighPolyReviewTool:
         self._build_summary_section()
         cmds.setParent("..")
 
-        cmds.tabLayout(
-            tabs,
-            edit=True,
-            tabsVisible=False,
-            tabLabel=(
-                (root_tab, "Root Folder"),
-                (high_tab, "Review 01 — High"),
-                (low_tab, "Review 02 — Low"),
-                (bake_tab, "Review 03 — Bake Scene"),
-                (final_tab, "Review 04 — Final Asset"),
-                (integration_tab, "Review 05 — Integration"),
-                (scene_visibility_tab, "Scene Visibility"),
-                (logs_tab, "Logs Report"),
-            ),
-        )
         self.page_tab_children = {
             "root_folder": root_tab,
             "high": high_tab,
@@ -1387,10 +1393,15 @@ QLabel#PageHeaderSubtitle {
     def _show_page(self, page_key: str) -> None:
         tabs = self.ui.get("main_pages_tabs")
         child = self.page_tab_children.get(page_key)
-        if not tabs or not child:
+        if not child:
             return
-        if cmds.tabLayout(tabs, exists=True):
+        if tabs and cmds.tabLayout(tabs, exists=True):
             cmds.tabLayout(tabs, edit=True, selectTab=child)
+        else:
+            for key, page_layout in self.page_tab_children.items():
+                if cmds.layout(page_layout, exists=True):
+                    visible = key == page_key
+                    cmds.layout(page_layout, edit=True, manage=visible, visible=visible)
         for key, button in self.page_nav_buttons.items():
             button.setChecked(key == page_key)
         self._reset_main_scroll_to_top()
