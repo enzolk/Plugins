@@ -1684,15 +1684,22 @@ class HighPolyReviewTool:
         self._append_list_control_item("integration_logs", message)
         self.log("INFO", "Integration", message)
 
+    def _is_prefixed_catalog_asset(self, catalog_name: str) -> bool:
+        return bool(catalog_name and catalog_name.startswith(INTEGRATION_QDTOOLS_PREFIXES))
+
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
+        skipped_prefixed_assets: Set[str] = set()
         transforms = cmds.ls(type="transform", long=True) or []
         for node in transforms:
             if not cmds.objExists(node):
                 continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if catalog_name:
+                if self._is_prefixed_catalog_asset(catalog_name):
+                    skipped_prefixed_assets.add(catalog_name)
+                    continue
                 detected.setdefault(catalog_name, set()).add(node)
 
         annexe_assets: Set[str] = set()
@@ -1702,6 +1709,9 @@ class HighPolyReviewTool:
                 for child in descendants:
                     child_catalog = self._extract_catalog_asset_from_name(child)
                     if not child_catalog or child_catalog == catalog_name:
+                        continue
+                    if self._is_prefixed_catalog_asset(child_catalog):
+                        skipped_prefixed_assets.add(child_catalog)
                         continue
                     if child_catalog.startswith(f"{catalog_name}_"):
                         # Technical child naming variation of the main asset.
@@ -1718,6 +1728,9 @@ class HighPolyReviewTool:
         self.integration_annexe_sources = annexe_sources
         self._refresh_integration_catalog_list_ui()
         self._clear_list_control("integration_logs")
+
+        for skipped_asset in sorted(skipped_prefixed_assets):
+            self._append_integration_log(f"Skipping already loaded asset: {skipped_asset}")
 
         if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
             self._append_integration_log("No catalog asset detected in current scene.")
