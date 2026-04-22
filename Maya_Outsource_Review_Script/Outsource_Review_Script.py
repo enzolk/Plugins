@@ -486,12 +486,32 @@ if QT_AVAILABLE and QtWidgets is not None:
                 self._root_layout.setColumnStretch(1, 1)
                 self._root_layout.setColumnStretch(2, 0)
 
-        def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
-            compact = self.width() < s(620)
+        def _update_compact_mode(self) -> None:
+            """Switch compact mode only when we have a real visible width.
+
+            During Maya tab/page switches wrapped Qt rows can transiently report a
+            width of 0. If we treat that as a real resize, rows get stuck in
+            compact mode and the whole page becomes vertically oversized.
+            """
+            width = self.width()
+            if width <= 1:
+                parent = self.parentWidget()
+                if parent is not None:
+                    width = parent.width()
+            if width <= 1:
+                return
+            compact = width < s(620)
             if compact != self._compact_mode:
                 self._compact_mode = compact
                 self._refresh_layout()
+
+        def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
+            self._update_compact_mode()
             super().resizeEvent(event)
+
+        def showEvent(self, event: QtGui.QShowEvent) -> None:  # type: ignore[override]
+            self._update_compact_mode()
+            super().showEvent(event)
 else:
     class StepRootSelectorRow:  # type: ignore[no-redef]
         pass
