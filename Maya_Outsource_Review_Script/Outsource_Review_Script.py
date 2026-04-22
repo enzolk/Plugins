@@ -820,7 +820,7 @@ class HighPolyReviewTool:
         )
 
         root_layout = cmds.formLayout()
-        self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
+        self.ui["content_root"] = cmds.formLayout()
         self._build_review_tabs_section()
 
         cmds.setParent(root_layout)
@@ -828,10 +828,10 @@ class HighPolyReviewTool:
             root_layout,
             edit=True,
             attachForm=[
-                (self.ui["content_col"], "top", 0),
-                (self.ui["content_col"], "left", 0),
-                (self.ui["content_col"], "right", 0),
-                (self.ui["content_col"], "bottom", 0),
+                (self.ui["content_root"], "top", 0),
+                (self.ui["content_root"], "left", 0),
+                (self.ui["content_root"], "right", 0),
+                (self.ui["content_root"], "bottom", 0),
             ],
         )
 
@@ -1037,7 +1037,7 @@ class HighPolyReviewTool:
         self._build_global_action_section()
 
     def _build_review_tabs_section(self) -> None:
-        cmds.frameLayout(label="Outsource Review", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
+        review_frame = cmds.frameLayout(label="Outsource Review", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
         split = cmds.formLayout()
         sidebar_host = cmds.columnLayout(adjustableColumn=True, width=250)
         cmds.setParent(split)
@@ -1132,8 +1132,18 @@ class HighPolyReviewTool:
             ],
             attachControl=[(self.ui["review_scroll"], "left", 10, sidebar_host)],
         )
-        cmds.setParent("..")
-        cmds.setParent("..")
+        content_root = self.ui.get("content_root")
+        if content_root and cmds.formLayout(content_root, exists=True):
+            cmds.formLayout(
+                content_root,
+                edit=True,
+                attachForm=[
+                    (review_frame, "top", 0),
+                    (review_frame, "left", 0),
+                    (review_frame, "right", 0),
+                    (review_frame, "bottom", 0),
+                ],
+            )
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -1149,6 +1159,8 @@ class HighPolyReviewTool:
         host_layout = host_widget.layout()
         if host_layout is None:
             host_layout = QtWidgets.QVBoxLayout(host_widget)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
         while host_layout.count():
             item = host_layout.takeAt(0)
             child = item.widget()
@@ -1290,7 +1302,8 @@ QLabel#SidebarSummaryValue {
 """
             )
         )
-        host_layout.addWidget(panel, 0, QtCore.Qt.AlignTop)
+        panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
+        host_layout.addWidget(panel, 1)
 
     def _show_page(self, page_key: str) -> None:
         tabs = self.ui.get("main_pages_tabs")
