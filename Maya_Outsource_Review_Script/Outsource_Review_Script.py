@@ -5375,12 +5375,19 @@ class HighPolyReviewTool:
 
     def check_bake_pairing(self) -> None:
         self._log_step_header(2, "Naming & Pairing", category="BakePairing")
+        self.log("INFO", "BakePairing", "Entrée dans check_bake_pairing().")
         high_root = self.get_manual_selected_root("bake_pairing_high_root_menu")
         low_root = self.get_manual_selected_root("bake_pairing_low_root_menu")
         bbox_scale = 1.05
         if "bake_pairing_bbox_scale" in self.ui:
-            bbox_scale = max(1.0, float(cmds.floatField(self.ui["bake_pairing_bbox_scale"], q=True, value=True)))
+            bbox_scale_control = self.ui["bake_pairing_bbox_scale"]
+            if QT_AVAILABLE and QtWidgets is not None and isinstance(bbox_scale_control, QtWidgets.QDoubleSpinBox):
+                bbox_scale = max(1.0, float(bbox_scale_control.value()))
+            else:
+                bbox_scale = max(1.0, float(cmds.floatField(bbox_scale_control, q=True, value=True)))
         self.log("INFO", "BakePairing", f"BBox scale utilisée : {bbox_scale:.3f}")
+        self.log("INFO", "BakePairing", f"Root Bake High (sélection) : {high_root or '<None>'}")
+        self.log("INFO", "BakePairing", f"Root Bake Low (sélection) : {low_root or '<None>'}")
         if not high_root or not low_root:
             self.log("FAIL", "BakePairing", "Sélection manuelle requise: Select Bake High Root et Select Bake Low Root.")
             self.log_check_result("bake_pairing_checked", "FAIL", "Bake Pairing", "manual root selection missing")
