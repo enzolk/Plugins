@@ -1642,33 +1642,16 @@ class HighPolyReviewTool:
     def _extract_catalog_asset_from_name(self, name: str) -> Optional[str]:
         if not name:
             return None
-        cleaned = self._strip_namespaces_from_name(name).strip("_ ")
-        if not cleaned:
+        short_name = self._short_name(name)
+        cleaned = self._strip_namespaces_from_name(short_name).strip("_ ")
+        if not cleaned or "_" not in cleaned:
             return None
-        match = re.search(r"([A-Z0-9]+(?:_[A-Z0-9]+)*_[A-D])(?:_|$)", cleaned.upper())
-        if not match:
+        cleaned_upper = cleaned.upper()
+        if cleaned_upper.endswith(("_HIGH", "_LOW", "_PLACEHOLDER")):
             return None
-        return match.group(1)
-
-    def _iter_integration_detection_nodes(self) -> List[Tuple[str, str]]:
-        sources: List[Tuple[str, str]] = []
-        for root_key in ("final_asset_fbx", "final_asset_ma", "low", "bake_low", "high"):
-            for root in self.detected_roots.get(root_key, []):
-                if cmds.objExists(root):
-                    sources.append((root_key, root))
-        for scope_key in ("final_asset_fbx", "final_scene_ma", "low_fbx", "bake_ma", "high_ma"):
-            for root in self.review_group_contents.get(scope_key, []):
-                if cmds.objExists(root):
-                    sources.append((scope_key, root))
-
-        deduped: List[Tuple[str, str]] = []
-        seen: Set[str] = set()
-        for source_key, node in sources:
-            if node in seen:
-                continue
-            seen.add(node)
-            deduped.append((source_key, node))
-        return deduped
+        if not re.fullmatch(r"[A-Z0-9_]+_[A-Z]", cleaned_upper):
+            return None
+        return cleaned_upper
 
     def _refresh_integration_catalog_list_ui(self) -> None:
         self._clear_list_control("integration_catalog_list")
@@ -1683,11 +1666,13 @@ class HighPolyReviewTool:
 
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
-        for source_key, root in self._iter_integration_detection_nodes():
-            root_name = self._strip_namespaces_from_name(self._short_name(root))
-            catalog_from_root = self._extract_catalog_asset_from_name(root_name)
-            if catalog_from_root:
-                detected.setdefault(catalog_from_root, set()).add(f"{source_key}:{root}")
+        transforms = cmds.ls(type="transform", long=True) or []
+        for node in transforms:
+            if not cmds.objExists(node):
+                continue
+            catalog_name = self._extract_catalog_asset_from_name(node)
+            if catalog_name:
+                detected.setdefault(catalog_name, set()).add(node)
 
         self.integration_catalog_assets = sorted(detected.keys())
         self.integration_detection_sources = detected
@@ -1695,13 +1680,12 @@ class HighPolyReviewTool:
         self._clear_list_control("integration_logs")
 
         if not self.integration_catalog_assets:
-            self._append_integration_log("No catalog asset detected. Load reviewed roots first.")
+            self._append_integration_log("No catalog asset detected in current scene.")
             return []
 
-        self._append_integration_log(f"Detected {len(self.integration_catalog_assets)} catalog asset(s).")
+        self._append_integration_log("Detected catalog assets:")
         for catalog_name in self.integration_catalog_assets:
-            source_count = len(self.integration_detection_sources.get(catalog_name, set()))
-            self._append_integration_log(f"[DETECT] {catalog_name} (from {source_count} source root(s))")
+            self._append_integration_log(f"- {catalog_name}")
         return self.integration_catalog_assets[:]
 
     def select_all_integration_catalog_assets(self) -> None:
