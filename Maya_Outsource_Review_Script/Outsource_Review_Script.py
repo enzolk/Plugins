@@ -879,9 +879,8 @@ class HighPolyReviewTool:
 
     def _build_technical_checks_section(self) -> None:
         if QT_AVAILABLE and QtWidgets is not None:
-            cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            cmds.text(label="Guided review of the High.ma delivery.", align="left")
+            self._build_qt_page_header("HIGH POLY REVIEW", "Guided review of the High.ma delivery.")
             self._build_step01_placeholder_match_qt()
 
             self._build_qt_step_card(
@@ -962,7 +961,6 @@ class HighPolyReviewTool:
                 body.addWidget(band)
             self._build_qt_step_card(8, "Compare High.ma vs Bake Scene High", _high_cmp_bake_body)
 
-            cmds.setParent("..")
             cmds.setParent("..")
             return
         cmds.frameLayout(label="Review 01 — High.ma", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
@@ -1173,6 +1171,19 @@ class HighPolyReviewTool:
         panel_layout.setContentsMargins(s(12), s(14), s(12), s(14))
         panel_layout.setSpacing(s(12))
 
+        sidebar_header = QtWidgets.QFrame()
+        sidebar_header.setObjectName("SidebarToolHeader")
+        sidebar_header_layout = QtWidgets.QHBoxLayout(sidebar_header)
+        sidebar_header_layout.setContentsMargins(s(12), s(10), s(12), s(10))
+        sidebar_header_layout.setSpacing(s(8))
+        icon_label = QtWidgets.QLabel("◈")
+        icon_label.setObjectName("SidebarToolHeaderIcon")
+        title_label = QtWidgets.QLabel("Outsource Review")
+        title_label.setObjectName("SidebarToolHeaderTitle")
+        sidebar_header_layout.addWidget(icon_label, 0, QtCore.Qt.AlignVCenter)
+        sidebar_header_layout.addWidget(title_label, 1, QtCore.Qt.AlignVCenter)
+        panel_layout.addWidget(sidebar_header)
+
         self.page_nav_buttons = {}
         root_btn = QtWidgets.QPushButton("Root Folder")
         root_btn.setObjectName("SidebarToolButton")
@@ -1258,6 +1269,21 @@ QLabel#SidebarSectionLabel {
     letter-spacing: 0.8px;
     padding-top: {s(2)}px;
 }
+QFrame#SidebarToolHeader {
+    background-color: #101b2c;
+    border: 1px solid #21314a;
+    border-radius: {s(10)}px;
+}
+QLabel#SidebarToolHeaderIcon {
+    color: #6da8ff;
+    font-size: {s(15)}px;
+    font-weight: 700;
+}
+QLabel#SidebarToolHeaderTitle {
+    color: #dbe9ff;
+    font-size: {s(15)}px;
+    font-weight: 700;
+}
 QPushButton#SidebarReviewButton {
     text-align: left;
     padding: {s(10)}px {s(12)}px;
@@ -1305,6 +1331,59 @@ QLabel#SidebarSummaryValue {
         panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         host_layout.addWidget(panel, 1)
 
+    def _build_qt_page_header(self, title: str, subtitle: str = "") -> None:
+        if not QT_AVAILABLE or QtWidgets is None or wrapInstance is None:
+            return
+        qt_host_layout = cmds.columnLayout(adjustableColumn=True, rowSpacing=0)
+        host_ptr = omui.MQtUtil.findLayout(qt_host_layout)
+        if not host_ptr:
+            cmds.warning("Impossible de construire le header de page en Qt: layout Maya introuvable.")
+            cmds.setParent("..")
+            return
+        host_widget = wrapInstance(int(host_ptr), QtWidgets.QWidget)
+        if host_widget.layout() is None:
+            host_widget.setLayout(QtWidgets.QVBoxLayout())
+        host_widget.layout().setContentsMargins(0, 0, 0, 0)
+        host_widget.layout().setSpacing(0)
+
+        header = QtWidgets.QFrame()
+        header.setObjectName("PageHeaderFrame")
+        header.setStyleSheet(
+            _resolve_scaled_tokens(
+                """
+QFrame#PageHeaderFrame {
+    background-color: #121e31;
+    border: 1px solid #24364f;
+    border-radius: {s(12)}px;
+}
+QLabel#PageHeaderTitle {
+    color: #59a0ff;
+    font-size: {s(24)}px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+}
+QLabel#PageHeaderSubtitle {
+    color: #94aace;
+    font-size: {s(13)}px;
+    font-weight: 500;
+}
+"""
+            )
+        )
+        header_layout = QtWidgets.QVBoxLayout(header)
+        header_layout.setContentsMargins(s(16), s(14), s(16), s(14))
+        header_layout.setSpacing(s(4))
+
+        title_lbl = QtWidgets.QLabel(title)
+        title_lbl.setObjectName("PageHeaderTitle")
+        header_layout.addWidget(title_lbl)
+        if subtitle:
+            subtitle_lbl = QtWidgets.QLabel(subtitle)
+            subtitle_lbl.setObjectName("PageHeaderSubtitle")
+            header_layout.addWidget(subtitle_lbl)
+        host_widget.layout().addWidget(header)
+        cmds.setParent("..")
+
     def _show_page(self, page_key: str) -> None:
         tabs = self.ui.get("main_pages_tabs")
         child = self.page_tab_children.get(page_key)
@@ -1326,9 +1405,8 @@ QLabel#SidebarSummaryValue {
 
     def _build_guided_low_review_section(self) -> None:
         if QT_AVAILABLE and QtWidgets is not None:
-            cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            cmds.text(label="Guided review of the Low.fbx delivery.", align="left")
+            self._build_qt_page_header("LOW REVIEW", "Guided review of the Low.fbx delivery.")
 
             self._build_qt_step_card(1, "Topology Check", lambda body: (
                 self._add_qt_root_selector_row(body, "low_topology_root_menu", "Low Root (Topology)", "low_fbx"),
@@ -1397,7 +1475,6 @@ QLabel#SidebarSummaryValue {
                 lay.addWidget(self._make_qt_run_button("Run Compare Final Asset", self.compare_low_vs_final_asset))
                 body.addWidget(band)
             self._build_qt_step_card(7, "Compare Low.fbx vs Final Scene Asset", _low_final_cmp)
-            cmds.setParent("..")
             cmds.setParent("..")
             return
         cmds.frameLayout(label="Review 02 — Low", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
@@ -1469,9 +1546,8 @@ QLabel#SidebarSummaryValue {
 
     def _build_guided_bake_review_section(self) -> None:
         if QT_AVAILABLE and QtWidgets is not None:
-            cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            cmds.text(label="Guided review of the Bake Scene.", align="left")
+            self._build_qt_page_header("BAKE REVIEW", "Guided review of the Bake Scene.")
             self._build_qt_step_card(1, "Bake Scene Structure", lambda body: (
                 self._add_qt_root_selector_row(body, "bake_structure_high_root_menu", "Bake High Root", "bake_high"),
                 self._add_qt_root_selector_row(body, "bake_structure_low_root_menu", "Bake Low Root", "bake_low"),
@@ -1553,7 +1629,6 @@ QLabel#SidebarSummaryValue {
                 body.addWidget(self._create_qt_subcheck_band("bake_ready_checked")[0]),
                 body.addWidget(self._make_qt_run_button("Run Bake Validation", self.check_bake_readiness)),
             ))
-            cmds.setParent("..")
             cmds.setParent("..")
             return
         cmds.frameLayout(label="Review 03 — Bake Scene", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
@@ -1664,9 +1739,8 @@ QLabel#SidebarSummaryValue {
 
     def _build_guided_final_asset_review_section(self) -> None:
         if QT_AVAILABLE and QtWidgets is not None:
-            cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
             cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-            cmds.text(label="Guided review of the Final Asset delivery.", align="left")
+            self._build_qt_page_header("FINAL ASSET REVIEW", "Guided review of the Final Asset delivery.")
             self._build_qt_step_card(1, "Topology Check", lambda body: (
                 self._add_qt_root_selector_row(body, "final_topology_root_menu", "Final Asset MA Root (Topology)", "final_ma"),
                 body.addWidget(self._create_qt_subcheck_band("final_topology_checked")[0]),
@@ -1718,7 +1792,6 @@ QLabel#SidebarSummaryValue {
                 lay.addWidget(self._make_qt_run_button("Run Compare", self.compare_final_asset_ma_vs_fbx))
                 body.addWidget(band)
             self._build_qt_step_card(6, "Compare Final Asset .ma vs Final Asset .fbx", _final_cmp)
-            cmds.setParent("..")
             cmds.setParent("..")
             return
         cmds.frameLayout(label="Review 04 — Final Asset", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
@@ -1777,9 +1850,14 @@ QLabel#SidebarSummaryValue {
         cmds.setParent("..")
 
     def _build_guided_integration_review_section(self) -> None:
-        cmds.frameLayout(label="Review 05 — Integration", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-        cmds.text(label="Detect catalog assets and update them from Perforce via qdTools.", align="left")
+        qt_header_mode = QT_AVAILABLE and QtWidgets is not None
+        if qt_header_mode:
+            cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            self._build_qt_page_header("INTEGRATION", "Detect catalog assets and update them from Perforce via qdTools.")
+        else:
+            cmds.frameLayout(label="Review 05 — Integration", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
+            cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+            cmds.text(label="Detect catalog assets and update them from Perforce via qdTools.", align="left")
         cmds.separator(style="in")
 
         cmds.text(label="Step 01 — Detect Scene Assets", align="left")
@@ -1835,7 +1913,8 @@ QLabel#SidebarSummaryValue {
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
 
         cmds.setParent("..")
-        cmds.setParent("..")
+        if not qt_header_mode:
+            cmds.setParent("..")
 
     def _build_check_row(self, check_key_ui: str, check_key: str, label: str, command) -> None:
         if check_key in self.subcheck_definitions:
