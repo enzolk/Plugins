@@ -1687,39 +1687,55 @@ class HighPolyReviewTool:
     def _is_prefixed_catalog_asset(self, catalog_name: str) -> bool:
         return bool(catalog_name and catalog_name.startswith(INTEGRATION_QDTOOLS_PREFIXES))
 
+    @staticmethod
+    def _is_in_transform_branch(node: str, branch_root: str) -> bool:
+        if not node or not branch_root:
+            return False
+        return node == branch_root or node.startswith(f"{branch_root}|")
+
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
-        skipped_prefixed_assets: Set[str] = set()
+        skipped_prefixed_branches: Set[str] = set()
+        blocked_prefixed_branches: List[str] = []
         transforms = cmds.ls(type="transform", long=True) or []
+        transforms.sort(key=lambda path: (path.count("|"), path))
         for node in transforms:
             if not cmds.objExists(node):
+                continue
+            if any(self._is_in_transform_branch(node, blocked_branch) for blocked_branch in blocked_prefixed_branches):
                 continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if catalog_name:
                 if self._is_prefixed_catalog_asset(catalog_name):
-                    skipped_prefixed_assets.add(catalog_name)
+                    blocked_prefixed_branches.append(node)
+                    skipped_prefixed_branches.add(self._strip_namespaces_from_name(self._short_name(node)))
                     continue
                 detected.setdefault(catalog_name, set()).add(node)
 
         annexe_assets: Set[str] = set()
         for catalog_name, source_nodes in detected.items():
             for source_node in source_nodes:
-                descendants = cmds.listRelatives(source_node, allDescendents=True, fullPath=True, type="transform") or []
-                for child in descendants:
+                pending_children = cmds.listRelatives(source_node, children=True, fullPath=True, type="transform") or []
+                while pending_children:
+                    child = pending_children.pop()
                     child_catalog = self._extract_catalog_asset_from_name(child)
-                    if not child_catalog or child_catalog == catalog_name:
+                    if child_catalog and self._is_prefixed_catalog_asset(child_catalog):
+                        skipped_prefixed_branches.add(self._strip_namespaces_from_name(self._short_name(child)))
                         continue
-                    if self._is_prefixed_catalog_asset(child_catalog):
-                        skipped_prefixed_assets.add(child_catalog)
+                    if not child_catalog or child_catalog == catalog_name:
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     if child_catalog.startswith(f"{catalog_name}_"):
                         # Technical child naming variation of the main asset.
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     if child_catalog not in detected:
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     annexe_assets.add(child_catalog)
                     annexe_sources.setdefault(child_catalog, set()).add(catalog_name)
+                    pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
 
         self.integration_catalog_assets = sorted(detected.keys())
         self.integration_annexe_catalog_assets = sorted(annexe_assets)
@@ -1729,8 +1745,8 @@ class HighPolyReviewTool:
         self._refresh_integration_catalog_list_ui()
         self._clear_list_control("integration_logs")
 
-        for skipped_asset in sorted(skipped_prefixed_assets):
-            self._append_integration_log(f"Skipping already loaded asset: {skipped_asset}")
+        for skipped_branch in sorted(skipped_prefixed_branches):
+            self._append_integration_log(f"Skipping prefixed loaded branch: {skipped_branch}")
 
         if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
             self._append_integration_log("No catalog asset detected in current scene.")
