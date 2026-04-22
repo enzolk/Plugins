@@ -533,9 +533,6 @@ class HighPolyReviewTool:
 
     def __init__(self) -> None:
         self.ui = {}
-        self.review_section_layouts: Dict[str, str] = {}
-        self.review_nav_buttons: Dict[str, str] = {}
-        self.active_review_section_key: str = "high"
         self.result_items: List[ReviewIssue] = []
         self.result_index_to_objects: Dict[int, List[str]] = {}
         self.result_control_to_objects: Dict[str, List[str]] = {}
@@ -1009,85 +1006,52 @@ class HighPolyReviewTool:
         self._build_global_action_section()
 
     def _build_review_tabs_section(self) -> None:
-        self.review_section_layouts = {}
-        self.review_nav_buttons = {}
-        self.active_review_section_key = "high"
-
         cmds.frameLayout(label="2) Guided Reviews", collapsable=False, marginWidth=10, marginHeight=8, backgroundColor=UI_COLOR_BG_SECTION)
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "top", 0), (2, "both", 10)], columnWidth=[(1, s(170))])
+        tabs = cmds.tabLayout(
+            innerMarginWidth=6,
+            innerMarginHeight=6,
+            changeCommand=lambda *_: self._reset_main_scroll_to_top(),
+        )
 
-        cmds.frameLayout(label="Review", collapsable=False, marginWidth=8, marginHeight=8, backgroundColor=UI_COLOR_BG_SUBSECTION)
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
-        nav_sections = [
-            ("high", "High"),
-            ("low", "Low"),
-            ("bake", "Bake"),
-            ("final_asset", "Final Asset"),
-            ("integration", "Integration"),
-        ]
-        for section_key, section_label in nav_sections:
-            self.review_nav_buttons[section_key] = cmds.button(
-                label=section_label,
-                height=UI_PRIMARY_BUTTON_HEIGHT,
-                backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
-                command=lambda *_, key=section_key: self._set_active_review_section(key),
-            )
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-        right_container = cmds.columnLayout(adjustableColumn=True, rowSpacing=0)
-        self.review_section_layouts["high"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        high_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_high_review_section()
         cmds.setParent("..")
 
-        self.review_section_layouts["low"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        low_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_low_review_section()
         cmds.setParent("..")
 
-        self.review_section_layouts["bake"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        bake_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_bake_review_section()
         cmds.setParent("..")
 
-        self.review_section_layouts["final_asset"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        final_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_final_asset_review_section()
         cmds.setParent("..")
 
-        self.review_section_layouts["integration"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+        integration_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
         self._build_guided_integration_review_section()
         cmds.setParent("..")
-        cmds.setParent(right_container)
 
-        self._set_active_review_section("high")
-
-        cmds.setParent("..")
+        cmds.tabLayout(
+            tabs,
+            edit=True,
+            tabLabel=(
+                (high_tab, "Review 01 — High"),
+                (low_tab, "Review 02 — Low"),
+                (bake_tab, "Review 03 — Bake Scene"),
+                (final_tab, "Review 04 — Final Asset"),
+                (integration_tab, "Review 05 — Integration"),
+            ),
+        )
         cmds.setParent("..")
         cmds.setParent("..")
 
     def _reset_main_scroll_to_top(self) -> None:
-        """Reset the main scrollLayout to the top after review section changes."""
+        """Reset the main scrollLayout to the top after tab changes."""
         scroll_layout = self.ui.get("scroll")
         if scroll_layout and cmds.scrollLayout(scroll_layout, exists=True):
             cmds.scrollLayout(scroll_layout, edit=True, scrollByPixel=("up", 99999999))
-
-    def _set_active_review_section(self, section_key: str) -> None:
-        if section_key not in self.review_section_layouts:
-            return
-
-        for key, layout in self.review_section_layouts.items():
-            if cmds.layout(layout, exists=True):
-                cmds.layout(layout, edit=True, manage=(key == section_key))
-
-        for key, button in self.review_nav_buttons.items():
-            if cmds.control(button, exists=True):
-                is_active = key == section_key
-                cmds.button(
-                    button,
-                    edit=True,
-                    backgroundColor=UI_COLOR_BG_ACCENT if is_active else UI_COLOR_BG_ACCENT_SOFT,
-                )
-
-        self.active_review_section_key = section_key
-        self._reset_main_scroll_to_top()
 
     def _build_guided_low_review_section(self) -> None:
         if QT_AVAILABLE and QtWidgets is not None:
