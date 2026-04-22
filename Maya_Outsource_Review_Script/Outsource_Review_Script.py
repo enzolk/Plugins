@@ -1778,6 +1778,46 @@ class HighPolyReviewTool:
             return fallback
         return selected or fallback
 
+    def _ensure_integration_parent_group(self, group_name: str) -> str:
+        if cmds.objExists(group_name):
+            return group_name
+        created = cmds.group(empty=True, name=group_name, world=True)
+        self._append_integration_log(f"[INFO] Created group: {created}")
+        return created
+
+    def _snapshot_scene_transforms(self) -> Set[str]:
+        return set(cmds.ls(type="transform", long=True) or [])
+
+    def _find_loaded_top_nodes(self, before_transforms: Set[str], after_transforms: Set[str]) -> List[str]:
+        new_transforms = after_transforms - before_transforms
+        if not new_transforms:
+            return []
+        top_nodes: List[str] = []
+        for node in sorted(new_transforms):
+            parents = cmds.listRelatives(node, parent=True, fullPath=True) or []
+            if not parents or parents[0] not in new_transforms:
+                top_nodes.append(node)
+        return top_nodes
+
+    def _parent_loaded_nodes_for_asset_kind(self, asset_kind: str, loaded_top_nodes: List[str]) -> None:
+        if not loaded_top_nodes:
+            return
+        target_group = "Main_Assets" if asset_kind == "main asset" else "Annexes"
+        target_group = self._ensure_integration_parent_group(target_group)
+        self._append_integration_log(f"[INFO] Parenting loaded asset under {target_group}")
+        for node in loaded_top_nodes:
+            if not cmds.objExists(node):
+                continue
+            if self._strip_namespaces_from_name(self._short_name(node)) == target_group:
+                continue
+            try:
+                current_parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
+                if current_parent and self._strip_namespaces_from_name(self._short_name(current_parent[0])) == target_group:
+                    continue
+                cmds.parent(node, target_group)
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Could not parent {node} under {target_group}: {exc}")
+
     def update_selected_catalog_assets_from_p4(self) -> None:
         selected_main_assets = self._selected_list_control_items("integration_catalog_list")
         selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
@@ -1813,7 +1853,9 @@ class HighPolyReviewTool:
                         if not callable(update_callable):
                             raise RuntimeError("Resolved loader has no callable update_status method")
 
+                        before_transforms = self._snapshot_scene_transforms()
                         update_result = update_callable(b_recursive=True)
+                        after_transforms = self._snapshot_scene_transforms()
                         if update_result is None and not hasattr(loader, "items"):
                             # Keep compatibility with loaders returning None while still guarding obviously empty resolutions.
                             self._append_integration_log(
@@ -1822,6 +1864,11 @@ class HighPolyReviewTool:
 
                         self.integration_last_results.append((scene_asset, True, f"Loaded with {catalog_name}"))
                         self._append_integration_log(f"[OK] Loaded with {catalog_name}")
+                        loaded_top_nodes = self._find_loaded_top_nodes(before_transforms, after_transforms)
+                        if not loaded_top_nodes:
+                            self._append_integration_log("[INFO] No newly created top nodes detected for parenting.")
+                        else:
+                            self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
                         asset_loaded = True
                         break
                     except Exception as exc:
