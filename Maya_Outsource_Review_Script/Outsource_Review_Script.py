@@ -782,12 +782,6 @@ class HighPolyReviewTool:
         )
 
         root_layout = cmds.formLayout()
-        self.ui["scroll"] = cmds.scrollLayout(
-            childResizable=True,
-            horizontalScrollBarThickness=12,
-            verticalScrollBarThickness=12,
-        )
-
         self.ui["content_col"] = cmds.columnLayout(adjustableColumn=True, rowSpacing=10)
         self._build_file_section()
         self._build_review_tabs_section()
@@ -800,10 +794,10 @@ class HighPolyReviewTool:
             root_layout,
             edit=True,
             attachForm=[
-                (self.ui["scroll"], "top", 0),
-                (self.ui["scroll"], "left", 0),
-                (self.ui["scroll"], "right", 0),
-                (self.ui["scroll"], "bottom", 0),
+                (self.ui["content_col"], "top", 0),
+                (self.ui["content_col"], "left", 0),
+                (self.ui["content_col"], "right", 0),
+                (self.ui["content_col"], "bottom", 0),
             ],
         )
 
@@ -1014,6 +1008,11 @@ class HighPolyReviewTool:
         split = cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(250, 900), columnAttach=[(1, "both", 0), (2, "both", 10)])
         sidebar_host = cmds.columnLayout(adjustableColumn=True)
         cmds.setParent(split)
+        self.ui["review_scroll"] = cmds.scrollLayout(
+            childResizable=True,
+            horizontalScrollBarThickness=0,
+            verticalScrollBarThickness=12,
+        )
         tabs_host = cmds.columnLayout(adjustableColumn=True)
         tabs = cmds.tabLayout(innerMarginWidth=6, innerMarginHeight=6, changeCommand=lambda *_: self._on_review_tab_changed())
         self.ui["review_tabs"] = tabs
@@ -1200,7 +1199,7 @@ QLabel#SidebarSummaryValue {
 """
             )
         )
-        host_layout.addWidget(panel)
+        host_layout.addWidget(panel, 0, QtCore.Qt.AlignTop)
 
     def _on_sidebar_review_clicked(self, review_key: str) -> None:
         tabs = self.ui.get("review_tabs")
@@ -1229,8 +1228,8 @@ QLabel#SidebarSummaryValue {
             button.setChecked(key == active_key)
 
     def _reset_main_scroll_to_top(self) -> None:
-        """Reset the main scrollLayout to the top after tab changes."""
-        scroll_layout = self.ui.get("scroll")
+        """Reset the Guided Review scrollLayout to the top after tab changes."""
+        scroll_layout = self.ui.get("review_scroll")
         if scroll_layout and cmds.scrollLayout(scroll_layout, exists=True):
             cmds.scrollLayout(scroll_layout, edit=True, scrollByPixel=("up", 99999999))
 
