@@ -5045,13 +5045,35 @@ QLabel#PageHeaderSubtitle {
         return quad_count, face_count
 
     def _count_non_manifold_uv_components(self, mesh: str) -> int:
+        shapes = cmds.listRelatives(mesh, shapes=True, noIntermediate=True, fullPath=True, type="mesh") or []
+        if not shapes:
+            return 0
+
+        shape = shapes[0]
+        uv_sets = cmds.polyUVSet(shape, q=True, allUVSets=True) or []
+        if not uv_sets:
+            return 0
+
+        original_uv_set = cmds.polyUVSet(shape, q=True, currentUVSet=True) or []
         count = 0
-        for flag in ("nonManifoldUVEdges", "nonManifoldUVs", "nonManifoldUVVertices"):
-            try:
-                issues = cmds.polyInfo(mesh, **{flag: True}) or []
-            except (TypeError, RuntimeError):
-                continue
-            count += len(issues)
+        try:
+            for uv_set in uv_sets:
+                try:
+                    cmds.polyUVSet(shape, currentUVSet=True, uvSet=uv_set)
+                except RuntimeError:
+                    continue
+                for flag in ("nonManifoldUVEdges", "nonManifoldUVs", "nonManifoldUVVertices"):
+                    try:
+                        issues = cmds.polyInfo(mesh, **{flag: True}) or []
+                    except (TypeError, RuntimeError):
+                        continue
+                    count += len(issues)
+        finally:
+            if original_uv_set:
+                try:
+                    cmds.polyUVSet(shape, currentUVSet=True, uvSet=original_uv_set[0])
+                except RuntimeError:
+                    pass
         return count
 
     def _count_zero_space_uv_shells(self, mesh: str, uv_set: str) -> int:
