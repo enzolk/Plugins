@@ -2308,144 +2308,58 @@ QLabel#PageHeaderSubtitle {
             return selected, self._strip_namespaces_from_name(self._short_name(selected))
         return mesh_parent, None
 
-    def _integration_clear_target_content(self, target_container: str) -> None:
-        descendants = cmds.listRelatives(target_container, allDescendents=True, type="transform", fullPath=True) or []
-        descendants.sort(key=lambda node: node.count("|"), reverse=True)
-        for node in descendants:
-            if cmds.objExists(node):
-                try:
-                    cmds.delete(node)
-                except Exception:
-                    continue
-        direct_mesh_shapes = cmds.listRelatives(target_container, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
-        for shape in direct_mesh_shapes:
-            if cmds.objExists(shape):
-                try:
-                    cmds.delete(shape)
-                except Exception:
-                    continue
-
-    def _integration_copy_source_content(self, source_asset_root: str, target_container: str) -> bool:
-        def _mesh_shapes_under(node: str) -> List[str]:
-            direct = cmds.listRelatives(node, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
-            descendants = cmds.listRelatives(node, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-            merged: List[str] = []
-            seen: Set[str] = set()
-            for shape in direct + descendants:
-                if shape not in seen:
-                    seen.add(shape)
-                    merged.append(shape)
-            return merged
-
-        def _mesh_transforms_under(node: str) -> List[str]:
-            transforms: List[str] = []
-            seen: Set[str] = set()
-            for shape in _mesh_shapes_under(node):
-                parents = cmds.listRelatives(shape, parent=True, type="transform", fullPath=True) or []
-                for parent in parents:
-                    if parent not in seen:
-                        seen.add(parent)
-                        transforms.append(parent)
-            return transforms
-
-        source_mesh_transforms = _mesh_transforms_under(source_asset_root)
-        self._append_integration_log(f"[INFO] Source mesh transforms found: {len(source_mesh_transforms)}")
-        if not source_mesh_transforms:
-            self._append_integration_log("[FAIL] No source mesh transforms found under source asset root.")
-            return False
-
-        source_root_prefix = f"{source_asset_root}|"
-        copy_roots: Set[str] = set()
-        for mesh_transform in source_mesh_transforms:
-            if mesh_transform == source_asset_root:
-                copy_roots.add(mesh_transform)
+    def _integration_clear_target_content(self, mesh_parent: str) -> int:
+        deleted_count = 0
+        direct_children = cmds.listRelatives(mesh_parent, children=True, type="transform", fullPath=True) or []
+        for child in direct_children:
+            if not cmds.objExists(child):
                 continue
-            if not mesh_transform.startswith(source_root_prefix):
-                continue
-            relative = mesh_transform[len(source_root_prefix):]
-            if not relative:
-                continue
-            first_segment = relative.split("|", 1)[0]
-            copy_roots.add(f"{source_asset_root}|{first_segment}")
-
-        ordered_copy_roots = sorted(copy_roots, key=lambda node: (node.count("|"), len(node), node))
-        self._append_integration_log(f"[INFO] Source copy roots selected: {len(ordered_copy_roots)}")
-        if not ordered_copy_roots:
-            self._append_integration_log("[FAIL] Could not resolve source copy roots for mesh duplication.")
-            return False
-
-        self._append_integration_log(f"[INFO] Target container found: {target_container}")
-        self._append_integration_log("[INFO] Reusing existing target transform without creating nested duplicate")
-
-        copied_nodes = 0
-        copied_shapes = 0
-        for source_node in ordered_copy_roots:
-            if not cmds.objExists(source_node):
-                self._append_integration_log(f"[FAIL] Source node no longer exists before duplication: {source_node}")
-                continue
-
-            source_shape_count = len(_mesh_shapes_under(source_node))
-            self._append_integration_log(f"[INFO] Duplicating source node: {source_node}")
-            self._append_integration_log(f"[INFO] Mesh shapes found on source node before copy: {source_shape_count}")
-            if source_shape_count == 0:
-                self._append_integration_log(f"[WARN] Skipping source node with no mesh shapes: {source_node}")
-                continue
-
             try:
-                duplicated = cmds.duplicate(source_node, renameChildren=True) or []
-            except Exception as exc:
-                self._append_integration_log(f"[FAIL] Could not duplicate source node {source_node}: {exc}")
-                continue
-            if not duplicated:
-                self._append_integration_log(f"[FAIL] Duplicate command returned no nodes for source: {source_node}")
-                continue
-
-            dup_root = duplicated[0]
-            self._append_integration_log(f"[INFO] Duplicated source node for shape transfer: {dup_root}")
-
-            duplicate_shapes = _mesh_shapes_under(dup_root)
-            if not duplicate_shapes:
-                self._append_integration_log(f"[WARN] No mesh shape found on duplicated node: {dup_root}")
-                try:
-                    cmds.delete(dup_root)
-                except Exception:
-                    pass
-                continue
-
-            transferred_from_node = 0
-            for dup_shape in duplicate_shapes:
-                if not cmds.objExists(dup_shape):
-                    continue
-                try:
-                    parented_shapes = cmds.parent(dup_shape, target_container, shape=True, relative=True) or []
-                except Exception as exc:
-                    self._append_integration_log(
-                        f"[FAIL] Could not inject duplicated shape into target transform ({dup_shape}): {exc}"
-                    )
-                    continue
-                if parented_shapes:
-                    transferred_from_node += 1
-                    copied_shapes += 1
-
-            try:
-                cmds.delete(dup_root)
+                cmds.delete(child)
+                deleted_count += 1
             except Exception:
-                pass
-
-            if transferred_from_node == 0:
-                self._append_integration_log(
-                    f"[FAIL] Could not inject any mesh shape from duplicated source node: {source_node}"
-                )
                 continue
+        direct_mesh_shapes = cmds.listRelatives(mesh_parent, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+        for shape in direct_mesh_shapes:
+            if not cmds.objExists(shape):
+                continue
+            try:
+                cmds.delete(shape)
+                deleted_count += 1
+            except Exception:
+                continue
+        return deleted_count
 
-            copied_nodes += 1
+    def _integration_collect_source_mesh_children(self, source_asset_root: str) -> List[str]:
+        children = cmds.listRelatives(source_asset_root, children=True, type="transform", fullPath=True) or []
+        selected: List[str] = []
+        for child in children:
+            child_short = self._strip_namespaces_from_name(self._short_name(child)).upper()
+            if child_short.endswith("_COLLIDE"):
+                continue
+            mesh_descendants = cmds.listRelatives(child, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            direct_shapes = cmds.listRelatives(child, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            if mesh_descendants or direct_shapes:
+                selected.append(child)
+        selected.sort(key=lambda node: (node.count("|"), len(node), node))
+        return selected
 
-        if copied_nodes == 0:
-            self._append_integration_log("[FAIL] No source mesh content was successfully copied into target.")
-            return False
-        self._append_integration_log("[INFO] Injecting source mesh content directly into target transform")
-        self._append_integration_log(f"[INFO] Total mesh shapes injected: {copied_shapes}")
-        return True
+    def _integration_move_source_meshes_to_parent(self, source_asset_root: str, mesh_parent: str) -> int:
+        moved_count = 0
+        for source_child in self._integration_collect_source_mesh_children(source_asset_root):
+            if not cmds.objExists(source_child):
+                continue
+            if source_child == mesh_parent:
+                continue
+            try:
+                cmds.parent(source_child, mesh_parent)
+                moved_count += 1
+            except Exception as exc:
+                source_short = self._strip_namespaces_from_name(self._short_name(source_child))
+                self._append_integration_log(
+                    f"[FAIL] Could not move source mesh child '{source_short}' to target _MESH: {exc}"
+                )
+        return moved_count
 
     def confirm_integration_rights_taken(self) -> None:
         self.integration_rights_confirmed = True
@@ -2470,37 +2384,32 @@ QLabel#PageHeaderSubtitle {
             source_asset_root = source_roots.get(base_asset_name)
             loaded_asset_root = loaded_roots.get(base_asset_name)
             loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root)) if loaded_asset_root else ""
+            self._append_integration_log(f"[INFO] Processing asset pair: {base_asset_name}")
 
             if not source_asset_root:
-                self._append_integration_log(f"[WARN] No source asset found for loaded P4 asset: {loaded_asset_short}")
+                self._append_integration_log(f"[WARN] No source asset found for loaded P4 asset pair: {loaded_asset_short}")
                 continue
             if not loaded_asset_root:
                 continue
 
-            self._append_integration_log(f"[INFO] Source asset found: {base_asset_name}")
-            self._append_integration_log(f"[INFO] Loaded P4 asset found: {loaded_asset_short}")
             mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
             if not mesh_parent:
-                self._append_integration_log(f"[WARN] Target mesh parent not found: {base_asset_name}_MESH")
+                self._append_integration_log(f"[FAIL] Target mesh parent not found for asset '{base_asset_name}': {base_asset_name}_MESH")
                 continue
 
             mesh_parent_short = self._strip_namespaces_from_name(self._short_name(mesh_parent))
-            self._append_integration_log(f"[INFO] Target mesh parent found: {mesh_parent_short}")
-            target_container, sub_parent_name = self._integration_choose_target_container(mesh_parent)
-            if sub_parent_name:
-                self._append_integration_log(f"[INFO] Target sub-parent found: {sub_parent_name}")
-            else:
-                self._append_integration_log("[INFO] No dedicated sub-parent found, replacing directly in _MESH")
+            self._append_integration_log(f"[INFO] Target _MESH parent found: {mesh_parent_short}")
 
-            self._append_integration_log("[INFO] Removing old mesh content from existing target transform")
-            self._integration_clear_target_content(target_container)
-            copied = self._integration_copy_source_content(source_asset_root, target_container)
-            if copied:
-                self._append_integration_log("[OK] Replacement completed while preserving hierarchy")
+            deleted_count = self._integration_clear_target_content(mesh_parent)
+            self._append_integration_log(f"[INFO] Old children removed from {mesh_parent_short}: {deleted_count}")
+
+            moved_count = self._integration_move_source_meshes_to_parent(source_asset_root, mesh_parent)
+            self._append_integration_log(f"[INFO] New source meshes moved into {mesh_parent_short}: {moved_count}")
+            if moved_count > 0:
                 self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
                 replaced_count += 1
             else:
-                self._append_integration_log(f"[FAIL] Replacement failed for {base_asset_name}")
+                self._append_integration_log(f"[FAIL] Replacement failed for {base_asset_name}: no mesh children moved.")
 
         self._append_integration_log(f"[INFO] Mesh replacement finished. Assets replaced: {replaced_count}")
 
