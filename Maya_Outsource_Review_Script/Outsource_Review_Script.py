@@ -2781,6 +2781,17 @@ QLabel#PageHeaderSubtitle {
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Could not parent {node} under {target_group}: {exc}")
 
+    def _refresh_p4_connection_before_load(self) -> None:
+        """Refresh P4 connection status before any integration load action."""
+        try:
+            from qdHelpers.qdTech.qdTech import QDTech
+
+            QDTech.connection.p4.reconnect()
+            QDTech.connection.update_status()
+            self._append_integration_log("[INFO] P4 reconnected and status updated")
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] Failed to refresh P4 connection: {exc}")
+
     def update_selected_catalog_assets_from_p4(self) -> None:
         selected_main_assets = self._selected_list_control_items("integration_catalog_list")
         selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
@@ -2788,6 +2799,8 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log("Nothing selected. Select at least one catalog asset.")
             return
         category = self._selected_integration_qd_category()
+
+        self._refresh_p4_connection_before_load()
 
         try:
             from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
