@@ -609,9 +609,24 @@ _CLASSES = (
 
 def register():
     for c in _CLASSES:
-        bpy.utils.register_class(c)
+        try:
+            bpy.utils.register_class(c)
+        except ValueError as ex:
+            # Can happen during Blender live-reload if a previous class
+            # registration was not fully cleaned up.
+            if "already registered as a subclass" not in str(ex):
+                raise
+            try:
+                bpy.utils.unregister_class(c)
+            except Exception:
+                pass
+            bpy.utils.register_class(c)
 
 
 def unregister():
     for c in reversed(_CLASSES):
-        bpy.utils.unregister_class(c)
+        try:
+            bpy.utils.unregister_class(c)
+        except Exception:
+            # Ignore stale/unordered unregister calls on reload.
+            pass
