@@ -2021,7 +2021,29 @@ QLabel#PageHeaderSubtitle {
         )
         cmds.separator(style="in")
 
-        cmds.text(label="Step 06 — Logs / Result", align="left")
+        cmds.text(label="Step 06 — Apply Material Mixer", align="left")
+        cmds.text(
+            label="Apply LayeredLit mixer on unique materials used by loaded P4 meshes under _MESH (annexe branches excluded).",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(
+            label="Mixer (No BKD)",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.apply_material_mixer_on_loaded_p4_meshes(with_bkd=False),
+        )
+        cmds.button(
+            label="Mixer (With BKD)",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.apply_material_mixer_on_loaded_p4_meshes(with_bkd=True),
+        )
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
+        cmds.text(label="Logs / Result", align="left")
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
 
         cmds.setParent("..")
@@ -2638,6 +2660,153 @@ QLabel#PageHeaderSubtitle {
             assets_processed += 1
 
         self._append_integration_log(f"[INFO] Static Shadow activation finished. Assets processed: {assets_processed}")
+
+    def _integration_collect_annexe_short_names(self) -> Set[str]:
+        annexe_short_names: Set[str] = set()
+        transforms = cmds.ls(type="transform", long=True) or []
+        annexe_roots = [node for node in transforms if self._strip_namespaces_from_name(self._short_name(node)).upper() == "ANNEXES"]
+        for annexe_root in annexe_roots:
+            descendants = cmds.listRelatives(annexe_root, allDescendents=True, type="transform", fullPath=True) or []
+            direct_children = cmds.listRelatives(annexe_root, children=True, type="transform", fullPath=True) or []
+            for node in [annexe_root] + direct_children + descendants:
+                cleaned = self._strip_namespaces_from_name(self._short_name(node)).strip()
+                if cleaned:
+                    annexe_short_names.add(cleaned.upper())
+        return annexe_short_names
+
+    def _integration_annexe_name_variants(self, transform_name: str) -> Set[str]:
+        cleaned = self._strip_namespaces_from_name(transform_name).strip().upper()
+        if not cleaned:
+            return set()
+        variants = {cleaned}
+        for prefix in INTEGRATION_QDTOOLS_PREFIXES:
+            if cleaned.startswith(prefix):
+                variants.add(cleaned[len(prefix):])
+        return variants
+
+    def _integration_collect_materials_under_mesh_parent(
+        self, mesh_parent: str, annexe_short_names: Set[str]
+    ) -> Tuple[Set[str], Dict[str, int]]:
+        stats: Dict[str, int] = {
+            "mesh_shape_count": 0,
+            "ignored_annexe_objects": 0,
+            "material_assignments": 0,
+        }
+        unique_materials: Set[str] = set()
+        if not mesh_parent or not cmds.objExists(mesh_parent):
+            return unique_materials, stats
+
+        pending_transforms = [mesh_parent]
+        visited: Set[str] = set()
+        while pending_transforms:
+            transform = pending_transforms.pop()
+            if not transform or transform in visited or not cmds.objExists(transform):
+                continue
+            visited.add(transform)
+
+            if transform != mesh_parent:
+                variants = self._integration_annexe_name_variants(self._short_name(transform))
+                if variants and annexe_short_names.intersection(variants):
+                    subtree_transforms = cmds.listRelatives(transform, allDescendents=True, type="transform", fullPath=True) or []
+                    stats["ignored_annexe_objects"] += 1 + len(subtree_transforms)
+                    continue
+
+            if self._integration_is_in_collide_branch(transform, mesh_parent):
+                continue
+
+            shapes = cmds.listRelatives(transform, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            for shape in shapes:
+                if not shape or not cmds.objExists(shape):
+                    continue
+                stats["mesh_shape_count"] += 1
+                shading_engines = cmds.listConnections(shape, type="shadingEngine") or []
+                for shading_engine in set(shading_engines):
+                    materials = cmds.listConnections(f"{shading_engine}.surfaceShader") or []
+                    for material in materials:
+                        if not material or not cmds.objExists(material):
+                            continue
+                        stats["material_assignments"] += 1
+                        unique_materials.add(material)
+
+            children = cmds.listRelatives(transform, children=True, type="transform", fullPath=True) or []
+            pending_transforms.extend(children)
+
+        return unique_materials, stats
+
+    def apply_material_mixer_on_loaded_p4_meshes(self, with_bkd: bool) -> None:
+        loaded_roots = self._integration_collect_loaded_p4_roots_under_main_assets()
+        if not loaded_roots:
+            self._append_integration_log("[WARN] No loaded P4 prefixed assets found under Main_Assets for Mixer.")
+            return
+
+        mode_label = "With BKD" if with_bkd else "No BKD"
+        mel_command = "ChangeShaderByLayeredLit();" if with_bkd else "ChangeShaderByLayeredLitWithoutBKD();"
+        annexe_short_names = self._integration_collect_annexe_short_names()
+
+        scanned_mesh_groups = 0
+        total_mesh_shapes = 0
+        ignored_annexe_objects = 0
+        material_assignments = 0
+        unique_materials: Set[str] = set()
+        duplicate_material_hits = 0
+
+        self._append_integration_log(f"[INFO] Mixer mode: {mode_label}")
+        if annexe_short_names:
+            self._append_integration_log(f"[INFO] Annexes detected: {len(annexe_short_names)}")
+
+        for base_asset_name in sorted(loaded_roots.keys()):
+            loaded_asset_root = loaded_roots[base_asset_name][0]
+            mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
+            if not mesh_parent:
+                self._append_integration_log(f"[WARN] No _MESH found for '{base_asset_name}' while applying Mixer.")
+                continue
+
+            scanned_mesh_groups += 1
+            mesh_materials, stats = self._integration_collect_materials_under_mesh_parent(mesh_parent, annexe_short_names)
+            total_mesh_shapes += stats["mesh_shape_count"]
+            ignored_annexe_objects += stats["ignored_annexe_objects"]
+            material_assignments += stats["material_assignments"]
+            for material in mesh_materials:
+                if material in unique_materials:
+                    duplicate_material_hits += 1
+                unique_materials.add(material)
+
+        if not unique_materials:
+            self._append_integration_log("[WARN] No material found to process for Mixer.")
+            self._append_integration_log(f"[INFO] _MESH scanned: {scanned_mesh_groups}")
+            self._append_integration_log(f"[INFO] Mesh shapes found: {total_mesh_shapes}")
+            self._append_integration_log(f"[INFO] Ignored annexe objects: {ignored_annexe_objects}")
+            self._append_integration_log(f"[INFO] Material assignments found: {material_assignments}")
+            self._append_integration_log("[INFO] Unique materials after deduplication: 0")
+            self._append_integration_log("[INFO] Materials processed: 0")
+            return
+
+        materials_processed = 0
+        previous_selection = cmds.ls(selection=True, long=True) or []
+        for material in sorted(unique_materials):
+            if not cmds.objExists(material):
+                continue
+            try:
+                cmds.select(material, replace=True, noExpand=True)
+                mel.eval(mel_command)
+                materials_processed += 1
+            except Exception as exc:
+                self._append_integration_log(
+                    f"[WARN] Mixer failed on material '{self._short_name(material)}': {exc}"
+                )
+        if previous_selection:
+            cmds.select(previous_selection, replace=True)
+        else:
+            cmds.select(clear=True)
+
+        self._append_integration_log(f"[INFO] _MESH scanned: {scanned_mesh_groups}")
+        self._append_integration_log(f"[INFO] Mesh shapes found: {total_mesh_shapes}")
+        self._append_integration_log(f"[INFO] Ignored annexe objects: {ignored_annexe_objects}")
+        self._append_integration_log(f"[INFO] Material assignments found: {material_assignments}")
+        self._append_integration_log(f"[INFO] Unique materials after deduplication: {len(unique_materials)}")
+        self._append_integration_log(f"[INFO] Materials processed: {materials_processed}")
+        if duplicate_material_hits > 0:
+            self._append_integration_log(f"[DEBUG] Duplicate material hits ignored: {duplicate_material_hits}")
 
     def select_all_integration_catalog_assets(self) -> None:
         if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
