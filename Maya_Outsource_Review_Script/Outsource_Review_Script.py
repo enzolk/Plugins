@@ -2249,24 +2249,28 @@ QLabel#PageHeaderSubtitle {
         existing.sort(key=lambda node: (node.count("|"), len(node), node))
         return existing[0]
 
-    def _integration_collect_asset_roots(self, prefixed: bool) -> Dict[str, str]:
+    def _integration_collect_asset_roots(self, prefixed: bool) -> Dict[str, List[str]]:
         asset_to_nodes: Dict[str, List[str]] = {}
         transforms = cmds.ls(type="transform", long=True) or []
         for node in transforms:
+            if not cmds.objExists(node):
+                continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if not catalog_name:
                 continue
             is_prefixed = self._is_prefixed_catalog_asset(catalog_name)
             if is_prefixed != prefixed:
                 continue
+            short_clean = self._strip_namespaces_from_name(self._short_name(node)).strip("_ ").upper()
+            if short_clean != catalog_name:
+                continue
             key = self._integration_remove_prefix(catalog_name) if prefixed else catalog_name
             asset_to_nodes.setdefault(key, []).append(node)
-        resolved: Dict[str, str] = {}
-        for asset_name, nodes in asset_to_nodes.items():
-            best = self._integration_best_asset_root(nodes)
-            if best:
-                resolved[asset_name] = best
-        return resolved
+        for asset_name in list(asset_to_nodes.keys()):
+            candidates = [n for n in asset_to_nodes[asset_name] if n and cmds.objExists(n)]
+            candidates.sort(key=lambda node: (node.count("|"), len(node), node))
+            asset_to_nodes[asset_name] = candidates
+        return asset_to_nodes
 
     def _integration_find_mesh_parent(self, loaded_asset_root: str, source_asset_name: str) -> Optional[str]:
         if not loaded_asset_root or not cmds.objExists(loaded_asset_root):
@@ -2330,23 +2334,20 @@ QLabel#PageHeaderSubtitle {
                 continue
         return deleted_count
 
-    def _integration_collect_source_mesh_children(self, source_asset_root: str) -> List[str]:
+    def _integration_collect_source_children(self, source_asset_root: str) -> List[str]:
         children = cmds.listRelatives(source_asset_root, children=True, type="transform", fullPath=True) or []
         selected: List[str] = []
         for child in children:
             child_short = self._strip_namespaces_from_name(self._short_name(child)).upper()
             if child_short.endswith("_COLLIDE"):
                 continue
-            mesh_descendants = cmds.listRelatives(child, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-            direct_shapes = cmds.listRelatives(child, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
-            if mesh_descendants or direct_shapes:
-                selected.append(child)
+            selected.append(child)
         selected.sort(key=lambda node: (node.count("|"), len(node), node))
         return selected
 
-    def _integration_move_source_meshes_to_parent(self, source_asset_root: str, mesh_parent: str) -> int:
+    def _integration_move_source_children_to_parent(self, source_asset_root: str, mesh_parent: str) -> int:
         moved_count = 0
-        for source_child in self._integration_collect_source_mesh_children(source_asset_root):
+        for source_child in self._integration_collect_source_children(source_asset_root):
             if not cmds.objExists(source_child):
                 continue
             if source_child == mesh_parent:
@@ -2357,7 +2358,7 @@ QLabel#PageHeaderSubtitle {
             except Exception as exc:
                 source_short = self._strip_namespaces_from_name(self._short_name(source_child))
                 self._append_integration_log(
-                    f"[FAIL] Could not move source mesh child '{source_short}' to target _MESH: {exc}"
+                    f"[FAIL] Could not move source child '{source_short}' to target _MESH: {exc}"
                 )
         return moved_count
 
@@ -2381,35 +2382,48 @@ QLabel#PageHeaderSubtitle {
 
         replaced_count = 0
         for base_asset_name in sorted(loaded_roots.keys()):
-            source_asset_root = source_roots.get(base_asset_name)
-            loaded_asset_root = loaded_roots.get(base_asset_name)
-            loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root)) if loaded_asset_root else ""
-            self._append_integration_log(f"[INFO] Processing asset pair: {base_asset_name}")
+            loaded_candidates = loaded_roots.get(base_asset_name, [])
+            if not loaded_candidates:
+                continue
+            loaded_asset_root = loaded_candidates[0]
+            loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root))
+            self._append_integration_log(f"[INFO] Asset P4 detected: {loaded_asset_short}")
+            self._append_integration_log(f"[INFO] Cleaned asset name: {base_asset_name}")
+            if len(loaded_candidates) > 1:
+                self._append_integration_log(
+                    f"[WARN] Multiple loaded P4 roots found for '{base_asset_name}' ({len(loaded_candidates)}). Using: {loaded_asset_short}"
+                )
 
-            if not source_asset_root:
-                self._append_integration_log(f"[WARN] No source asset found for loaded P4 asset pair: {loaded_asset_short}")
+            source_candidates = source_roots.get(base_asset_name, [])
+            if not source_candidates:
+                self._append_integration_log(f"[WARN] Source not found for '{base_asset_name}'.")
                 continue
-            if not loaded_asset_root:
-                continue
+            source_asset_root = source_candidates[0]
+            source_short = self._strip_namespaces_from_name(self._short_name(source_asset_root))
+            if len(source_candidates) > 1:
+                self._append_integration_log(
+                    f"[WARN] Multiple source roots found for '{base_asset_name}' ({len(source_candidates)}). Using: {source_short}"
+                )
+            self._append_integration_log(f"[INFO] Source found: {source_short}")
 
             mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
             if not mesh_parent:
-                self._append_integration_log(f"[FAIL] Target mesh parent not found for asset '{base_asset_name}': {base_asset_name}_MESH")
+                self._append_integration_log(f"[WARN] Target _MESH not found for '{base_asset_name}': expected {base_asset_name}_MESH")
                 continue
 
             mesh_parent_short = self._strip_namespaces_from_name(self._short_name(mesh_parent))
-            self._append_integration_log(f"[INFO] Target _MESH parent found: {mesh_parent_short}")
+            self._append_integration_log(f"[INFO] Target _MESH found: {mesh_parent_short}")
 
             deleted_count = self._integration_clear_target_content(mesh_parent)
-            self._append_integration_log(f"[INFO] Old children removed from {mesh_parent_short}: {deleted_count}")
+            self._append_integration_log(f"[INFO] Children removed from {mesh_parent_short}: {deleted_count}")
 
-            moved_count = self._integration_move_source_meshes_to_parent(source_asset_root, mesh_parent)
-            self._append_integration_log(f"[INFO] New source meshes moved into {mesh_parent_short}: {moved_count}")
+            moved_count = self._integration_move_source_children_to_parent(source_asset_root, mesh_parent)
+            self._append_integration_log(f"[INFO] Source items moved into {mesh_parent_short}: {moved_count}")
             if moved_count > 0:
                 self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
                 replaced_count += 1
             else:
-                self._append_integration_log(f"[FAIL] Replacement failed for {base_asset_name}: no mesh children moved.")
+                self._append_integration_log(f"[FAIL] Replacement failed for {base_asset_name}: no source child moved.")
 
         self._append_integration_log(f"[INFO] Mesh replacement finished. Assets replaced: {replaced_count}")
 
