@@ -1196,10 +1196,20 @@ _CLASSES = (
 )
 
 _context_menu_hooked = False
+_context_menu_type = None
+
+
+def _find_button_context_menu_type():
+    # Blender API naming can vary across versions.
+    for name in ("WM_MT_button_context", "UI_MT_button_context_menu"):
+        menu_type = getattr(bpy.types, name, None)
+        if menu_type is not None:
+            return menu_type
+    return None
 
 
 def register():
-    global _context_menu_hooked
+    global _context_menu_hooked, _context_menu_type
 
     for c in _CLASSES:
         bpy.utils.register_class(c)
@@ -1210,12 +1220,14 @@ def register():
     if prefs:
         load_config_into_prefs(prefs)
 
-    bpy.types.WM_MT_button_context.append(cqf_draw_button_context)
-    _context_menu_hooked = True
+    _context_menu_type = _find_button_context_menu_type()
+    if _context_menu_type is not None:
+        _context_menu_type.append(cqf_draw_button_context)
+        _context_menu_hooked = True
 
 
 def unregister():
-    global _context_menu_hooked
+    global _context_menu_hooked, _context_menu_type
 
     try:
         save_config_now()
@@ -1232,10 +1244,12 @@ def unregister():
 
     if _context_menu_hooked:
         try:
-            bpy.types.WM_MT_button_context.remove(cqf_draw_button_context)
+            if _context_menu_type is not None:
+                _context_menu_type.remove(cqf_draw_button_context)
         except Exception:
             pass
         _context_menu_hooked = False
+        _context_menu_type = None
 
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)
