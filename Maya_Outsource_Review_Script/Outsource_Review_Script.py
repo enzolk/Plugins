@@ -2178,21 +2178,20 @@ QLabel#PageHeaderSubtitle {
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
-        skipped_prefixed_branches: Set[str] = set()
-        blocked_prefixed_branches: List[str] = []
+        main_assets_groups = self._integration_find_main_assets_groups()
+        p4_main_assets: Set[str] = set()
+        source_assets: Set[str] = set()
         transforms = cmds.ls(type="transform", long=True) or []
         transforms.sort(key=lambda path: (path.count("|"), path))
         for node in transforms:
             if not cmds.objExists(node):
                 continue
-            if any(self._is_in_transform_branch(node, blocked_branch) for blocked_branch in blocked_prefixed_branches):
-                continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if catalog_name:
-                if self._is_prefixed_catalog_asset(catalog_name):
-                    blocked_prefixed_branches.append(node)
-                    skipped_prefixed_branches.add(self._strip_namespaces_from_name(self._short_name(node)))
+                if self._integration_is_under_main_assets(node, main_assets_groups):
+                    p4_main_assets.add(self._strip_namespaces_from_name(self._short_name(node)))
                     continue
+                source_assets.add(catalog_name)
                 detected.setdefault(catalog_name, set()).add(node)
 
         annexe_assets: Set[str] = set()
@@ -2202,9 +2201,6 @@ QLabel#PageHeaderSubtitle {
                 while pending_children:
                     child = pending_children.pop()
                     child_catalog = self._extract_catalog_asset_from_name(child)
-                    if child_catalog and self._is_prefixed_catalog_asset(child_catalog):
-                        skipped_prefixed_branches.add(self._strip_namespaces_from_name(self._short_name(child)))
-                        continue
                     if not child_catalog or child_catalog == catalog_name:
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
@@ -2227,8 +2223,20 @@ QLabel#PageHeaderSubtitle {
         self._refresh_integration_catalog_list_ui()
         self._clear_list_control("integration_logs")
 
-        for skipped_branch in sorted(skipped_prefixed_branches):
-            self._append_integration_log(f"Skipping prefixed loaded branch: {skipped_branch}")
+        for p4_asset in sorted(p4_main_assets):
+            self._append_integration_log(
+                f"[CLASSIFY] P4/Main Asset (under Main_Assets): {p4_asset}"
+            )
+        for source_asset in sorted(source_assets):
+            self._append_integration_log(
+                f"[CLASSIFY] Source Asset (outside Main_Assets): {source_asset}"
+            )
+        for annexe_asset in sorted(annexe_assets):
+            source_list = ", ".join(sorted(annexe_sources.get(annexe_asset, [])))
+            source_text = f" (linked to: {source_list})" if source_list else ""
+            self._append_integration_log(
+                f"[CLASSIFY] Annexe Asset (outside Main_Assets): {annexe_asset}{source_text}"
+            )
 
         if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
             self._append_integration_log("No catalog asset detected in current scene.")
@@ -2263,30 +2271,36 @@ QLabel#PageHeaderSubtitle {
         existing.sort(key=lambda node: (node.count("|"), len(node), node))
         return existing[0]
 
+    def _integration_is_under_main_assets(self, node: str, main_assets_groups: Optional[List[str]] = None) -> bool:
+        if not node:
+            return False
+        groups = main_assets_groups if main_assets_groups is not None else self._integration_find_main_assets_groups()
+        return any(self._integration_is_in_branch(node, main_group) for main_group in groups)
+
     def _integration_collect_asset_roots(self, prefixed: bool) -> Dict[str, List[str]]:
         asset_to_nodes: Dict[str, List[str]] = {}
         transforms = cmds.ls(type="transform", long=True) or []
-        blocked_prefixed_branches: List[str] = []
+        main_assets_groups = self._integration_find_main_assets_groups()
         for node in transforms:
             if not cmds.objExists(node):
-                continue
-            if any(self._is_in_transform_branch(node, blocked_branch) for blocked_branch in blocked_prefixed_branches):
                 continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if not catalog_name:
                 continue
-            is_prefixed = self._is_prefixed_catalog_asset(catalog_name)
-            if is_prefixed:
-                blocked_prefixed_branches.append(node)
-            if is_prefixed != prefixed:
+            is_under_main_assets = self._integration_is_under_main_assets(node, main_assets_groups)
+            if prefixed != is_under_main_assets:
                 continue
             short_clean = self._strip_namespaces_from_name(self._short_name(node)).strip("_ ").upper()
             if short_clean != catalog_name:
                 continue
-            key = self._integration_remove_prefix(catalog_name) if prefixed else catalog_name
-            asset_to_nodes.setdefault(key, []).append(node)
+            keys = [self._integration_remove_prefix(catalog_name)] if prefixed else [catalog_name]
+            source_base_key = self._integration_remove_prefix(catalog_name)
+            if not prefixed and source_base_key != catalog_name:
+                keys.append(source_base_key)
+            for key in keys:
+                asset_to_nodes.setdefault(key, []).append(node)
         for asset_name in list(asset_to_nodes.keys()):
-            candidates = [n for n in asset_to_nodes[asset_name] if n and cmds.objExists(n)]
+            candidates = [n for n in set(asset_to_nodes[asset_name]) if n and cmds.objExists(n)]
             candidates.sort(key=lambda node: (node.count("|"), len(node), node))
             asset_to_nodes[asset_name] = candidates
         return asset_to_nodes
