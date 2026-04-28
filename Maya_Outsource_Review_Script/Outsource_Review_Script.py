@@ -2876,52 +2876,59 @@ QLabel#PageHeaderSubtitle {
             for annexe_asset in annexe_assets:
                 annexes_detected += 1
                 annexe_asset_short = self._strip_namespaces_from_name(self._short_name(annexe_asset))
-                expected_mesh_name = f"{annexe_asset_short}_MESH".upper()
+                self._append_integration_log(f"[INFO] Annexe detected: {annexe_asset_short}")
                 search_nodes = [annexe_asset]
                 search_nodes.extend(cmds.listRelatives(annexe_asset, allDescendents=True, type="transform", fullPath=True) or [])
                 mesh_groups = [
                     node for node in search_nodes
-                    if self._strip_namespaces_from_name(self._short_name(node)).upper() == expected_mesh_name
+                    if self._strip_namespaces_from_name(self._short_name(node)).upper().endswith("_MESH")
+                    and not self._integration_is_in_collide_branch(node, annexe_asset)
                 ]
                 if not mesh_groups:
                     self._append_integration_log(f"[WARN] Annexe '{annexe_asset_short}' has no _MESH group.")
                     continue
-                mesh_group = sorted(mesh_groups, key=lambda node: (node.count("|"), len(node), node))[0]
-                mesh_shapes = cmds.listRelatives(mesh_group, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                direct_shapes = cmds.listRelatives(mesh_group, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                for mesh_shape in sorted(set(mesh_shapes + direct_shapes)):
-                    parents = cmds.listRelatives(mesh_shape, parent=True, type="transform", fullPath=True) or []
-                    if not parents:
-                        continue
-                    transform = parents[0]
-                    transform_short = self._strip_namespaces_from_name(self._short_name(transform))
-                    if self._integration_is_in_collide_branch(transform, mesh_group):
-                        continue
-                    shading_engines = cmds.listConnections(mesh_shape, type="shadingEngine") or []
-                    materials: List[str] = []
-                    for shading_engine in sorted(set(shading_engines)):
-                        mats = cmds.listConnections(f"{shading_engine}.surfaceShader") or []
-                        for material in mats:
-                            if material and cmds.objExists(material) and material not in materials:
-                                materials.append(material)
-                    if not materials:
-                        continue
-                    key_exact = transform_short.upper()
-                    key_normalized = self._integration_normalize_object_name_for_annexe_matching(transform_short)
-                    face_assignments = self._integration_collect_face_material_assignments(mesh_shape)
-                    entry = {
-                        "mesh_shape": mesh_shape,
-                        "mesh_shape_short": self._strip_namespaces_from_name(self._short_name(mesh_shape)),
-                        "materials": materials,
-                        "face_assignments": face_assignments,
-                        "source_transform": transform,
-                        "source_transform_short": transform_short,
-                    }
-                    if key_exact not in references:
-                        references[key_exact] = entry
-                        reference_objects += 1
-                    if key_normalized and key_normalized not in references:
-                        references[key_normalized] = entry
+                for mesh_group in sorted(set(mesh_groups), key=lambda node: (node.count("|"), len(node), node)):
+                    mesh_group_short = self._strip_namespaces_from_name(self._short_name(mesh_group))
+                    self._append_integration_log(f"[INFO] _MESH found: {mesh_group_short}")
+                    mesh_shapes = cmds.listRelatives(mesh_group, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+                    direct_shapes = cmds.listRelatives(mesh_group, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+                    unique_mesh_shapes = sorted(set(mesh_shapes + direct_shapes))
+                    self._append_integration_log(
+                        f"[INFO] Shapes found under {mesh_group_short}: {len(unique_mesh_shapes)}"
+                    )
+                    for mesh_shape in unique_mesh_shapes:
+                        parents = cmds.listRelatives(mesh_shape, parent=True, type="transform", fullPath=True) or []
+                        if not parents:
+                            continue
+                        transform = parents[0]
+                        transform_short = self._strip_namespaces_from_name(self._short_name(transform))
+                        if self._integration_is_in_collide_branch(transform, mesh_group):
+                            continue
+                        shading_engines = cmds.listConnections(mesh_shape, type="shadingEngine") or []
+                        materials: List[str] = []
+                        for shading_engine in sorted(set(shading_engines)):
+                            mats = cmds.listConnections(f"{shading_engine}.surfaceShader") or []
+                            for material in mats:
+                                if material and cmds.objExists(material) and material not in materials:
+                                    materials.append(material)
+                        if not materials:
+                            continue
+                        key_exact = transform_short.upper()
+                        key_normalized = self._integration_normalize_object_name_for_annexe_matching(transform_short)
+                        face_assignments = self._integration_collect_face_material_assignments(mesh_shape)
+                        entry = {
+                            "mesh_shape": mesh_shape,
+                            "mesh_shape_short": self._strip_namespaces_from_name(self._short_name(mesh_shape)),
+                            "materials": materials,
+                            "face_assignments": face_assignments,
+                            "source_transform": transform,
+                            "source_transform_short": transform_short,
+                        }
+                        if key_exact not in references:
+                            references[key_exact] = entry
+                            reference_objects += 1
+                        if key_normalized and key_normalized not in references:
+                            references[key_normalized] = entry
         return references, annexes_detected, reference_objects
 
     def _integration_reapply_materials_to_target_mesh(
