@@ -2255,7 +2255,22 @@ QLabel#PageHeaderSubtitle {
         cleaned = self._strip_namespaces_from_name(scene_asset).strip("_ ").upper()
         if not cleaned:
             return []
-        return [f"{prefix}{cleaned}" for prefix in INTEGRATION_QDTOOLS_PREFIXES]
+
+        base_name = self._integration_remove_prefix(cleaned)
+        raw_candidates = [cleaned]
+        if base_name and base_name != cleaned:
+            raw_candidates.append(base_name)
+        if base_name:
+            raw_candidates.extend([f"{prefix}{base_name}" for prefix in INTEGRATION_QDTOOLS_PREFIXES])
+
+        candidates: List[str] = []
+        seen: Set[str] = set()
+        for candidate in raw_candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            candidates.append(candidate)
+        return candidates
 
     def _integration_remove_prefix(self, catalog_name: str) -> str:
         cleaned = self._strip_namespaces_from_name(catalog_name).strip("_ ").upper()
@@ -2817,6 +2832,10 @@ QLabel#PageHeaderSubtitle {
                 self._append_integration_log(f"Trying P4 load for {asset_kind} {scene_asset}")
                 catalog_candidates = self._integration_catalog_candidates(scene_asset)
                 asset_loaded = False
+                if catalog_candidates:
+                    self._append_integration_log(
+                        f"[INFO] Candidates for {scene_asset}: {', '.join(catalog_candidates)}"
+                    )
 
                 for catalog_name in catalog_candidates:
                     self._append_integration_log(f"[INFO] Trying {catalog_name}")
@@ -2839,7 +2858,7 @@ QLabel#PageHeaderSubtitle {
                             )
 
                         self.integration_last_results.append((scene_asset, True, f"Loaded with {catalog_name}"))
-                        self._append_integration_log(f"[OK] Loaded with {catalog_name}")
+                        self._append_integration_log(f"[INFO] Loaded {catalog_name}")
                         loaded_top_nodes = self._resolve_loaded_roots_with_fallback(
                             scene_asset=scene_asset,
                             catalog_name=catalog_name,
@@ -2853,12 +2872,12 @@ QLabel#PageHeaderSubtitle {
                         asset_loaded = True
                         break
                     except Exception as exc:
-                        self._append_integration_log(f"[FAIL] {catalog_name} failed")
-                        self._append_integration_log(f"[DEBUG] {catalog_name}: {exc}")
+                        self._append_integration_log(f"[WARN] {catalog_name} failed: {exc}")
                         continue
 
                 if not asset_loaded:
-                    message = f"{scene_asset} could not be loaded with any known prefix"
+                    tried = ", ".join(catalog_candidates) if catalog_candidates else "<none>"
+                    message = f"{scene_asset} could not be loaded. Tried: {tried}"
                     self.integration_last_results.append((scene_asset, False, message))
                     self._append_integration_log(f"[FAIL] {message}")
 
