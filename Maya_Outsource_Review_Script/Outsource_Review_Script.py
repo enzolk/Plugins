@@ -2007,7 +2007,21 @@ QLabel#PageHeaderSubtitle {
         )
         cmds.separator(style="in")
 
-        cmds.text(label="Step 05 — Logs / Result", align="left")
+        cmds.text(label="Step 05 — Activate Static Shadow", align="left")
+        cmds.text(
+            label="Set qdStatic / qdCastShadows on mesh shapes under loaded P4 _MESH groups (glass meshes are excluded).",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.button(
+            label="Activate Static Shadow on Loaded P4 Meshes",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.activate_static_shadow_on_loaded_p4_meshes(),
+        )
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 06 — Logs / Result", align="left")
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
 
         cmds.setParent("..")
@@ -2476,6 +2490,125 @@ QLabel#PageHeaderSubtitle {
                 self._append_integration_log(f"[FAIL] Replacement failed for {base_asset_name}: no source child moved.")
 
         self._append_integration_log(f"[INFO] Mesh replacement finished. Assets replaced: {replaced_count}")
+
+    def _integration_find_main_assets_groups(self) -> List[str]:
+        transforms = cmds.ls(type="transform", long=True) or []
+        groups: List[str] = []
+        for node in transforms:
+            short = self._strip_namespaces_from_name(self._short_name(node)).upper()
+            if short == "MAIN_ASSETS":
+                groups.append(node)
+        groups.sort(key=lambda node: (node.count("|"), len(node), node))
+        return groups
+
+    @staticmethod
+    def _integration_is_in_branch(node: str, branch_root: str) -> bool:
+        if not node or not branch_root:
+            return False
+        return node == branch_root or node.startswith(f"{branch_root}|")
+
+    def _integration_collect_loaded_p4_roots_under_main_assets(self) -> Dict[str, List[str]]:
+        loaded_roots = self._integration_collect_asset_roots(prefixed=True)
+        main_assets_groups = self._integration_find_main_assets_groups()
+        if not main_assets_groups:
+            return {}
+        filtered: Dict[str, List[str]] = {}
+        for base_asset_name, roots in loaded_roots.items():
+            valid_roots = [
+                root
+                for root in roots
+                if any(self._integration_is_in_branch(root, main_group) for main_group in main_assets_groups)
+            ]
+            if valid_roots:
+                filtered[base_asset_name] = valid_roots
+        return filtered
+
+    def _integration_is_in_collide_branch(self, node: str, mesh_parent: str) -> bool:
+        if not node or not mesh_parent:
+            return False
+        relative_path = node[len(mesh_parent):] if node.startswith(mesh_parent) else node
+        segments = [seg for seg in relative_path.split("|") if seg]
+        for segment in segments:
+            normalized = self._strip_namespaces_from_name(segment).upper()
+            if "_COLLIDE" in normalized or "_COLLIDER" in normalized:
+                return True
+        return False
+
+    def _integration_set_static_shadow_attr(self, shape: str, attr_name: str, value: int, asset_name: str) -> bool:
+        if not cmds.attributeQuery(attr_name, node=shape, exists=True):
+            self._append_integration_log(
+                f"[WARN] Missing attribute on shape '{self._short_name(shape)}' ({asset_name}): {attr_name}"
+            )
+            return False
+        try:
+            cmds.setAttr(f"{shape}.{attr_name}", value)
+            return True
+        except Exception as exc:
+            self._append_integration_log(
+                f"[WARN] Could not set {attr_name} on '{self._short_name(shape)}' ({asset_name}): {exc}"
+            )
+            return False
+
+    def activate_static_shadow_on_loaded_p4_meshes(self) -> None:
+        loaded_roots = self._integration_collect_loaded_p4_roots_under_main_assets()
+        if not loaded_roots:
+            self._append_integration_log("[WARN] No loaded P4 prefixed assets found under Main_Assets for Static Shadow.")
+            return
+
+        assets_processed = 0
+        for base_asset_name in sorted(loaded_roots.keys()):
+            loaded_asset_root = loaded_roots[base_asset_name][0]
+            loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root))
+            self._append_integration_log(f"[INFO] Static Shadow asset: {loaded_asset_short}")
+            self._append_integration_log(f"[INFO] Cleaned asset name: {base_asset_name}")
+
+            mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
+            if not mesh_parent:
+                self._append_integration_log(
+                    f"[WARN] No _MESH found for '{base_asset_name}' while activating Static Shadow."
+                )
+                continue
+
+            mesh_parent_short = self._strip_namespaces_from_name(self._short_name(mesh_parent))
+            self._append_integration_log(f"[INFO] _MESH processed: {mesh_parent_short}")
+
+            mesh_shapes = cmds.listRelatives(mesh_parent, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            direct_shapes = cmds.listRelatives(mesh_parent, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            mesh_shapes.extend(direct_shapes)
+            unique_shapes: List[str] = []
+            seen_shapes: Set[str] = set()
+            for shape in mesh_shapes:
+                if not shape or not cmds.objExists(shape) or shape in seen_shapes:
+                    continue
+                if self._integration_is_in_collide_branch(shape, mesh_parent):
+                    continue
+                seen_shapes.add(shape)
+                unique_shapes.append(shape)
+
+            self._append_integration_log(f"[INFO] Mesh shapes found in {mesh_parent_short}: {len(unique_shapes)}")
+
+            static_on_count = 0
+            glass_off_count = 0
+            for shape in unique_shapes:
+                parent = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+                if not parent:
+                    continue
+                transform_short = self._strip_namespaces_from_name(self._short_name(parent[0]))
+                is_glass = "_GLASS" in transform_short.upper()
+                target_value = 0 if is_glass else 1
+                static_ok = self._integration_set_static_shadow_attr(shape, "qdStatic", target_value, base_asset_name)
+                cast_ok = self._integration_set_static_shadow_attr(shape, "qdCastShadows", target_value, base_asset_name)
+                if static_ok and cast_ok:
+                    if is_glass:
+                        glass_off_count += 1
+                    else:
+                        static_on_count += 1
+
+            self._append_integration_log(f"[INFO] Static Shadow ON meshes: {static_on_count}")
+            self._append_integration_log(f"[INFO] Glass Static Shadow OFF meshes: {glass_off_count}")
+            assets_processed += 1
+
+        self._append_integration_log(f"[INFO] Static Shadow activation finished. Assets processed: {assets_processed}")
 
     def select_all_integration_catalog_assets(self) -> None:
         if not self.integration_main_catalog_assets and not self.integration_annexe_catalog_assets:
