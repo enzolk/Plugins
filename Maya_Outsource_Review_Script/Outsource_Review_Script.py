@@ -2252,13 +2252,18 @@ QLabel#PageHeaderSubtitle {
     def _integration_collect_asset_roots(self, prefixed: bool) -> Dict[str, List[str]]:
         asset_to_nodes: Dict[str, List[str]] = {}
         transforms = cmds.ls(type="transform", long=True) or []
+        blocked_prefixed_branches: List[str] = []
         for node in transforms:
             if not cmds.objExists(node):
+                continue
+            if any(self._is_in_transform_branch(node, blocked_branch) for blocked_branch in blocked_prefixed_branches):
                 continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if not catalog_name:
                 continue
             is_prefixed = self._is_prefixed_catalog_asset(catalog_name)
+            if is_prefixed:
+                blocked_prefixed_branches.append(node)
             if is_prefixed != prefixed:
                 continue
             short_clean = self._strip_namespaces_from_name(self._short_name(node)).strip("_ ").upper()
@@ -2334,16 +2339,32 @@ QLabel#PageHeaderSubtitle {
                 continue
         return deleted_count
 
+    def _integration_is_excluded_movable_node(self, node: str) -> bool:
+        short_upper = self._strip_namespaces_from_name(self._short_name(node)).upper()
+        if "_COLLIDE" in short_upper or "_COLLIDER" in short_upper:
+            return True
+        if short_upper.startswith("ACC_"):
+            return True
+        protected_groups = {"MAIN_ASSETS", "ANNEXES", "COLLIDE", "COLLIDER"}
+        if short_upper in protected_groups:
+            return True
+        return any(f"|{group_name}|" in node for group_name in ("Main_Assets", "Annexes"))
+
     def _integration_collect_source_children(self, source_asset_root: str) -> List[str]:
         children = cmds.listRelatives(source_asset_root, children=True, type="transform", fullPath=True) or []
         selected: List[str] = []
         for child in children:
-            child_short = self._strip_namespaces_from_name(self._short_name(child)).upper()
-            if child_short.endswith("_COLLIDE"):
+            if self._integration_is_excluded_movable_node(child):
                 continue
             selected.append(child)
         selected.sort(key=lambda node: (node.count("|"), len(node), node))
         return selected
+
+    def _integration_source_has_mesh_shape(self, source_asset_root: str) -> bool:
+        if not source_asset_root or not cmds.objExists(source_asset_root):
+            return False
+        shapes = cmds.listRelatives(source_asset_root, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
+        return bool(shapes)
 
     def _integration_move_source_children_to_parent(self, source_asset_root: str, mesh_parent: str) -> int:
         moved_count = 0
@@ -2361,6 +2382,23 @@ QLabel#PageHeaderSubtitle {
                     f"[FAIL] Could not move source child '{source_short}' to target _MESH: {exc}"
                 )
         return moved_count
+
+    def _integration_move_source_transform_to_parent(self, source_asset_root: str, mesh_parent: str) -> int:
+        if not source_asset_root or not cmds.objExists(source_asset_root):
+            return 0
+        if source_asset_root == mesh_parent:
+            return 0
+        if self._integration_is_excluded_movable_node(source_asset_root):
+            return 0
+        try:
+            cmds.parent(source_asset_root, mesh_parent)
+            return 1
+        except Exception as exc:
+            source_short = self._strip_namespaces_from_name(self._short_name(source_asset_root))
+            self._append_integration_log(
+                f"[FAIL] Could not move source transform '{source_short}' to target _MESH: {exc}"
+            )
+            return 0
 
     def confirm_integration_rights_taken(self) -> None:
         self.integration_rights_confirmed = True
@@ -2417,7 +2455,19 @@ QLabel#PageHeaderSubtitle {
             deleted_count = self._integration_clear_target_content(mesh_parent)
             self._append_integration_log(f"[INFO] Children removed from {mesh_parent_short}: {deleted_count}")
 
-            moved_count = self._integration_move_source_children_to_parent(source_asset_root, mesh_parent)
+            source_children = self._integration_collect_source_children(source_asset_root)
+            moved_count = 0
+            if source_children:
+                self._append_integration_log(f"[INFO] Source '{source_short}': moving direct children")
+                moved_count = self._integration_move_source_children_to_parent(source_asset_root, mesh_parent)
+            elif self._integration_source_has_mesh_shape(source_asset_root):
+                self._append_integration_log(f"[INFO] Source '{source_short}': moving source transform itself")
+                moved_count = self._integration_move_source_transform_to_parent(source_asset_root, mesh_parent)
+            else:
+                self._append_integration_log(
+                    f"[WARN] Source '{source_short}': no valid direct children and no mesh shape found; nothing moved."
+                )
+
             self._append_integration_log(f"[INFO] Source items moved into {mesh_parent_short}: {moved_count}")
             if moved_count > 0:
                 self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
