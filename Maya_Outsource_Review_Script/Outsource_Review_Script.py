@@ -18,7 +18,6 @@ import sys
 import textwrap
 import traceback
 import io
-import time
 from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -907,7 +906,6 @@ class HighPolyReviewTool:
         self.integration_last_results: List[Tuple[str, bool, str]] = []
         self.integration_rights_confirmed: bool = False
         self.integration_loaded_p4_asset_paths: Dict[str, Dict[str, str]] = {}
-        self.integration_safe_mode: bool = True
         self.review_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
         self.page_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
         self.page_tab_children: Dict[str, str] = {}
@@ -3962,31 +3960,6 @@ QLabel#PageHeaderSubtitle {
             cmds.warning(f"[OutsourceReview] {fail_message}")
             return False
 
-    def _integration_safe_execute(self, label: str, func, *args, **kwargs):
-        try:
-            self.add_result("INFO", "Integration", f"START {label}")
-            result = func(*args, **kwargs)
-            self.add_result("INFO", "Integration", f"SUCCESS {label}")
-            return result
-        except Exception as exc:
-            self.add_result("FAIL", "Integration", f"{label} failed: {exc}")
-            self.add_result("DEBUG", "Integration", traceback.format_exc())
-            cmds.warning(f"{label} failed safely. See logs.")
-            return None
-
-    def _integration_safe_p4_connect(self) -> bool:
-        try:
-            from qdHelpers.qdTech.qdTech import QDTech
-
-            QDTech.connection.p4.reconnect()
-            QDTech.connection.update_status()
-            self.add_result("INFO", "Integration", "P4 connection OK")
-            return True
-        except Exception as exc:
-            self.add_result("FAIL", "Integration", f"P4 connection failed: {exc}")
-            cmds.warning("P4 not available. Aborting P4 load.")
-            return False
-
     def _integration_is_asset_already_loaded(self, scene_asset: str, target_group: str) -> bool:
         roots = self._integration_collect_asset_roots(prefixed=True)
         base_key = self._integration_remove_prefix(scene_asset).strip().upper()
@@ -4110,7 +4083,7 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log("Nothing selected. Select at least one catalog asset.")
             return
         category = self._selected_integration_qd_category()
-        if not self._integration_safe_p4_connect():
+        if not self._integration_ensure_p4_connection():
             self._append_integration_log("[FAIL] Aborting P4 operation before any load/import/get call.")
             return
 
@@ -4125,25 +4098,12 @@ QLabel#PageHeaderSubtitle {
             target_group = "Main_Assets" if asset_kind == "main asset" else "Annexes"
             for scene_asset in selected_assets:
                 self._append_integration_log(f"Trying P4 load for {asset_kind} {scene_asset}")
-                if self.integration_safe_mode:
-                    per_asset = self._integration_safe_execute(
-                        f"Load P4 asset {scene_asset}",
-                        self._integration_load_single_p4_asset_safe,
-                        scene_asset,
-                        target_group,
-                        category,
-                    )
-                    cmds.refresh()
-                    time.sleep(0.05)
-                    if per_asset is None:
-                        per_asset = {"loaded": False, "already_loaded": False, "failed": True, "critical_error": "", "error": "Safe wrapper caught an exception."}
-                else:
-                    try:
-                        per_asset = self._integration_load_single_p4_asset_safe(scene_asset, target_group, category)
-                    except Exception as exc:
-                        per_asset = {"loaded": False, "already_loaded": False, "failed": True, "critical_error": "", "error": str(exc)}
-                        self._append_integration_log(f"[WARN] Unexpected per-asset safety wrapper error for {scene_asset}: {exc}")
-                        self._append_integration_log(traceback.format_exc().rstrip())
+                try:
+                    per_asset = self._integration_load_single_p4_asset_safe(scene_asset, target_group, category)
+                except Exception as exc:
+                    per_asset = {"loaded": False, "already_loaded": False, "failed": True, "critical_error": "", "error": str(exc)}
+                    self._append_integration_log(f"[WARN] Unexpected per-asset safety wrapper error for {scene_asset}: {exc}")
+                    self._append_integration_log(traceback.format_exc().rstrip())
                 if per_asset.get("critical_error"):
                     critical_p4_errors.append(per_asset["critical_error"])
                     self.integration_last_results.append((scene_asset, False, per_asset["critical_error"]))
