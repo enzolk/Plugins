@@ -903,6 +903,7 @@ class HighPolyReviewTool:
         self.integration_annexe_sources: Dict[str, Set[str]] = {}
         self.integration_last_results: List[Tuple[str, bool, str]] = []
         self.integration_rights_confirmed: bool = False
+        self.integration_loaded_p4_asset_paths: Dict[str, Dict[str, str]] = {}
         self.review_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
         self.page_nav_buttons: Dict[str, QtWidgets.QPushButton] = {}
         self.page_tab_children: Dict[str, str] = {}
@@ -2060,7 +2061,7 @@ QLabel#PageHeaderSubtitle {
 
         cmds.text(label="Step 08 — Apply Texture", align="left")
         cmds.text(
-            label="Apply textures on unique materials found under selected parent asset _MESH (annexes/collide branches excluded).",
+            label="Apply textures automatically on all loaded P4 parent assets under Main_Assets (_MESH only, annexes/collide excluded).",
             align="left",
             wordWrap=True,
         )
@@ -2068,10 +2069,10 @@ QLabel#PageHeaderSubtitle {
         self.ui["integration_texture_sourceimages_field"] = cmds.textField(placeholderText="Optional: texture/sourceimages folder (fallback: workspace/sourceimages)")
         cmds.button(label="Browse Folder", height=UI_BUTTON_HEIGHT, command=lambda *_: self.pick_integration_texture_sourceimages_folder())
         cmds.button(
-            label="Apply Texture From Selected Parent",
+            label="Apply Textures To All Loaded P4 Assets",
             height=UI_PRIMARY_BUTTON_HEIGHT,
             backgroundColor=UI_COLOR_BG_ACCENT,
-            command=lambda *_: self.apply_texture_from_selected_parent(),
+            command=lambda *_: self.apply_textures_to_all_loaded_p4_assets(),
         )
         cmds.setParent("..")
         cmds.separator(style="in")
@@ -2889,6 +2890,65 @@ QLabel#PageHeaderSubtitle {
         workspace_folder = cmds.workspace(q=True, fn=True) or ""
         return os.path.normpath(os.path.join(workspace_folder, "sourceimages"))
 
+    def _integration_guess_sourceimages_from_loaded_file(self, file_path: str) -> str:
+        if not file_path:
+            return ""
+        normalized_file = os.path.normpath(file_path)
+        parent_dir = os.path.dirname(normalized_file)
+        if not parent_dir:
+            return ""
+
+        parts = re.split(r"[\\/]+", parent_dir)
+        replacement_tokens = {"FINAL", "FINAL_SCENE", "FINAL_ASSET", "SCENES"}
+        for idx in range(len(parts) - 1, -1, -1):
+            if parts[idx].upper() in replacement_tokens:
+                candidate_parts = parts[:]
+                candidate_parts[idx] = "sourceimages"
+                return os.path.normpath(os.path.join(*candidate_parts))
+
+        if parts and parts[-1].upper() == "SOURCEIMAGES":
+            return os.path.normpath(parent_dir)
+        return os.path.normpath(os.path.join(parent_dir, "sourceimages"))
+
+    def _integration_record_loaded_p4_asset_path(self, scene_asset: str, catalog_name: str, loaded_top_nodes: List[str]) -> None:
+        if not loaded_top_nodes:
+            return
+        normalized_scene_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
+        local_file_path = ""
+        for node in loaded_top_nodes:
+            try:
+                refs = cmds.referenceQuery(node, referenceNode=True, topReference=True) or ""
+            except Exception:
+                refs = ""
+            if not refs:
+                continue
+            try:
+                local_file_path = cmds.referenceQuery(refs, filename=True, withoutCopyNumber=True) or ""
+            except Exception:
+                local_file_path = ""
+            if local_file_path:
+                break
+
+        if not local_file_path:
+            self._append_integration_log(
+                f"[WARN] Could not resolve local file path for loaded P4 asset '{scene_asset}' ({catalog_name})."
+            )
+            return
+
+        local_file_path = os.path.normpath(local_file_path)
+        parent_dir = os.path.dirname(local_file_path)
+        sourceimages = self._integration_guess_sourceimages_from_loaded_file(local_file_path)
+        self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
+            "asset_name": normalized_scene_asset,
+            "catalog_name": catalog_name,
+            "file_path": local_file_path,
+            "parent_dir": os.path.normpath(parent_dir) if parent_dir else "",
+            "sourceimages": sourceimages,
+        }
+        self._append_integration_log(
+            f"[INFO] P4 path memoized for {normalized_scene_asset} | file={local_file_path} | sourceimages={sourceimages}"
+        )
+
     def pick_integration_texture_sourceimages_folder(self) -> None:
         picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Texture Sourceimages Folder")
         if not picked:
@@ -2915,89 +2975,91 @@ QLabel#PageHeaderSubtitle {
             )
             return None, None
 
-    def apply_texture_from_selected_parent(self) -> None:
-        selection = cmds.ls(selection=True, long=True) or []
-        if not selection:
-            self._append_integration_log("[WARN] Step 08: select one parent asset or a _MESH group.")
-            return
-
-        selected_node = selection[0]
-        selected_short = self._strip_namespaces_from_name(self._short_name(selected_node))
-        selection_is_mesh = selected_short.upper().endswith("_MESH")
-        self._append_integration_log(f"[INFO] Selected node: {selected_short}")
-        self._append_integration_log(f"[INFO] Selection is already _MESH: {selection_is_mesh}")
-
-        mesh_parent = self._integration_resolve_mesh_group_from_selection(selected_node, selection_is_mesh)
-        if not mesh_parent:
-            self._append_integration_log("[WARN] Step 08: _MESH group could not be resolved from selection.")
-            return
-        self._append_integration_log(f"[INFO] Resolved _MESH group: {mesh_parent}")
-
-        sourceimages = self._integration_query_texture_sourceimages_folder()
-        self._append_integration_log(f"[INFO] Texture folder used: {sourceimages}")
-
+    def apply_textures_to_all_loaded_p4_assets(self) -> None:
         qm_ui, qmcs = self._integration_import_quick_material_modules()
         if qm_ui is None or qmcs is None:
             return
 
-        annexe_short_names = self._integration_collect_annexe_short_names()
-        unique_materials, stats = self._integration_collect_materials_under_mesh_parent(mesh_parent, annexe_short_names)
-        materials_found = stats.get("materials_before_dedupe", len(unique_materials))
-        self._append_integration_log(
-            f"[INFO] Mesh shapes found under resolved _MESH: {stats.get('mesh_shape_count', 0)}"
-        )
-        self._append_integration_log(f"[INFO] Materials found: {materials_found}")
-        self._append_integration_log(f"[INFO] Unique materials: {len(unique_materials)}")
-        self._append_integration_log(f"[INFO] Annexes ignored: {stats.get('ignored_annexe_objects', 0)}")
-
-        if not unique_materials:
-            self._append_integration_log("[WARN] Step 08: no valid material found under selected _MESH.")
+        loaded_roots = self._integration_collect_loaded_p4_roots_under_main_assets()
+        if not loaded_roots:
+            self._append_integration_log("[WARN] Step 08: no loaded P4 parent assets found under Main_Assets.")
             return
 
+        manual_fallback = self._integration_query_texture_sourceimages_folder()
+        annexe_short_names = self._integration_collect_annexe_short_names()
+
         previous_selection = cmds.ls(selection=True, long=True) or []
-        materials_processed = 0
-        textures_applied = 0
-        warning_count = 0
-        for material in sorted(unique_materials):
-            if not material or not cmds.objExists(material):
-                warning_count += 1
+        global_processed_materials: Set[str] = set()
+        total_assets = 0
+        total_textures_applied = 0
+
+        for base_asset_name in sorted(loaded_roots.keys()):
+            loaded_asset_root = loaded_roots[base_asset_name][0]
+            mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
+            asset_key = self._strip_namespaces_from_name(base_asset_name).upper()
+            memo = self.integration_loaded_p4_asset_paths.get(asset_key, {})
+            sourceimages = memo.get("sourceimages", "") if memo else ""
+            if not sourceimages:
+                sourceimages = manual_fallback
+            if not sourceimages:
+                workspace_folder = cmds.workspace(q=True, fn=True) or ""
+                sourceimages = os.path.normpath(os.path.join(workspace_folder, "sourceimages"))
+
+            self._append_integration_log(f"[INFO] Step 08 asset: {base_asset_name}")
+            self._append_integration_log(f"[INFO] Step 08 memo local path: {memo.get('file_path', '<none>') if memo else '<none>'}")
+            self._append_integration_log(f"[INFO] Step 08 sourceimages: {sourceimages}")
+
+            if not os.path.isdir(sourceimages):
+                self._append_integration_log(f"[WARN] Step 08 sourceimages folder not found: {sourceimages}")
+
+            if not mesh_parent:
+                self._append_integration_log(f"[WARN] Step 08 _MESH not found for '{base_asset_name}'.")
                 continue
-            shader = material
-            self._append_integration_log(f"[INFO] Material processing: {self._short_name(shader)}")
-            try:
-                shader_type = cmds.nodeType(shader)
-            except Exception as exc:
-                warning_count += 1
-                self._append_integration_log(f"[WARN] Could not query shader type for {self._short_name(shader)}: {exc}")
+            self._append_integration_log(f"[INFO] Step 08 _MESH found: {mesh_parent}")
+            unique_materials, stats = self._integration_collect_materials_under_mesh_parent(mesh_parent, annexe_short_names)
+            self._append_integration_log(f"[INFO] Step 08 mesh shapes scanned: {stats.get('mesh_shape_count', 0)}")
+            self._append_integration_log(f"[INFO] Step 08 annexes ignored: {stats.get('ignored_annexe_objects', 0)}")
+            self._append_integration_log(f"[INFO] Step 08 unique materials: {len(unique_materials)}")
+            if not unique_materials:
+                self._append_integration_log(f"[WARN] Step 08 no materials found for '{base_asset_name}'.")
                 continue
-            materials_processed += 1
-            for texture_type in qmcs.BUTTONS.keys():
-                texture_path = os.path.join(sourceimages, shader[4:] + "_01_" + texture_type + ".tif")
-                self._append_integration_log(f"[INFO] Check texture: {texture_path}")
-                if not os.path.exists(texture_path):
-                    self._append_integration_log(f"[WARN] Texture not found: {texture_path}")
-                    warning_count += 1
+
+            asset_textures_applied = 0
+            for material in sorted(unique_materials):
+                if material in global_processed_materials:
                     continue
+                if not material or not cmds.objExists(material):
+                    continue
+                shader = material
                 try:
-                    cmds.select(shader, replace=True, noExpand=True)
-                    texture_node = qm_ui.SourceButton.create_texture_file(texture_path, texture_type)
-                    qm_ui.SourceButton.link_texture_node(texture_node, texture_type, [shader, shader_type])
-                    textures_applied += 1
-                    self._append_integration_log(f"[OK] Texture linked: {self._short_name(shader)} / {texture_type}")
-                except Exception as exc:
-                    warning_count += 1
-                    self._append_integration_log(
-                        f"[WARN] Texture link failed on {self._short_name(shader)} ({texture_type}): {exc}"
-                    )
+                    shader_type = cmds.nodeType(shader)
+                except Exception:
+                    continue
+                for texture_type in qmcs.BUTTONS.keys():
+                    texture_path = os.path.join(sourceimages, shader[4:] + "_01_" + texture_type + ".tif")
+                    if not os.path.exists(texture_path):
+                        continue
+                    try:
+                        texture_node = qm_ui.SourceButton.create_texture_file(texture_path, texture_type)
+                        qm_ui.SourceButton.link_texture_node(texture_node, texture_type, [shader, shader_type])
+                        asset_textures_applied += 1
+                    except Exception as exc:
+                        self._append_integration_log(
+                            f"[WARN] Texture link failed on {self._short_name(shader)} ({texture_type}): {exc}"
+                        )
+                global_processed_materials.add(material)
+            self._append_integration_log(f"[INFO] Step 08 textures found/applied: {asset_textures_applied}")
+            total_textures_applied += asset_textures_applied
+            total_assets += 1
 
         if previous_selection:
             cmds.select(previous_selection, replace=True)
         else:
             cmds.select(clear=True)
 
-        self._append_integration_log(f"[INFO] Step 08 summary - materials processed: {materials_processed}")
-        self._append_integration_log(f"[INFO] Textures applied: {textures_applied}")
-        self._append_integration_log(f"[INFO] Step 08 summary - warnings: {warning_count}")
+        self._append_integration_log(f"[INFO] Step 08 summary - assets processed: {total_assets}")
+        self._append_integration_log(f"[INFO] Step 08 summary - unique materials processed: {len(global_processed_materials)}")
+        self._append_integration_log(f"[INFO] Step 08 summary - textures applied: {total_textures_applied}")
 
     def _integration_resolve_mesh_group_from_selection(
         self, selected_node: str, selection_is_mesh: bool
@@ -3556,6 +3618,11 @@ QLabel#PageHeaderSubtitle {
                             self._append_integration_log("[WARN] Could not resolve loaded roots for parenting.")
                         else:
                             self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
+                            self._integration_record_loaded_p4_asset_path(
+                                scene_asset=scene_asset,
+                                catalog_name=catalog_name,
+                                loaded_top_nodes=loaded_top_nodes,
+                            )
                         asset_loaded = True
                         break
                     except Exception as exc:
