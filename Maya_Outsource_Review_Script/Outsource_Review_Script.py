@@ -1962,6 +1962,16 @@ QLabel#PageHeaderSubtitle {
             cmds.text(label="Detect catalog assets and update them from Perforce via qdTools.", align="left")
         cmds.separator(style="in")
 
+        cmds.text(label="Step 00 — Load Final MA", align="left")
+        cmds.text(label="Load the final MA scene locally before P4 integration.", align="left", wordWrap=True)
+        cmds.button(
+            label="Load Final MA",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.integration_load_final_ma_safe(),
+        )
+        cmds.separator(style="in")
+
         cmds.text(label="Step 01 — Detect Scene Assets", align="left")
         cmds.text(label="Scan the full Maya scene and extract principal + annexe\nasset names.", align="left")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -3740,6 +3750,68 @@ QLabel#PageHeaderSubtitle {
         created = cmds.group(empty=True, name=group_name, world=True)
         self._append_integration_log(f"[INFO] Created group: {created}")
         return created
+
+    def integration_load_final_ma_safe(self) -> None:
+        try:
+            path = self.paths.get("final_scene_ma", "")
+            if not path:
+                cmds.warning("Step 00 Load Final MA: final_scene_ma path is empty.")
+                self._append_integration_log("[WARN] Step 00 final_scene_ma path is empty.")
+                return
+            if not os.path.exists(path):
+                cmds.warning(f"Step 00 Load Final MA: file not found -> {path}")
+                self._append_integration_log(f"[WARN] Step 00 file not found: {path}")
+                return
+
+            target_group = "Outsourcing_Review|Final_Asset_MA_GRP"
+            namespace = "Final_Asset_MA_File"
+            if cmds.objExists(target_group):
+                try:
+                    cmds.delete(target_group)
+                    self._append_integration_log(f"[INFO] Step 00 removed existing group: {target_group}")
+                except Exception as exc:
+                    self._append_integration_log(f"[WARN] Step 00 failed to delete old group '{target_group}': {exc}")
+
+            if cmds.namespace(exists=namespace):
+                try:
+                    cmds.namespace(removeNamespace=namespace, mergeNamespaceWithRoot=True)
+                    self._append_integration_log(f"[INFO] Step 00 removed existing namespace: {namespace}")
+                except Exception as exc:
+                    self._append_integration_log(f"[WARN] Step 00 failed to clear namespace '{namespace}': {exc}")
+
+            before_top = set(cmds.ls(assemblies=True, long=True) or [])
+            cmds.file(path, i=True, namespace=namespace, ignoreVersion=True, mergeNamespacesOnClash=False)
+            after_top = set(cmds.ls(assemblies=True, long=True) or [])
+            imported_top_nodes = sorted(after_top - before_top)
+
+            parent_group = self._ensure_integration_parent_group(target_group)
+            for node in imported_top_nodes:
+                if not cmds.objExists(node) or node == parent_group:
+                    continue
+                try:
+                    cmds.parent(node, parent_group)
+                except Exception as exc:
+                    self._append_integration_log(f"[WARN] Step 00 could not parent '{node}' under '{parent_group}': {exc}")
+
+            dag_nodes = cmds.ls(f"{parent_group}|*", long=True, dag=True) or []
+            mesh_shapes = cmds.listRelatives(parent_group, allDescendents=True, fullPath=True, type="mesh") or []
+            self.context["final_asset_ma_nodes"] = sorted(set(dag_nodes))
+            self.context["final_asset_ma_meshes"] = sorted(set(mesh_shapes))
+
+            try:
+                cmds.select(parent_group, replace=True)
+                cmds.viewFit(parent_group, allObjects=False, fitFactor=1.0)
+            except Exception:
+                pass
+
+            self._append_integration_log(f"[OK] Step 00 loaded Final MA: {path}")
+            self._append_integration_log(f"[INFO] Step 00 meshes found: {len(self.context['final_asset_ma_meshes'])}")
+            self.log("INFO", "IntegrationStep00", f"Final MA loaded from: {path}")
+            self.log("INFO", "IntegrationStep00", f"Meshes loaded: {len(self.context['final_asset_ma_meshes'])}")
+        except Exception as exc:
+            cmds.warning(f"Step 00 Load Final MA failed safely: {exc}")
+            self._append_integration_log(f"[FAIL] Step 00 failed: {exc}")
+            self._append_integration_log(traceback.format_exc().rstrip())
 
     def _snapshot_scene_transforms(self) -> Set[str]:
         return set(cmds.ls(type="transform", long=True) or [])
