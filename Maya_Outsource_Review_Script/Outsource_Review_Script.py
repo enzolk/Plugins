@@ -2079,6 +2079,20 @@ QLabel#PageHeaderSubtitle {
         cmds.setParent("..")
         cmds.separator(style="in")
 
+        cmds.text(label="Step 09 — Add Annexes Automatically", align="left")
+        cmds.text(
+            label="Automatically find and add annex files for all loaded P4 main assets using their stored .asset paths.",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.button(
+            label="Add Annexes Automatically",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.add_annexes_automatically_to_loaded_p4_assets(),
+        )
+        cmds.separator(style="in")
+
         cmds.text(label="Logs / Result", align="left")
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
 
@@ -3191,6 +3205,150 @@ QLabel#PageHeaderSubtitle {
         self._append_integration_log(f"[INFO] Step 08 summary - assets processed: {total_assets}")
         self._append_integration_log(f"[INFO] Step 08 summary - unique materials processed: {len(global_processed_materials)}")
         self._append_integration_log(f"[INFO] Step 08 summary - textures applied: {total_textures_applied}")
+
+    def _integration_strip_qd_prefix(self, asset_name: str) -> str:
+        clean_name = self._strip_namespaces_from_name(asset_name or "").strip()
+        for prefix in INTEGRATION_QDTOOLS_PREFIXES:
+            if clean_name.upper().startswith(prefix):
+                return clean_name[len(prefix):]
+        return clean_name
+
+    def _integration_deduce_annexes_directory(self, asset_file_path: str) -> str:
+        normalized = os.path.normpath(asset_file_path or "")
+        if not normalized:
+            return ""
+        parts = normalized.split(os.sep)
+        lowered = [part.lower() for part in parts]
+        if "scenes" in lowered:
+            idx = lowered.index("scenes")
+            return os.path.normpath(os.sep.join(parts[:idx] + ["annexes"]))
+        parent_dir = os.path.dirname(normalized)
+        if os.path.basename(parent_dir).lower() == "scenes":
+            return os.path.normpath(os.path.join(os.path.dirname(parent_dir), "annexes"))
+        return ""
+
+    def _integration_find_target_qd_nodeprop(self, asset_name: str):
+        try:
+            from qdTools.qdAssembly.qdUtils.qdFind import QDFind
+            from qdTools.qdAssembly.qdNodes.qdGameNodes.qdNodeProp import QDNodeProp
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] qdTools QDFind/QDNodeProp unavailable: {exc}")
+            return None
+
+        try:
+            assemblies = QDFind.by_type(QDNodeProp) or []
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] QDFind.by_type(QDNodeProp) failed: {exc}")
+            return None
+
+        target_short = self._strip_namespaces_from_name(asset_name).replace("Shape", "")
+        target_no_prefix = self._integration_strip_qd_prefix(target_short)
+        target_short_upper = target_short.upper()
+        target_no_prefix_upper = target_no_prefix.upper()
+
+        for qd in assemblies:
+            try:
+                qd_full_name = qd.name()
+            except Exception:
+                continue
+            node_short = self._strip_namespaces_from_name(qd_full_name.split("|")[-1]).replace("Shape", "")
+            node_short_upper = node_short.upper()
+            node_no_prefix_upper = self._integration_strip_qd_prefix(node_short).upper()
+            if (
+                node_short_upper == target_short_upper
+                or target_short_upper in qd_full_name.upper()
+                or node_no_prefix_upper == target_no_prefix_upper
+                or (target_no_prefix_upper and target_no_prefix_upper in node_no_prefix_upper)
+            ):
+                return qd
+        return None
+
+    def add_annexes_automatically_to_loaded_p4_assets(self) -> None:
+        try:
+            from qdTools.qdAssembly.qdUi.qdAssetManager.asset.asset_nodes import AssetDag
+            from qdTools.qdAssembly.qdUi.qdAssetManager.managers.manager_annex import AnnexesManager
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] qdTools AnnexesManager/AssetDag unavailable. Step 09 aborted. Error: {exc}")
+            return
+
+        if not self.integration_loaded_p4_asset_paths:
+            self._append_integration_log("[WARN] Step 09: no loaded P4 asset path memo found. Load assets first (Step 02).")
+            return
+
+        processed_assets = 0
+        added_assets = 0
+        total_valid_annexes = 0
+
+        for asset_key in sorted(self.integration_loaded_p4_asset_paths.keys()):
+            memo = self.integration_loaded_p4_asset_paths.get(asset_key, {}) or {}
+            asset_name = memo.get("asset_name") or asset_key
+            asset_file = memo.get("asset_file") or memo.get("file_path") or memo.get("local_path") or ""
+            self._append_integration_log(f"[INFO] Step 09 asset: {asset_name}")
+            self._append_integration_log(f"[INFO] Step 09 asset path: {asset_file or '<unknown>'}")
+
+            if not asset_file or asset_file == "<unknown>":
+                self._append_integration_log(f"[WARN] Step 09 no known .asset path for '{asset_name}'.")
+                continue
+
+            annexes_dir = self._integration_deduce_annexes_directory(asset_file)
+            self._append_integration_log(f"[INFO] Step 09 annexes dir: {annexes_dir or '<unresolved>'}")
+            if not annexes_dir or not os.path.isdir(annexes_dir):
+                self._append_integration_log(f"[WARN] Step 09 annexes folder not found for '{asset_name}': {annexes_dir}")
+                continue
+
+            stripped_name = self._integration_strip_qd_prefix(asset_name)
+            annex_prefix = f"{stripped_name}_"
+            self._append_integration_log(f"[INFO] Step 09 annex prefix: {annex_prefix}")
+
+            candidate_files: List[str] = []
+            prefix_upper = annex_prefix.upper()
+            try:
+                for root, _, files in os.walk(annexes_dir):
+                    for file_name in files:
+                        if file_name.upper().startswith(prefix_upper):
+                            candidate_files.append(os.path.normpath(os.path.join(root, file_name)))
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Step 09 candidate scan failed for '{asset_name}': {exc}")
+                continue
+
+            self._append_integration_log(f"[INFO] Step 09 candidates found: {len(candidate_files)}")
+            if not candidate_files:
+                self._append_integration_log(f"[WARN] Step 09 no candidate files found for prefix '{annex_prefix}'.")
+                continue
+
+            try:
+                valid_annexes, rejected = AnnexesManager.validate_annexes(candidate_files)
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Step 09 annex validation failed for '{asset_name}': {exc}")
+                continue
+
+            self._append_integration_log(f"[INFO] Step 09 valid annexes: {len(valid_annexes)}")
+            self._append_integration_log(f"[INFO] Step 09 rejected annexes: {len(rejected)}")
+            if rejected:
+                self._append_integration_log(f"[INFO] Step 09 rejected list: {rejected}")
+
+            if not valid_annexes:
+                self._append_integration_log(f"[WARN] Step 09 no valid annexes for '{asset_name}'.")
+                continue
+
+            target_qd = self._integration_find_target_qd_nodeprop(asset_name)
+            if target_qd is None:
+                self._append_integration_log(f"[WARN] Step 09 QDNodeProp not found for '{asset_name}'.")
+                continue
+
+            try:
+                asset = AssetDag(target_qd)
+                asset.add_annexes(valid_annexes)
+                processed_assets += 1
+                added_assets += 1
+                total_valid_annexes += len(valid_annexes)
+                self._append_integration_log(f"[OK] Step 09 annexes added for '{asset_name}': {len(valid_annexes)}")
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Step 09 add_annexes failed for '{asset_name}': {exc}")
+
+        self._append_integration_log(f"[INFO] Step 09 summary - assets with annexes added: {added_assets}")
+        self._append_integration_log(f"[INFO] Step 09 summary - total valid annexes added: {total_valid_annexes}")
+        self._append_integration_log(f"[INFO] Step 09 summary - processed loaded assets: {processed_assets}")
 
     def _integration_resolve_mesh_group_from_selection(
         self, selected_node: str, selection_is_mesh: bool
