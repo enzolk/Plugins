@@ -2918,25 +2918,20 @@ QLabel#PageHeaderSubtitle {
     def apply_texture_from_selected_parent(self) -> None:
         selection = cmds.ls(selection=True, long=True) or []
         if not selection:
-            self._append_integration_log("[WARN] Step 08: select one parent asset (without _MESH suffix).")
+            self._append_integration_log("[WARN] Step 08: select one parent asset or a _MESH group.")
             return
 
-        parent_asset = selection[0]
-        parent_short = self._strip_namespaces_from_name(self._short_name(parent_asset))
-        self._append_integration_log(f"[INFO] Selected parent: {parent_short}")
+        selected_node = selection[0]
+        selected_short = self._strip_namespaces_from_name(self._short_name(selected_node))
+        selection_is_mesh = selected_short.upper().endswith("_MESH")
+        self._append_integration_log(f"[INFO] Selected node: {selected_short}")
+        self._append_integration_log(f"[INFO] Selection is already _MESH: {selection_is_mesh}")
 
-        mesh_target_upper = f"{parent_short}_MESH".upper()
-        mesh_children = cmds.listRelatives(parent_asset, children=True, type="transform", fullPath=True) or []
-        mesh_parent = ""
-        for child in mesh_children:
-            child_short_upper = self._strip_namespaces_from_name(self._short_name(child)).upper()
-            if child_short_upper == mesh_target_upper:
-                mesh_parent = child
-                break
+        mesh_parent = self._integration_resolve_mesh_group_from_selection(selected_node, selection_is_mesh)
         if not mesh_parent:
-            self._append_integration_log(f"[WARN] Step 08: _MESH not found under selected parent ({mesh_target_upper}).")
+            self._append_integration_log("[WARN] Step 08: _MESH group could not be resolved from selection.")
             return
-        self._append_integration_log(f"[INFO] _MESH found: {self._short_name(mesh_parent)}")
+        self._append_integration_log(f"[INFO] Resolved _MESH group: {mesh_parent}")
 
         sourceimages = self._integration_query_texture_sourceimages_folder()
         self._append_integration_log(f"[INFO] Texture folder used: {sourceimages}")
@@ -2947,9 +2942,13 @@ QLabel#PageHeaderSubtitle {
 
         annexe_short_names = self._integration_collect_annexe_short_names()
         unique_materials, stats = self._integration_collect_materials_under_mesh_parent(mesh_parent, annexe_short_names)
-        self._append_integration_log(f"[INFO] Mesh shapes scanned: {stats.get('mesh_shape_count', 0)}")
-        self._append_integration_log(f"[INFO] Ignored annexe objects: {stats.get('ignored_annexe_objects', 0)}")
-        self._append_integration_log(f"[INFO] Unique materials found: {len(unique_materials)}")
+        materials_found = stats.get("materials_before_dedupe", len(unique_materials))
+        self._append_integration_log(
+            f"[INFO] Mesh shapes found under resolved _MESH: {stats.get('mesh_shape_count', 0)}"
+        )
+        self._append_integration_log(f"[INFO] Materials found: {materials_found}")
+        self._append_integration_log(f"[INFO] Unique materials: {len(unique_materials)}")
+        self._append_integration_log(f"[INFO] Annexes ignored: {stats.get('ignored_annexe_objects', 0)}")
 
         if not unique_materials:
             self._append_integration_log("[WARN] Step 08: no valid material found under selected _MESH.")
@@ -2997,8 +2996,54 @@ QLabel#PageHeaderSubtitle {
             cmds.select(clear=True)
 
         self._append_integration_log(f"[INFO] Step 08 summary - materials processed: {materials_processed}")
-        self._append_integration_log(f"[INFO] Step 08 summary - textures applied: {textures_applied}")
+        self._append_integration_log(f"[INFO] Textures applied: {textures_applied}")
         self._append_integration_log(f"[INFO] Step 08 summary - warnings: {warning_count}")
+
+    def _integration_resolve_mesh_group_from_selection(
+        self, selected_node: str, selection_is_mesh: bool
+    ) -> str:
+        if not selected_node or not cmds.objExists(selected_node):
+            return ""
+
+        if selection_is_mesh:
+            mesh_shapes = cmds.listRelatives(selected_node, allDescendents=True, type="mesh", fullPath=True) or []
+            if mesh_shapes:
+                return selected_node
+            self._append_integration_log(
+                "[WARN] Selected _MESH exists but has no mesh descendants. Trying recursive fallback."
+            )
+
+        direct_children = cmds.listRelatives(selected_node, children=True, type="transform", fullPath=True) or []
+        direct_mesh_children = [
+            child
+            for child in direct_children
+            if self._strip_namespaces_from_name(self._short_name(child)).upper().endswith("_MESH")
+        ]
+        if direct_mesh_children:
+            direct_mesh_children.sort(key=lambda node: (node.count("|"), len(node), node))
+            if len(direct_mesh_children) > 1:
+                self._append_integration_log(
+                    f"[WARN] Multiple direct _MESH children found ({len(direct_mesh_children)}). Using first: "
+                    f"{self._short_name(direct_mesh_children[0])}"
+                )
+            return direct_mesh_children[0]
+
+        descendants = cmds.listRelatives(selected_node, allDescendents=True, type="transform", fullPath=True) or []
+        recursive_mesh_groups = [
+            node
+            for node in descendants
+            if self._strip_namespaces_from_name(self._short_name(node)).upper().endswith("_MESH")
+        ]
+        if recursive_mesh_groups:
+            recursive_mesh_groups.sort(key=lambda node: (node.count("|"), len(node), node))
+            if len(recursive_mesh_groups) > 1:
+                self._append_integration_log(
+                    f"[WARN] Multiple recursive _MESH groups found ({len(recursive_mesh_groups)}). "
+                    f"Using first: {self._short_name(recursive_mesh_groups[0])}"
+                )
+            return recursive_mesh_groups[0]
+
+        return ""
 
     def _integration_collect_materials_from_shapes(self, mesh_shapes: List[str]) -> Tuple[List[str], Dict[str, List[int]]]:
         materials: List[str] = []
