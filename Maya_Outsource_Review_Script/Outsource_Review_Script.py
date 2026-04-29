@@ -17,6 +17,8 @@ import re
 import sys
 import textwrap
 import traceback
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -2895,6 +2897,20 @@ QLabel#PageHeaderSubtitle {
             return "<unknown>"
 
         normalized_file = os.path.normpath(loaded_file)
+        normalized_for_split = normalized_file.replace("\\", "/")
+        lower_parts = [part.lower() for part in normalized_for_split.split("/") if part]
+        if "scenes" in lower_parts:
+            try:
+                scene_index = lower_parts.index("scenes")
+                parent_parts = [part for part in normalized_for_split.split("/") if part][:scene_index]
+                if parent_parts:
+                    drive_match = re.match(r"^[A-Za-z]:$", parent_parts[0])
+                    prefix = parent_parts[0] + "/" if drive_match else "/"
+                    parent_root = prefix + "/".join(parent_parts[1:] if drive_match else parent_parts)
+                    return os.path.normpath(os.path.join(parent_root, "sourceimages"))
+            except Exception:
+                pass
+
         start_dir = normalized_file if os.path.isdir(normalized_file) else os.path.dirname(normalized_file)
         if not start_dir:
             return "<unknown>"
@@ -2913,6 +2929,20 @@ QLabel#PageHeaderSubtitle {
 
         return "<unknown>"
 
+    def _integration_extract_qd_asset_path_from_logs(self, log_text: str, scene_asset: str) -> str:
+        if not log_text:
+            return ""
+        asset_token = (scene_asset or "").strip().upper()
+        pattern = re.compile(r"\[qdXml\.read\][^\n\r]*?([A-Za-z]:[^\n\r]*?\.asset)", re.IGNORECASE)
+        for match in pattern.finditer(log_text):
+            asset_file = os.path.normpath(match.group(1).strip())
+            if not asset_token:
+                return asset_file
+            base_name = os.path.splitext(os.path.basename(asset_file))[0].upper()
+            if asset_token in base_name:
+                return asset_file
+        return ""
+
     def _integration_record_loaded_p4_asset_path(
         self,
         scene_asset: str,
@@ -2921,11 +2951,12 @@ QLabel#PageHeaderSubtitle {
         candidate_name: str = "",
         loader=None,
         new_references: Optional[List[str]] = None,
+        qd_asset_file_from_logs: str = "",
     ) -> None:
         normalized_scene_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
         safe_candidate = candidate_name or catalog_name or "<unknown>"
         safe_depot_path = "<unknown>"
-        local_file_path = ""
+        local_file_path = os.path.normpath(qd_asset_file_from_logs) if qd_asset_file_from_logs else ""
         maya_new_references = [os.path.normpath(path) for path in (new_references or []) if path]
 
         for node in loaded_top_nodes:
@@ -2935,12 +2966,13 @@ QLabel#PageHeaderSubtitle {
                 refs = ""
             if not refs:
                 continue
-            try:
-                local_file_path = cmds.referenceQuery(refs, filename=True, withoutCopyNumber=True) or ""
-            except Exception:
-                local_file_path = ""
-            if local_file_path:
-                break
+            if not local_file_path:
+                try:
+                    local_file_path = cmds.referenceQuery(refs, filename=True, withoutCopyNumber=True) or ""
+                except Exception:
+                    local_file_path = ""
+                if local_file_path:
+                    break
 
         if not local_file_path and maya_new_references:
             local_file_path = maya_new_references[0]
@@ -2995,6 +3027,10 @@ QLabel#PageHeaderSubtitle {
             return
 
         local_file_path = os.path.normpath(local_file_path)
+        if qd_asset_file_from_logs:
+            self._append_integration_log(f"[INFO] QD asset path detected: {local_file_path}")
+        else:
+            self._append_integration_log("[WARN] QD asset path could not be extracted from qdXml.read logs.")
         parent_dir = os.path.dirname(local_file_path)
         sourceimages = self._integration_deduce_sourceimages_from_loaded_file(local_file_path)
         self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
@@ -3678,8 +3714,15 @@ QLabel#PageHeaderSubtitle {
 
                         before_transforms = self._snapshot_scene_transforms()
                         refs_before = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
-                        update_result = update_callable(b_recursive=True)
+                        io_stdout = io.StringIO()
+                        io_stderr = io.StringIO()
+                        with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
+                            update_result = update_callable(b_recursive=True)
                         self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
+                        qd_log_excerpt = "\n".join(
+                            chunk for chunk in [io_stdout.getvalue(), io_stderr.getvalue(), repr(update_result)] if chunk
+                        )
+                        qd_asset_file_from_logs = self._integration_extract_qd_asset_path_from_logs(qd_log_excerpt, scene_asset)
                         after_transforms = self._snapshot_scene_transforms()
                         refs_after = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
                         new_refs = sorted(refs_after - refs_before)
@@ -3709,6 +3752,7 @@ QLabel#PageHeaderSubtitle {
                                 candidate_name=catalog_name,
                                 loader=loader,
                                 new_references=new_refs,
+                                qd_asset_file_from_logs=qd_asset_file_from_logs,
                             )
                         else:
                             self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
@@ -3719,6 +3763,7 @@ QLabel#PageHeaderSubtitle {
                                 candidate_name=catalog_name,
                                 loader=loader,
                                 new_references=new_refs,
+                                qd_asset_file_from_logs=qd_asset_file_from_logs,
                             )
                             memo_key = self._strip_namespaces_from_name(scene_asset).strip().upper()
                             memo = self.integration_loaded_p4_asset_paths.get(memo_key, {})
