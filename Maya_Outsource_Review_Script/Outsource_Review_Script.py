@@ -2890,25 +2890,28 @@ QLabel#PageHeaderSubtitle {
         workspace_folder = cmds.workspace(q=True, fn=True) or ""
         return os.path.normpath(os.path.join(workspace_folder, "sourceimages"))
 
-    def _integration_guess_sourceimages_from_loaded_file(self, file_path: str) -> str:
-        if not file_path:
-            return ""
-        normalized_file = os.path.normpath(file_path)
-        parent_dir = os.path.dirname(normalized_file)
-        if not parent_dir:
-            return ""
+    def _integration_deduce_sourceimages_from_loaded_file(self, loaded_file: str) -> str:
+        if not loaded_file:
+            return "<unknown>"
 
-        parts = re.split(r"[\\/]+", parent_dir)
-        replacement_tokens = {"FINAL", "FINAL_SCENE", "FINAL_ASSET", "SCENES"}
-        for idx in range(len(parts) - 1, -1, -1):
-            if parts[idx].upper() in replacement_tokens:
-                candidate_parts = parts[:]
-                candidate_parts[idx] = "sourceimages"
-                return os.path.normpath(os.path.join(*candidate_parts))
+        normalized_file = os.path.normpath(loaded_file)
+        start_dir = normalized_file if os.path.isdir(normalized_file) else os.path.dirname(normalized_file)
+        if not start_dir:
+            return "<unknown>"
 
-        if parts and parts[-1].upper() == "SOURCEIMAGES":
-            return os.path.normpath(parent_dir)
-        return os.path.normpath(os.path.join(parent_dir, "sourceimages"))
+        current = os.path.normpath(start_dir)
+        visited: Set[str] = set()
+        while current and current not in visited:
+            visited.add(current)
+            candidate = os.path.normpath(os.path.join(current, "sourceimages"))
+            if os.path.isdir(candidate):
+                return candidate
+            parent = os.path.dirname(current)
+            if not parent or parent == current:
+                break
+            current = parent
+
+        return "<unknown>"
 
     def _integration_record_loaded_p4_asset_path(
         self,
@@ -2917,11 +2920,14 @@ QLabel#PageHeaderSubtitle {
         loaded_top_nodes: List[str],
         candidate_name: str = "",
         loader=None,
+        new_references: Optional[List[str]] = None,
     ) -> None:
         normalized_scene_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
         safe_candidate = candidate_name or catalog_name or "<unknown>"
         safe_depot_path = "<unknown>"
         local_file_path = ""
+        maya_new_references = [os.path.normpath(path) for path in (new_references or []) if path]
+
         for node in loaded_top_nodes:
             try:
                 refs = cmds.referenceQuery(node, referenceNode=True, topReference=True) or ""
@@ -2935,6 +2941,9 @@ QLabel#PageHeaderSubtitle {
                 local_file_path = ""
             if local_file_path:
                 break
+
+        if not local_file_path and maya_new_references:
+            local_file_path = maya_new_references[0]
 
         if loader is not None:
             depot_attr_candidates = (
@@ -2987,7 +2996,7 @@ QLabel#PageHeaderSubtitle {
 
         local_file_path = os.path.normpath(local_file_path)
         parent_dir = os.path.dirname(local_file_path)
-        sourceimages = self._integration_guess_sourceimages_from_loaded_file(local_file_path)
+        sourceimages = self._integration_deduce_sourceimages_from_loaded_file(local_file_path)
         self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
             "asset_name": normalized_scene_asset,
             "candidate": safe_candidate,
@@ -3668,8 +3677,15 @@ QLabel#PageHeaderSubtitle {
                             raise RuntimeError("Resolved loader has no callable update_status method")
 
                         before_transforms = self._snapshot_scene_transforms()
+                        refs_before = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
                         update_result = update_callable(b_recursive=True)
+                        self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
                         after_transforms = self._snapshot_scene_transforms()
+                        refs_after = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
+                        new_refs = sorted(refs_after - refs_before)
+                        self._append_integration_log(f"[INFO] New Maya references detected: {len(new_refs)}")
+                        for ref_path in new_refs:
+                            self._append_integration_log(f"[INFO] New Maya reference: {ref_path}")
                         if update_result is None and not hasattr(loader, "items"):
                             # Keep compatibility with loaders returning None while still guarding obviously empty resolutions.
                             self._append_integration_log(
@@ -3692,6 +3708,7 @@ QLabel#PageHeaderSubtitle {
                                 loaded_top_nodes=loaded_top_nodes,
                                 candidate_name=catalog_name,
                                 loader=loader,
+                                new_references=new_refs,
                             )
                         else:
                             self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
@@ -3701,6 +3718,7 @@ QLabel#PageHeaderSubtitle {
                                 loaded_top_nodes=loaded_top_nodes,
                                 candidate_name=catalog_name,
                                 loader=loader,
+                                new_references=new_refs,
                             )
                             memo_key = self._strip_namespaces_from_name(scene_asset).strip().upper()
                             memo = self.integration_loaded_p4_asset_paths.get(memo_key, {})
@@ -3708,6 +3726,8 @@ QLabel#PageHeaderSubtitle {
                             self._append_integration_log(f"[INFO] P4 local path: {memo.get('local_path', '<unknown>') or '<unknown>'}")
                             self._append_integration_log(f"[INFO] P4 loaded file: {memo.get('loaded_file', '<unknown>') or '<unknown>'}")
                             self._append_integration_log(f"[INFO] Deduced sourceimages: {memo.get('sourceimages', '<unknown>') or '<unknown>'}")
+                            if (memo.get("loaded_file", "<unknown>") or "<unknown>") == "<unknown>":
+                                self._append_integration_log("[WARN] P4 load succeeded but no file path could be resolved.")
                         asset_loaded = True
                         break
                     except Exception as exc:
