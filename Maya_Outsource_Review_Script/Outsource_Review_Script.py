@@ -3545,16 +3545,29 @@ QLabel#PageHeaderSubtitle {
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Could not parent {node} under {target_group}: {exc}")
 
-    def _refresh_p4_connection_before_load(self) -> None:
-        """Refresh P4 connection status before any integration load action."""
+    def _integration_ensure_p4_connection(self) -> bool:
+        """Ensure Perforce is reachable before any integration action that loads from P4."""
+        self._append_integration_log("[INFO] Checking P4 connection...")
         try:
             from qdHelpers.qdTech.qdTech import QDTech
 
             QDTech.connection.p4.reconnect()
             QDTech.connection.update_status()
-            self._append_integration_log("[INFO] P4 reconnected and status updated")
+            self._append_integration_log("[INFO] P4 reconnected and status updated.")
+            try:
+                self.add_result("INFO", "Integration", "P4 reconnected and status updated.")
+            except Exception:
+                pass
+            return True
         except Exception as exc:
-            self._append_integration_log(f"[WARN] Failed to refresh P4 connection: {exc}")
+            fail_message = f"P4 connection failed. P4 load aborted safely. {exc}"
+            self._append_integration_log(f"[FAIL] {fail_message}")
+            try:
+                self.add_result("FAIL", "Integration", fail_message)
+            except Exception:
+                pass
+            cmds.warning(f"[OutsourceReview] {fail_message}")
+            return False
 
     def update_selected_catalog_assets_from_p4(self) -> None:
         selected_main_assets = self._selected_list_control_items("integration_catalog_list")
@@ -3563,8 +3576,9 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log("Nothing selected. Select at least one catalog asset.")
             return
         category = self._selected_integration_qd_category()
-
-        self._refresh_p4_connection_before_load()
+        if not self._integration_ensure_p4_connection():
+            self._append_integration_log("[FAIL] Aborting P4 operation before any load/import/get call.")
+            return
 
         try:
             from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
