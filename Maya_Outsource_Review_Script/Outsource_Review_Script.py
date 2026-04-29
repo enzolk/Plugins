@@ -2558,9 +2558,13 @@ QLabel#PageHeaderSubtitle {
             return
 
         source_roots = self._integration_collect_asset_roots(prefixed=False)
-        loaded_roots = self._integration_collect_asset_roots(prefixed=True)
+        loaded_roots = self._integration_collect_target_assets_under_main_assets()
+        total_children = 0
+        for roots in loaded_roots.values():
+            total_children += len(roots)
+        self._append_integration_log(f"[INFO] Main_Assets children found: {total_children}")
         if not loaded_roots:
-            self._append_integration_log("[WARN] No loaded P4 prefixed assets found for replacement.")
+            self._append_integration_log("[WARN] No target assets found under Main_Assets.")
             return
 
         replaced_count = 0
@@ -2570,11 +2574,11 @@ QLabel#PageHeaderSubtitle {
                 continue
             loaded_asset_root = loaded_candidates[0]
             loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root))
-            self._append_integration_log(f"[INFO] Asset P4 detected: {loaded_asset_short}")
+            self._append_integration_log(f"[INFO] Target asset detected: {loaded_asset_short}")
             self._append_integration_log(f"[INFO] Cleaned asset name: {base_asset_name}")
             if len(loaded_candidates) > 1:
                 self._append_integration_log(
-                    f"[WARN] Multiple loaded P4 roots found for '{base_asset_name}' ({len(loaded_candidates)}). Using: {loaded_asset_short}"
+                    f"[WARN] Multiple target roots found for '{base_asset_name}' ({len(loaded_candidates)}). Using: {loaded_asset_short}"
                 )
 
             source_candidates = source_roots.get(base_asset_name, [])
@@ -2587,7 +2591,7 @@ QLabel#PageHeaderSubtitle {
                 self._append_integration_log(
                     f"[WARN] Multiple source roots found for '{base_asset_name}' ({len(source_candidates)}). Using: {source_short}"
                 )
-            self._append_integration_log(f"[INFO] Source found: {source_short}")
+            self._append_integration_log(f"[INFO] Source matched: {source_short}")
 
             mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
             if not mesh_parent:
@@ -2598,7 +2602,7 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log(f"[INFO] Target _MESH found: {mesh_parent_short}")
 
             deleted_count = self._integration_clear_target_content(mesh_parent)
-            self._append_integration_log(f"[INFO] Children removed from {mesh_parent_short}: {deleted_count}")
+            self._append_integration_log(f"[INFO] Cleared old children under _MESH: {deleted_count}")
 
             source_children = self._integration_collect_source_children(source_asset_root)
             moved_count = 0
@@ -2613,7 +2617,7 @@ QLabel#PageHeaderSubtitle {
                     f"[WARN] Source '{source_short}': no valid direct children and no mesh shape found; nothing moved."
                 )
 
-            self._append_integration_log(f"[INFO] Source items moved into {mesh_parent_short}: {moved_count}")
+            self._append_integration_log(f"[INFO] Moved source children under _MESH: {moved_count}")
             if moved_count > 0:
                 self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
                 replaced_count += 1
@@ -2653,6 +2657,29 @@ QLabel#PageHeaderSubtitle {
             if valid_roots:
                 filtered[base_asset_name] = valid_roots
         return filtered
+
+    def _integration_collect_target_assets_under_main_assets(self) -> Dict[str, List[str]]:
+        targets: Dict[str, List[str]] = {}
+        main_assets_groups = self._integration_find_main_assets_groups()
+        if not main_assets_groups:
+            return targets
+        for main_group in main_assets_groups:
+            children = cmds.listRelatives(main_group, children=True, type="transform", fullPath=True) or []
+            for child in children:
+                if not child or not cmds.objExists(child):
+                    continue
+                short_clean = self._strip_namespaces_from_name(self._short_name(child)).strip("_ ").upper()
+                if not short_clean:
+                    continue
+                targets.setdefault(short_clean, []).append(child)
+                base_name = self._integration_remove_prefix(short_clean)
+                if base_name and base_name != short_clean:
+                    targets.setdefault(base_name, []).append(child)
+        for asset_name in list(targets.keys()):
+            candidates = [n for n in set(targets[asset_name]) if n and cmds.objExists(n)]
+            candidates.sort(key=lambda node: (node.count("|"), len(node), node))
+            targets[asset_name] = candidates
+        return targets
 
     def _integration_is_in_collide_branch(self, node: str, mesh_parent: str) -> bool:
         if not node or not mesh_parent:
