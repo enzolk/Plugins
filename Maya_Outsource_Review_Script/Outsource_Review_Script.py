@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import textwrap
 import traceback
 from dataclasses import dataclass, field
@@ -2057,6 +2058,24 @@ QLabel#PageHeaderSubtitle {
         )
         cmds.separator(style="in")
 
+        cmds.text(label="Step 08 — Apply Texture", align="left")
+        cmds.text(
+            label="Apply textures on unique materials found under selected parent asset _MESH (annexes/collide branches excluded).",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        self.ui["integration_texture_sourceimages_field"] = cmds.textField(placeholderText="Optional: texture/sourceimages folder (fallback: workspace/sourceimages)")
+        cmds.button(label="Browse Folder", height=UI_BUTTON_HEIGHT, command=lambda *_: self.pick_integration_texture_sourceimages_folder())
+        cmds.button(
+            label="Apply Texture From Selected Parent",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.apply_texture_from_selected_parent(),
+        )
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
         cmds.text(label="Logs / Result", align="left")
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
 
@@ -2859,6 +2878,127 @@ QLabel#PageHeaderSubtitle {
             if face_ids:
                 assignments[material] = sorted(face_ids)
         return assignments
+
+    def _integration_query_texture_sourceimages_folder(self) -> str:
+        field = self.ui.get("integration_texture_sourceimages_field")
+        manual_folder = ""
+        if field and cmds.control(field, exists=True):
+            manual_folder = (cmds.textField(field, q=True, text=True) or "").strip()
+        if manual_folder:
+            return os.path.normpath(manual_folder)
+        workspace_folder = cmds.workspace(q=True, fn=True) or ""
+        return os.path.normpath(os.path.join(workspace_folder, "sourceimages"))
+
+    def pick_integration_texture_sourceimages_folder(self) -> None:
+        picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Texture Sourceimages Folder")
+        if not picked:
+            return
+        selected_folder = os.path.normpath(picked[0])
+        field = self.ui.get("integration_texture_sourceimages_field")
+        if field and cmds.control(field, exists=True):
+            cmds.textField(field, e=True, text=selected_folder)
+        self._append_integration_log(f"[INFO] Texture folder set: {selected_folder}")
+
+    def _integration_import_quick_material_modules(self):
+        sys.path.append(r"U:\TA__SHARE\Pipe\beta_test")
+        try:
+            import importlib
+            import qdSetQuickMaterial.qdSetQuickMaterial_UI as qm_ui
+            import qdSetQuickMaterial.qdSetQuickMaterial_Constants as qmcs
+
+            importlib.reload(qm_ui)
+            importlib.reload(qmcs)
+            return qm_ui, qmcs
+        except Exception as exc:
+            self._append_integration_log(
+                f"[WARN] qdSetQuickMaterial import unavailable. Step 08 aborted. Error: {exc}"
+            )
+            return None, None
+
+    def apply_texture_from_selected_parent(self) -> None:
+        selection = cmds.ls(selection=True, long=True) or []
+        if not selection:
+            self._append_integration_log("[WARN] Step 08: select one parent asset (without _MESH suffix).")
+            return
+
+        parent_asset = selection[0]
+        parent_short = self._strip_namespaces_from_name(self._short_name(parent_asset))
+        self._append_integration_log(f"[INFO] Selected parent: {parent_short}")
+
+        mesh_target_upper = f"{parent_short}_MESH".upper()
+        mesh_children = cmds.listRelatives(parent_asset, children=True, type="transform", fullPath=True) or []
+        mesh_parent = ""
+        for child in mesh_children:
+            child_short_upper = self._strip_namespaces_from_name(self._short_name(child)).upper()
+            if child_short_upper == mesh_target_upper:
+                mesh_parent = child
+                break
+        if not mesh_parent:
+            self._append_integration_log(f"[WARN] Step 08: _MESH not found under selected parent ({mesh_target_upper}).")
+            return
+        self._append_integration_log(f"[INFO] _MESH found: {self._short_name(mesh_parent)}")
+
+        sourceimages = self._integration_query_texture_sourceimages_folder()
+        self._append_integration_log(f"[INFO] Texture folder used: {sourceimages}")
+
+        qm_ui, qmcs = self._integration_import_quick_material_modules()
+        if qm_ui is None or qmcs is None:
+            return
+
+        annexe_short_names = self._integration_collect_annexe_short_names()
+        unique_materials, stats = self._integration_collect_materials_under_mesh_parent(mesh_parent, annexe_short_names)
+        self._append_integration_log(f"[INFO] Mesh shapes scanned: {stats.get('mesh_shape_count', 0)}")
+        self._append_integration_log(f"[INFO] Ignored annexe objects: {stats.get('ignored_annexe_objects', 0)}")
+        self._append_integration_log(f"[INFO] Unique materials found: {len(unique_materials)}")
+
+        if not unique_materials:
+            self._append_integration_log("[WARN] Step 08: no valid material found under selected _MESH.")
+            return
+
+        previous_selection = cmds.ls(selection=True, long=True) or []
+        materials_processed = 0
+        textures_applied = 0
+        warning_count = 0
+        for material in sorted(unique_materials):
+            if not material or not cmds.objExists(material):
+                warning_count += 1
+                continue
+            shader = material
+            self._append_integration_log(f"[INFO] Material processing: {self._short_name(shader)}")
+            try:
+                shader_type = cmds.nodeType(shader)
+            except Exception as exc:
+                warning_count += 1
+                self._append_integration_log(f"[WARN] Could not query shader type for {self._short_name(shader)}: {exc}")
+                continue
+            materials_processed += 1
+            for texture_type in qmcs.BUTTONS.keys():
+                texture_path = os.path.join(sourceimages, shader[4:] + "_01_" + texture_type + ".tif")
+                self._append_integration_log(f"[INFO] Check texture: {texture_path}")
+                if not os.path.exists(texture_path):
+                    self._append_integration_log(f"[WARN] Texture not found: {texture_path}")
+                    warning_count += 1
+                    continue
+                try:
+                    cmds.select(shader, replace=True, noExpand=True)
+                    texture_node = qm_ui.SourceButton.create_texture_file(texture_path, texture_type)
+                    qm_ui.SourceButton.link_texture_node(texture_node, texture_type, [shader, shader_type])
+                    textures_applied += 1
+                    self._append_integration_log(f"[OK] Texture linked: {self._short_name(shader)} / {texture_type}")
+                except Exception as exc:
+                    warning_count += 1
+                    self._append_integration_log(
+                        f"[WARN] Texture link failed on {self._short_name(shader)} ({texture_type}): {exc}"
+                    )
+
+        if previous_selection:
+            cmds.select(previous_selection, replace=True)
+        else:
+            cmds.select(clear=True)
+
+        self._append_integration_log(f"[INFO] Step 08 summary - materials processed: {materials_processed}")
+        self._append_integration_log(f"[INFO] Step 08 summary - textures applied: {textures_applied}")
+        self._append_integration_log(f"[INFO] Step 08 summary - warnings: {warning_count}")
 
     def _integration_collect_materials_from_shapes(self, mesh_shapes: List[str]) -> Tuple[List[str], Dict[str, List[int]]]:
         materials: List[str] = []
