@@ -1993,6 +1993,26 @@ QLabel#PageHeaderSubtitle {
             cmds.menuItem(label=category)
         cmds.setParent("..")
         cmds.button(label="Load / Update from P4\n(Selected Scene Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
+        cmds.button(
+            label="Load Selected P4 Asset Only",
+            height=UI_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
+            command=lambda *_: self.integration_load_selected_p4_asset_only(),
+        )
+        cmds.button(
+            label="Resolve P4 Paths Only",
+            height=UI_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
+            command=lambda *_: self.resolve_selected_catalog_assets_p4_paths_only(),
+        )
+        cmds.button(
+            label="Load All P4 Assets (Safe / One by One)",
+            height=UI_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
+            command=lambda *_: self.update_selected_catalog_assets_from_p4(),
+        )
+        cmds.setParent("..")
         cmds.separator(style="in")
 
         cmds.text(label="Step 03 — Checkout / Take Rights (manual)", align="left")
@@ -3990,92 +4010,165 @@ QLabel#PageHeaderSubtitle {
         if self._integration_is_asset_already_loaded(asset_name, target_group):
             result["already_loaded"] = True
             self._append_integration_log(f"[INFO] Asset already loaded under {target_group}: {asset_name}")
+            self._append_integration_log(f"[INFO] Asset already present or not: already present")
             return result
 
+        self._append_integration_log(f"[INFO] Asset already present or not: not present")
         if not self._integration_ensure_p4_connection():
             result["critical_error"] = f"P4 unavailable for asset '{asset_name}'."
+            self._append_integration_log("[FAIL] P4 reconnect OK/FAIL: FAIL")
             self._append_integration_log(f"[FAIL] {result['critical_error']}")
             return result
+        self._append_integration_log("[INFO] P4 reconnect OK/FAIL: OK")
 
+        path_data = self._integration_resolve_p4_asset_path_safe(asset_name, category, target_group)
+        result["candidates"] = path_data.get("candidates", [])
+        if path_data.get("already_loaded"):
+            result["already_loaded"] = True
+            return result
+        if not path_data.get("asset_file"):
+            result["failed"] = True
+            result["error"] = path_data.get("error", f"{asset_name} could not be resolved from P4.")
+            self._append_integration_log(f"[FAIL] {result['error']}")
+            return result
+        load_result = self._integration_load_resolved_asset_safe(path_data)
+        if load_result.get("loaded"):
+            result["loaded"] = True
+            result["loaded_candidate"] = load_result.get("loaded_candidate", path_data.get("candidate", ""))
+            return result
+        result["failed"] = True
+        result["error"] = load_result.get("error", f"{asset_name} could not be loaded after resolve.")
+        return result
+
+    def _integration_resolve_p4_asset_path_safe(self, asset_name: str, category: str, target_group: str = "Main_Assets") -> Dict[str, Any]:
+        resolved: Dict[str, Any] = {"asset_name": asset_name, "candidate": "", "asset_file": "", "sourceimages": "", "candidates": [], "target_group": target_group}
+        self._append_integration_log(f"[INFO] Resolve requested asset: {asset_name}")
+        if self._integration_is_asset_already_loaded(asset_name, target_group):
+            resolved["already_loaded"] = True
+            self._append_integration_log(f"[INFO] Asset already present or not: already present ({asset_name})")
+            return resolved
+        self._append_integration_log(f"[INFO] Asset already present or not: not present ({asset_name})")
         try:
             from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
         except Exception as exc:
-            result["critical_error"] = f"qdTools import failed for '{asset_name}': {exc}"
-            self._append_integration_log(f"[FAIL] {result['critical_error']}")
+            resolved["error"] = f"qdTools import failed for '{asset_name}': {exc}"
+            self._append_integration_log(f"[FAIL] {resolved['error']}")
             self._append_integration_log(traceback.format_exc().rstrip())
-            return result
+            return resolved
 
         catalog_candidates = self._integration_catalog_candidates(asset_name)
-        result["candidates"] = catalog_candidates[:]
+        resolved["candidates"] = catalog_candidates[:]
         self._append_integration_log(f"[INFO] Candidates for {asset_name}: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}")
         for catalog_name in catalog_candidates:
             self._append_integration_log(f"[INFO] P4 candidate tested: {catalog_name}")
-            self._append_integration_log(f"[INFO] Trying {catalog_name}")
             try:
                 loader = QDLoad.by_catalog(catalog_name, category)
                 if loader is None:
-                    raise RuntimeError("QDLoad.by_catalog returned None")
-                update_callable = getattr(loader, "update_status", None)
-                if not callable(update_callable):
-                    raise RuntimeError("Resolved loader has no callable update_status method")
-
-                before_transforms = self._snapshot_scene_transforms()
-                refs_before = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
-                io_stdout = io.StringIO()
-                io_stderr = io.StringIO()
-                with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
-                    update_result = update_callable(b_recursive=True)
-                self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
-                qd_log_excerpt = "\n".join(
-                    chunk for chunk in [io_stdout.getvalue(), io_stderr.getvalue(), repr(update_result)] if chunk
-                )
-                qd_asset_file_from_logs = self._integration_extract_qd_asset_path_from_logs(qd_log_excerpt, asset_name)
-                after_transforms = self._snapshot_scene_transforms()
-                refs_after = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
-                new_refs = sorted(refs_after - refs_before)
-                self._append_integration_log(f"[INFO] New Maya references detected: {len(new_refs)}")
-                for ref_path in new_refs:
-                    self._append_integration_log(f"[INFO] New Maya reference: {ref_path}")
-
-                loaded_top_nodes = self._resolve_loaded_roots_with_fallback(
-                    scene_asset=asset_name,
-                    catalog_name=catalog_name,
-                    before_transforms=before_transforms,
-                    after_transforms=after_transforms,
-                )
-                if not loaded_top_nodes:
-                    self._append_integration_log("[WARN] Could not resolve loaded roots for parenting.")
-                else:
-                    self._parent_loaded_nodes_for_asset_kind("main asset" if target_group == "Main_Assets" else "annexe asset", loaded_top_nodes)
-                self._integration_record_loaded_p4_asset_path(
-                    scene_asset=asset_name,
-                    catalog_name=catalog_name,
-                    loaded_top_nodes=loaded_top_nodes,
-                    candidate_name=catalog_name,
-                    loader=loader,
-                    new_references=new_refs,
-                    qd_asset_file_from_logs=qd_asset_file_from_logs,
-                    qd_return_value=update_result,
-                )
-                memo = self.integration_loaded_p4_asset_paths.get(normalized_asset, {})
-                self._append_integration_log(f"[INFO] P4 depot path: {memo.get('depot_path', '<unknown>') or '<unknown>'}")
-                self._append_integration_log(f"[INFO] P4 local path: {memo.get('local_path', '<unknown>') or '<unknown>'}")
-                self._append_integration_log(f"[INFO] P4 loaded file: {memo.get('loaded_file', '<unknown>') or '<unknown>'}")
-                self._append_integration_log(f"[INFO] Deduced sourceimages: {memo.get('sourceimages', '<unknown>') or '<unknown>'}")
-                self._append_integration_log(f"[OK] Loaded {catalog_name} into {target_group}")
-                result["loaded"] = True
-                result["loaded_candidate"] = catalog_name
-                return result
+                    continue
+                resolved["candidate"] = catalog_name
+                self._integration_record_loaded_p4_asset_path(scene_asset=asset_name, catalog_name=catalog_name, loaded_top_nodes=[], candidate_name=catalog_name, loader=loader, new_references=[], qd_asset_file_from_logs="", qd_return_value=None)
+                memo = self.integration_loaded_p4_asset_paths.get(self._strip_namespaces_from_name(asset_name).strip().upper(), {})
+                asset_file = memo.get("loaded_file", "") or memo.get("local_path", "") or ""
+                if asset_file and asset_file.lower().endswith(".asset"):
+                    resolved["asset_file"] = os.path.normpath(asset_file)
+                    resolved["sourceimages"] = self._integration_deduce_sourceimages_from_loaded_file(resolved["asset_file"])
+                    self._append_integration_log(f"[INFO] Chemin .asset trouvé: {resolved['asset_file']}")
+                    self._append_integration_log(f"[INFO] Sourceimages déduit: {resolved['sourceimages'] or '<unknown>'}")
+                    return resolved
             except Exception as exc:
-                self._append_integration_log(f"[WARN] Candidate {catalog_name} failed: {exc}")
+                self._append_integration_log(f"[WARN] Resolve candidate failed {catalog_name}: {exc}")
                 self._append_integration_log(traceback.format_exc().rstrip())
-                continue
+        resolved["error"] = f"{asset_name} could not be resolved. Tried: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}"
+        return resolved
 
-        result["failed"] = True
-        result["error"] = f"{asset_name} could not be loaded. Tried: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}"
-        self._append_integration_log(f"[FAIL] {result['error']}")
+    def _integration_load_resolved_asset_safe(self, path_data: Dict[str, Any]) -> Dict[str, Any]:
+        result = {"loaded": False, "error": "", "loaded_candidate": path_data.get("candidate", "")}
+        asset_name = path_data.get("asset_name", "")
+        asset_file = path_data.get("asset_file", "")
+        self._append_integration_log(f"[INFO] Début du load: {asset_name} | {asset_file or '<none>'}")
+        if not asset_file or not os.path.exists(asset_file):
+            result["error"] = f"Resolved .asset file missing for {asset_name}: {asset_file or '<none>'}"
+            self._append_integration_log(f"[FAIL] Fichier existe oui/non: non ({asset_file or '<none>'})")
+            return result
+        self._append_integration_log(f"[INFO] Fichier existe oui/non: oui ({asset_file})")
+        try:
+            cmds.refresh()
+        except Exception:
+            pass
+        try:
+            maya.utils.executeDeferred(lambda: None)
+        except Exception:
+            pass
+        target_group = path_data.get("target_group", "Main_Assets")
+        category = self._selected_integration_qd_category()
+        internal = self._integration_load_single_p4_asset_qdtools_only(path_data.get("asset_name", ""), target_group, category, path_data.get("candidate", ""))
+        if internal.get("loaded"):
+            result["loaded"] = True
+            self._append_integration_log(f"[OK] Fin du load: {asset_name}")
+        else:
+            result["error"] = internal.get("error", f"Load failed for {asset_name}")
+            self._append_integration_log(f"[FAIL] Erreur éventuelle: {result['error']}")
         return result
 
+    def _integration_load_single_p4_asset_qdtools_only(self, asset_name: str, target_group: str, category: str, forced_candidate: str = "") -> Dict[str, Any]:
+        catalog_candidates = [forced_candidate] if forced_candidate else self._integration_catalog_candidates(asset_name)
+        for catalog_name in catalog_candidates:
+            try:
+                return self._integration_load_single_p4_asset_legacy_impl(asset_name, target_group, category, catalog_name)
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] qdTools isolated load failed for {catalog_name}: {exc}")
+                self._append_integration_log(traceback.format_exc().rstrip())
+        return {"loaded": False, "error": f"{asset_name} isolated load failed."}
+
+    def _integration_load_single_p4_asset_legacy_impl(self, asset_name: str, target_group: str, category: str, catalog_name: str) -> Dict[str, Any]:
+        from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
+        loader = QDLoad.by_catalog(catalog_name, category)
+        if loader is None:
+            return {"loaded": False, "error": f"Loader not found for {catalog_name}"}
+        update_callable = getattr(loader, "update_status", None)
+        if not callable(update_callable):
+            return {"loaded": False, "error": f"Loader update_status missing for {catalog_name}"}
+        before_transforms = self._snapshot_scene_transforms()
+        refs_before = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
+        io_stdout = io.StringIO()
+        io_stderr = io.StringIO()
+        with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
+            update_result = update_callable(b_recursive=True)
+        self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
+        return {"loaded": True, "loaded_candidate": catalog_name}
+
+    def integration_load_selected_p4_asset_only(self) -> None:
+        selected = self._selected_list_control_items("integration_catalog_list") + self._selected_list_control_items("integration_annexe_catalog_list")
+        if not selected:
+            self._append_integration_log("[WARN] No selected asset for single safe load.")
+            return
+        scene_asset = selected[0]
+        target_group = "Main_Assets" if scene_asset in self._selected_list_control_items("integration_catalog_list") else "Annexes"
+        category = self._selected_integration_qd_category()
+        self._append_integration_log(f"[INFO] Single safe mode enabled for: {scene_asset}")
+        _ = self._integration_load_single_p4_asset_safe(scene_asset, target_group, category)
+
+    def resolve_selected_catalog_assets_p4_paths_only(self) -> None:
+        selected_main_assets = self._selected_list_control_items("integration_catalog_list")
+        selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
+        if not selected_main_assets and not selected_annexe_assets:
+            self._append_integration_log("[WARN] Nothing selected for resolve-only mode.")
+            return
+        if not self._integration_ensure_p4_connection():
+            self._append_integration_log("[FAIL] P4 reconnect failed in resolve-only mode. No load attempted.")
+            return
+        category = self._selected_integration_qd_category()
+        self._append_integration_log("[INFO] Resolve-only mode started (no Maya import expected).")
+        for asset_kind, selected_assets in (("main asset", selected_main_assets), ("annexe asset", selected_annexe_assets)):
+            target_group = "Main_Assets" if asset_kind == "main asset" else "Annexes"
+            for scene_asset in selected_assets:
+                path_data = self._integration_resolve_p4_asset_path_safe(scene_asset, category, target_group)
+                normalized_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
+                if path_data.get("asset_file"):
+                    self.integration_loaded_p4_asset_paths.setdefault(normalized_asset, {})
+                    self.integration_loaded_p4_asset_paths[normalized_asset]["loaded_file"] = path_data.get("asset_file", "")
+                    self.integration_loaded_p4_asset_paths[normalized_asset]["sourceimages"] = path_data.get("sourceimages", "")
+        self._append_integration_log("[INFO] Resolve-only mode finished.")
     def update_selected_catalog_assets_from_p4(self) -> None:
         selected_main_assets = self._selected_list_control_items("integration_catalog_list")
         selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
