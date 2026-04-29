@@ -1993,26 +1993,6 @@ QLabel#PageHeaderSubtitle {
             cmds.menuItem(label=category)
         cmds.setParent("..")
         cmds.button(label="Load / Update from P4\n(Selected Scene Asset(s))", height=UI_PRIMARY_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT, command=lambda *_: self.update_selected_catalog_assets_from_p4())
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        cmds.button(
-            label="Load Selected P4 Asset Only",
-            height=UI_BUTTON_HEIGHT,
-            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
-            command=lambda *_: self.integration_load_selected_p4_asset_only(),
-        )
-        cmds.button(
-            label="Resolve P4 Paths Only",
-            height=UI_BUTTON_HEIGHT,
-            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
-            command=lambda *_: self.resolve_selected_catalog_assets_p4_paths_only(),
-        )
-        cmds.button(
-            label="Load All P4 Assets (Safe / One by One)",
-            height=UI_BUTTON_HEIGHT,
-            backgroundColor=UI_COLOR_BG_ACCENT_SOFT,
-            command=lambda *_: self.update_selected_catalog_assets_from_p4(),
-        )
-        cmds.setParent("..")
         cmds.separator(style="in")
 
         cmds.text(label="Step 03 — Checkout / Take Rights (manual)", align="left")
@@ -2558,13 +2538,9 @@ QLabel#PageHeaderSubtitle {
             return
 
         source_roots = self._integration_collect_asset_roots(prefixed=False)
-        loaded_roots = self._integration_collect_target_assets_under_main_assets()
-        total_children = 0
-        for roots in loaded_roots.values():
-            total_children += len(roots)
-        self._append_integration_log(f"[INFO] Main_Assets children found: {total_children}")
+        loaded_roots = self._integration_collect_asset_roots(prefixed=True)
         if not loaded_roots:
-            self._append_integration_log("[WARN] No target assets found under Main_Assets.")
+            self._append_integration_log("[WARN] No loaded P4 prefixed assets found for replacement.")
             return
 
         replaced_count = 0
@@ -2574,11 +2550,11 @@ QLabel#PageHeaderSubtitle {
                 continue
             loaded_asset_root = loaded_candidates[0]
             loaded_asset_short = self._strip_namespaces_from_name(self._short_name(loaded_asset_root))
-            self._append_integration_log(f"[INFO] Target asset detected: {loaded_asset_short}")
+            self._append_integration_log(f"[INFO] Asset P4 detected: {loaded_asset_short}")
             self._append_integration_log(f"[INFO] Cleaned asset name: {base_asset_name}")
             if len(loaded_candidates) > 1:
                 self._append_integration_log(
-                    f"[WARN] Multiple target roots found for '{base_asset_name}' ({len(loaded_candidates)}). Using: {loaded_asset_short}"
+                    f"[WARN] Multiple loaded P4 roots found for '{base_asset_name}' ({len(loaded_candidates)}). Using: {loaded_asset_short}"
                 )
 
             source_candidates = source_roots.get(base_asset_name, [])
@@ -2591,7 +2567,7 @@ QLabel#PageHeaderSubtitle {
                 self._append_integration_log(
                     f"[WARN] Multiple source roots found for '{base_asset_name}' ({len(source_candidates)}). Using: {source_short}"
                 )
-            self._append_integration_log(f"[INFO] Source matched: {source_short}")
+            self._append_integration_log(f"[INFO] Source found: {source_short}")
 
             mesh_parent = self._integration_find_mesh_parent(loaded_asset_root, base_asset_name)
             if not mesh_parent:
@@ -2602,7 +2578,7 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log(f"[INFO] Target _MESH found: {mesh_parent_short}")
 
             deleted_count = self._integration_clear_target_content(mesh_parent)
-            self._append_integration_log(f"[INFO] Cleared old children under _MESH: {deleted_count}")
+            self._append_integration_log(f"[INFO] Children removed from {mesh_parent_short}: {deleted_count}")
 
             source_children = self._integration_collect_source_children(source_asset_root)
             moved_count = 0
@@ -2617,7 +2593,7 @@ QLabel#PageHeaderSubtitle {
                     f"[WARN] Source '{source_short}': no valid direct children and no mesh shape found; nothing moved."
                 )
 
-            self._append_integration_log(f"[INFO] Moved source children under _MESH: {moved_count}")
+            self._append_integration_log(f"[INFO] Source items moved into {mesh_parent_short}: {moved_count}")
             if moved_count > 0:
                 self._append_integration_log(f"[OK] Replacement completed for {base_asset_name}")
                 replaced_count += 1
@@ -2657,29 +2633,6 @@ QLabel#PageHeaderSubtitle {
             if valid_roots:
                 filtered[base_asset_name] = valid_roots
         return filtered
-
-    def _integration_collect_target_assets_under_main_assets(self) -> Dict[str, List[str]]:
-        targets: Dict[str, List[str]] = {}
-        main_assets_groups = self._integration_find_main_assets_groups()
-        if not main_assets_groups:
-            return targets
-        for main_group in main_assets_groups:
-            children = cmds.listRelatives(main_group, children=True, type="transform", fullPath=True) or []
-            for child in children:
-                if not child or not cmds.objExists(child):
-                    continue
-                short_clean = self._strip_namespaces_from_name(self._short_name(child)).strip("_ ").upper()
-                if not short_clean:
-                    continue
-                targets.setdefault(short_clean, []).append(child)
-                base_name = self._integration_remove_prefix(short_clean)
-                if base_name and base_name != short_clean:
-                    targets.setdefault(base_name, []).append(child)
-        for asset_name in list(targets.keys()):
-            candidates = [n for n in set(targets[asset_name]) if n and cmds.objExists(n)]
-            candidates.sort(key=lambda node: (node.count("|"), len(node), node))
-            targets[asset_name] = candidates
-        return targets
 
     def _integration_is_in_collide_branch(self, node: str, mesh_parent: str) -> bool:
         if not node or not mesh_parent:
@@ -4037,165 +3990,92 @@ QLabel#PageHeaderSubtitle {
         if self._integration_is_asset_already_loaded(asset_name, target_group):
             result["already_loaded"] = True
             self._append_integration_log(f"[INFO] Asset already loaded under {target_group}: {asset_name}")
-            self._append_integration_log(f"[INFO] Asset already present or not: already present")
             return result
 
-        self._append_integration_log(f"[INFO] Asset already present or not: not present")
         if not self._integration_ensure_p4_connection():
             result["critical_error"] = f"P4 unavailable for asset '{asset_name}'."
-            self._append_integration_log("[FAIL] P4 reconnect OK/FAIL: FAIL")
             self._append_integration_log(f"[FAIL] {result['critical_error']}")
             return result
-        self._append_integration_log("[INFO] P4 reconnect OK/FAIL: OK")
 
-        path_data = self._integration_resolve_p4_asset_path_safe(asset_name, category, target_group)
-        result["candidates"] = path_data.get("candidates", [])
-        if path_data.get("already_loaded"):
-            result["already_loaded"] = True
-            return result
-        if not path_data.get("asset_file"):
-            result["failed"] = True
-            result["error"] = path_data.get("error", f"{asset_name} could not be resolved from P4.")
-            self._append_integration_log(f"[FAIL] {result['error']}")
-            return result
-        load_result = self._integration_load_resolved_asset_safe(path_data)
-        if load_result.get("loaded"):
-            result["loaded"] = True
-            result["loaded_candidate"] = load_result.get("loaded_candidate", path_data.get("candidate", ""))
-            return result
-        result["failed"] = True
-        result["error"] = load_result.get("error", f"{asset_name} could not be loaded after resolve.")
-        return result
-
-    def _integration_resolve_p4_asset_path_safe(self, asset_name: str, category: str, target_group: str = "Main_Assets") -> Dict[str, Any]:
-        resolved: Dict[str, Any] = {"asset_name": asset_name, "candidate": "", "asset_file": "", "sourceimages": "", "candidates": [], "target_group": target_group}
-        self._append_integration_log(f"[INFO] Resolve requested asset: {asset_name}")
-        if self._integration_is_asset_already_loaded(asset_name, target_group):
-            resolved["already_loaded"] = True
-            self._append_integration_log(f"[INFO] Asset already present or not: already present ({asset_name})")
-            return resolved
-        self._append_integration_log(f"[INFO] Asset already present or not: not present ({asset_name})")
         try:
             from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
         except Exception as exc:
-            resolved["error"] = f"qdTools import failed for '{asset_name}': {exc}"
-            self._append_integration_log(f"[FAIL] {resolved['error']}")
+            result["critical_error"] = f"qdTools import failed for '{asset_name}': {exc}"
+            self._append_integration_log(f"[FAIL] {result['critical_error']}")
             self._append_integration_log(traceback.format_exc().rstrip())
-            return resolved
+            return result
 
         catalog_candidates = self._integration_catalog_candidates(asset_name)
-        resolved["candidates"] = catalog_candidates[:]
+        result["candidates"] = catalog_candidates[:]
         self._append_integration_log(f"[INFO] Candidates for {asset_name}: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}")
         for catalog_name in catalog_candidates:
             self._append_integration_log(f"[INFO] P4 candidate tested: {catalog_name}")
+            self._append_integration_log(f"[INFO] Trying {catalog_name}")
             try:
                 loader = QDLoad.by_catalog(catalog_name, category)
                 if loader is None:
-                    continue
-                resolved["candidate"] = catalog_name
-                self._integration_record_loaded_p4_asset_path(scene_asset=asset_name, catalog_name=catalog_name, loaded_top_nodes=[], candidate_name=catalog_name, loader=loader, new_references=[], qd_asset_file_from_logs="", qd_return_value=None)
-                memo = self.integration_loaded_p4_asset_paths.get(self._strip_namespaces_from_name(asset_name).strip().upper(), {})
-                asset_file = memo.get("loaded_file", "") or memo.get("local_path", "") or ""
-                if asset_file and asset_file.lower().endswith(".asset"):
-                    resolved["asset_file"] = os.path.normpath(asset_file)
-                    resolved["sourceimages"] = self._integration_deduce_sourceimages_from_loaded_file(resolved["asset_file"])
-                    self._append_integration_log(f"[INFO] Chemin .asset trouvé: {resolved['asset_file']}")
-                    self._append_integration_log(f"[INFO] Sourceimages déduit: {resolved['sourceimages'] or '<unknown>'}")
-                    return resolved
-            except Exception as exc:
-                self._append_integration_log(f"[WARN] Resolve candidate failed {catalog_name}: {exc}")
-                self._append_integration_log(traceback.format_exc().rstrip())
-        resolved["error"] = f"{asset_name} could not be resolved. Tried: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}"
-        return resolved
+                    raise RuntimeError("QDLoad.by_catalog returned None")
+                update_callable = getattr(loader, "update_status", None)
+                if not callable(update_callable):
+                    raise RuntimeError("Resolved loader has no callable update_status method")
 
-    def _integration_load_resolved_asset_safe(self, path_data: Dict[str, Any]) -> Dict[str, Any]:
-        result = {"loaded": False, "error": "", "loaded_candidate": path_data.get("candidate", "")}
-        asset_name = path_data.get("asset_name", "")
-        asset_file = path_data.get("asset_file", "")
-        self._append_integration_log(f"[INFO] Début du load: {asset_name} | {asset_file or '<none>'}")
-        if not asset_file or not os.path.exists(asset_file):
-            result["error"] = f"Resolved .asset file missing for {asset_name}: {asset_file or '<none>'}"
-            self._append_integration_log(f"[FAIL] Fichier existe oui/non: non ({asset_file or '<none>'})")
-            return result
-        self._append_integration_log(f"[INFO] Fichier existe oui/non: oui ({asset_file})")
-        try:
-            cmds.refresh()
-        except Exception:
-            pass
-        try:
-            maya.utils.executeDeferred(lambda: None)
-        except Exception:
-            pass
-        target_group = path_data.get("target_group", "Main_Assets")
-        category = self._selected_integration_qd_category()
-        internal = self._integration_load_single_p4_asset_qdtools_only(path_data.get("asset_name", ""), target_group, category, path_data.get("candidate", ""))
-        if internal.get("loaded"):
-            result["loaded"] = True
-            self._append_integration_log(f"[OK] Fin du load: {asset_name}")
-        else:
-            result["error"] = internal.get("error", f"Load failed for {asset_name}")
-            self._append_integration_log(f"[FAIL] Erreur éventuelle: {result['error']}")
+                before_transforms = self._snapshot_scene_transforms()
+                refs_before = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
+                io_stdout = io.StringIO()
+                io_stderr = io.StringIO()
+                with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
+                    update_result = update_callable(b_recursive=True)
+                self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
+                qd_log_excerpt = "\n".join(
+                    chunk for chunk in [io_stdout.getvalue(), io_stderr.getvalue(), repr(update_result)] if chunk
+                )
+                qd_asset_file_from_logs = self._integration_extract_qd_asset_path_from_logs(qd_log_excerpt, asset_name)
+                after_transforms = self._snapshot_scene_transforms()
+                refs_after = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
+                new_refs = sorted(refs_after - refs_before)
+                self._append_integration_log(f"[INFO] New Maya references detected: {len(new_refs)}")
+                for ref_path in new_refs:
+                    self._append_integration_log(f"[INFO] New Maya reference: {ref_path}")
+
+                loaded_top_nodes = self._resolve_loaded_roots_with_fallback(
+                    scene_asset=asset_name,
+                    catalog_name=catalog_name,
+                    before_transforms=before_transforms,
+                    after_transforms=after_transforms,
+                )
+                if not loaded_top_nodes:
+                    self._append_integration_log("[WARN] Could not resolve loaded roots for parenting.")
+                else:
+                    self._parent_loaded_nodes_for_asset_kind("main asset" if target_group == "Main_Assets" else "annexe asset", loaded_top_nodes)
+                self._integration_record_loaded_p4_asset_path(
+                    scene_asset=asset_name,
+                    catalog_name=catalog_name,
+                    loaded_top_nodes=loaded_top_nodes,
+                    candidate_name=catalog_name,
+                    loader=loader,
+                    new_references=new_refs,
+                    qd_asset_file_from_logs=qd_asset_file_from_logs,
+                    qd_return_value=update_result,
+                )
+                memo = self.integration_loaded_p4_asset_paths.get(normalized_asset, {})
+                self._append_integration_log(f"[INFO] P4 depot path: {memo.get('depot_path', '<unknown>') or '<unknown>'}")
+                self._append_integration_log(f"[INFO] P4 local path: {memo.get('local_path', '<unknown>') or '<unknown>'}")
+                self._append_integration_log(f"[INFO] P4 loaded file: {memo.get('loaded_file', '<unknown>') or '<unknown>'}")
+                self._append_integration_log(f"[INFO] Deduced sourceimages: {memo.get('sourceimages', '<unknown>') or '<unknown>'}")
+                self._append_integration_log(f"[OK] Loaded {catalog_name} into {target_group}")
+                result["loaded"] = True
+                result["loaded_candidate"] = catalog_name
+                return result
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Candidate {catalog_name} failed: {exc}")
+                self._append_integration_log(traceback.format_exc().rstrip())
+                continue
+
+        result["failed"] = True
+        result["error"] = f"{asset_name} could not be loaded. Tried: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}"
+        self._append_integration_log(f"[FAIL] {result['error']}")
         return result
 
-    def _integration_load_single_p4_asset_qdtools_only(self, asset_name: str, target_group: str, category: str, forced_candidate: str = "") -> Dict[str, Any]:
-        catalog_candidates = [forced_candidate] if forced_candidate else self._integration_catalog_candidates(asset_name)
-        for catalog_name in catalog_candidates:
-            try:
-                return self._integration_load_single_p4_asset_legacy_impl(asset_name, target_group, category, catalog_name)
-            except Exception as exc:
-                self._append_integration_log(f"[WARN] qdTools isolated load failed for {catalog_name}: {exc}")
-                self._append_integration_log(traceback.format_exc().rstrip())
-        return {"loaded": False, "error": f"{asset_name} isolated load failed."}
-
-    def _integration_load_single_p4_asset_legacy_impl(self, asset_name: str, target_group: str, category: str, catalog_name: str) -> Dict[str, Any]:
-        from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
-        loader = QDLoad.by_catalog(catalog_name, category)
-        if loader is None:
-            return {"loaded": False, "error": f"Loader not found for {catalog_name}"}
-        update_callable = getattr(loader, "update_status", None)
-        if not callable(update_callable):
-            return {"loaded": False, "error": f"Loader update_status missing for {catalog_name}"}
-        before_transforms = self._snapshot_scene_transforms()
-        refs_before = set(os.path.normpath(path) for path in (cmds.file(q=True, reference=True) or []))
-        io_stdout = io.StringIO()
-        io_stderr = io.StringIO()
-        with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
-            update_result = update_callable(b_recursive=True)
-        self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
-        return {"loaded": True, "loaded_candidate": catalog_name}
-
-    def integration_load_selected_p4_asset_only(self) -> None:
-        selected = self._selected_list_control_items("integration_catalog_list") + self._selected_list_control_items("integration_annexe_catalog_list")
-        if not selected:
-            self._append_integration_log("[WARN] No selected asset for single safe load.")
-            return
-        scene_asset = selected[0]
-        target_group = "Main_Assets" if scene_asset in self._selected_list_control_items("integration_catalog_list") else "Annexes"
-        category = self._selected_integration_qd_category()
-        self._append_integration_log(f"[INFO] Single safe mode enabled for: {scene_asset}")
-        _ = self._integration_load_single_p4_asset_safe(scene_asset, target_group, category)
-
-    def resolve_selected_catalog_assets_p4_paths_only(self) -> None:
-        selected_main_assets = self._selected_list_control_items("integration_catalog_list")
-        selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
-        if not selected_main_assets and not selected_annexe_assets:
-            self._append_integration_log("[WARN] Nothing selected for resolve-only mode.")
-            return
-        if not self._integration_ensure_p4_connection():
-            self._append_integration_log("[FAIL] P4 reconnect failed in resolve-only mode. No load attempted.")
-            return
-        category = self._selected_integration_qd_category()
-        self._append_integration_log("[INFO] Resolve-only mode started (no Maya import expected).")
-        for asset_kind, selected_assets in (("main asset", selected_main_assets), ("annexe asset", selected_annexe_assets)):
-            target_group = "Main_Assets" if asset_kind == "main asset" else "Annexes"
-            for scene_asset in selected_assets:
-                path_data = self._integration_resolve_p4_asset_path_safe(scene_asset, category, target_group)
-                normalized_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
-                if path_data.get("asset_file"):
-                    self.integration_loaded_p4_asset_paths.setdefault(normalized_asset, {})
-                    self.integration_loaded_p4_asset_paths[normalized_asset]["loaded_file"] = path_data.get("asset_file", "")
-                    self.integration_loaded_p4_asset_paths[normalized_asset]["sourceimages"] = path_data.get("sourceimages", "")
-        self._append_integration_log("[INFO] Resolve-only mode finished.")
     def update_selected_catalog_assets_from_p4(self) -> None:
         selected_main_assets = self._selected_list_control_items("integration_catalog_list")
         selected_annexe_assets = self._selected_list_control_items("integration_annexe_catalog_list")
