@@ -3297,23 +3297,42 @@ QLabel#PageHeaderSubtitle {
                 continue
 
             stripped_name = self._integration_strip_qd_prefix(asset_name)
-            annex_prefix = f"{stripped_name}_"
+            base_name = stripped_name
+            annex_prefix = f"{base_name}_"
+            self._append_integration_log(f"[INFO] Step 09 annex base name: {base_name}")
             self._append_integration_log(f"[INFO] Step 09 annex prefix: {annex_prefix}")
 
             candidate_files: List[str] = []
+            exact_match_files: List[str] = []
+            prefix_match_files: List[str] = []
             prefix_upper = annex_prefix.upper()
+            base_name_upper = base_name.upper()
             try:
                 for root, _, files in os.walk(annexes_dir):
                     for file_name in files:
-                        if file_name.upper().startswith(prefix_upper):
-                            candidate_files.append(os.path.normpath(os.path.join(root, file_name)))
+                        normalized_path = os.path.normpath(os.path.join(root, file_name))
+                        file_name_upper = file_name.upper()
+                        file_stem_upper = os.path.splitext(file_name)[0].upper()
+
+                        is_prefix_match = file_name_upper.startswith(prefix_upper)
+                        is_exact_match = file_stem_upper == base_name_upper
+
+                        if is_prefix_match or is_exact_match:
+                            candidate_files.append(normalized_path)
+                            if is_prefix_match:
+                                prefix_match_files.append(normalized_path)
+                            if is_exact_match:
+                                exact_match_files.append(normalized_path)
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Step 09 candidate scan failed for '{asset_name}': {exc}")
                 continue
 
             self._append_integration_log(f"[INFO] Step 09 candidates found: {len(candidate_files)}")
+            self._append_integration_log(f"[INFO] Step 09 candidate files: {candidate_files}")
+            self._append_integration_log(f"[INFO] Step 09 exact-match files: {exact_match_files}")
+            self._append_integration_log(f"[INFO] Step 09 prefix-match files: {prefix_match_files}")
             if not candidate_files:
-                self._append_integration_log(f"[WARN] Step 09 no candidate files found for prefix '{annex_prefix}'.")
+                self._append_integration_log(f"[WARN] Step 09 no candidate files found for base '{base_name}'.")
                 continue
 
             try:
@@ -3326,6 +3345,8 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log(f"[INFO] Step 09 rejected annexes: {len(rejected)}")
             if rejected:
                 self._append_integration_log(f"[INFO] Step 09 rejected list: {rejected}")
+            rejected_candidates = [candidate for candidate in candidate_files if candidate not in valid_annexes]
+            self._append_integration_log(f"[INFO] Step 09 rejected by AnnexesManager: {rejected_candidates}")
 
             if not valid_annexes:
                 self._append_integration_log(f"[WARN] Step 09 no valid annexes for '{asset_name}'.")
