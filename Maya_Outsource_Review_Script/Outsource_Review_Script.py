@@ -2910,10 +2910,17 @@ QLabel#PageHeaderSubtitle {
             return os.path.normpath(parent_dir)
         return os.path.normpath(os.path.join(parent_dir, "sourceimages"))
 
-    def _integration_record_loaded_p4_asset_path(self, scene_asset: str, catalog_name: str, loaded_top_nodes: List[str]) -> None:
-        if not loaded_top_nodes:
-            return
+    def _integration_record_loaded_p4_asset_path(
+        self,
+        scene_asset: str,
+        catalog_name: str,
+        loaded_top_nodes: List[str],
+        candidate_name: str = "",
+        loader=None,
+    ) -> None:
         normalized_scene_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
+        safe_candidate = candidate_name or catalog_name or "<unknown>"
+        safe_depot_path = "<unknown>"
         local_file_path = ""
         for node in loaded_top_nodes:
             try:
@@ -2929,10 +2936,53 @@ QLabel#PageHeaderSubtitle {
             if local_file_path:
                 break
 
+        if loader is not None:
+            depot_attr_candidates = (
+                "depot_path",
+                "depot_file",
+                "depotFile",
+                "depot",
+                "p4_path",
+                "p4_file",
+                "filepath_depot",
+            )
+            for attr_name in depot_attr_candidates:
+                try:
+                    value = getattr(loader, attr_name, "")
+                except Exception:
+                    value = ""
+                if isinstance(value, str) and value.strip():
+                    safe_depot_path = value.strip()
+                    break
+
+        if not loaded_top_nodes:
+            self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
+                "asset_name": normalized_scene_asset,
+                "candidate": safe_candidate,
+                "depot_path": safe_depot_path,
+                "local_path": "<unknown>",
+                "loaded_file": "<unknown>",
+                "sourceimages": "<unknown>",
+                "catalog_name": catalog_name or "<unknown>",
+            }
+            self._append_integration_log(
+                f"[WARN] Could not resolve loaded roots for P4 asset '{scene_asset}' ({catalog_name})."
+            )
+            return
+
         if not local_file_path:
             self._append_integration_log(
                 f"[WARN] Could not resolve local file path for loaded P4 asset '{scene_asset}' ({catalog_name})."
             )
+            self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
+                "asset_name": normalized_scene_asset,
+                "candidate": safe_candidate,
+                "depot_path": safe_depot_path,
+                "local_path": "<unknown>",
+                "loaded_file": "<unknown>",
+                "sourceimages": "<unknown>",
+                "catalog_name": catalog_name or "<unknown>",
+            }
             return
 
         local_file_path = os.path.normpath(local_file_path)
@@ -2940,13 +2990,17 @@ QLabel#PageHeaderSubtitle {
         sourceimages = self._integration_guess_sourceimages_from_loaded_file(local_file_path)
         self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
             "asset_name": normalized_scene_asset,
+            "candidate": safe_candidate,
+            "depot_path": safe_depot_path,
+            "local_path": local_file_path,
+            "loaded_file": local_file_path,
             "catalog_name": catalog_name,
             "file_path": local_file_path,
             "parent_dir": os.path.normpath(parent_dir) if parent_dir else "",
-            "sourceimages": sourceimages,
+            "sourceimages": sourceimages or "<unknown>",
         }
         self._append_integration_log(
-            f"[INFO] P4 path memoized for {normalized_scene_asset} | file={local_file_path} | sourceimages={sourceimages}"
+            f"[INFO] P4 path memoized for {normalized_scene_asset} | candidate={safe_candidate} | depot={safe_depot_path} | local={local_file_path} | sourceimages={sourceimages or '<unknown>'}"
         )
 
     def pick_integration_texture_sourceimages_folder(self) -> None:
@@ -3593,6 +3647,7 @@ QLabel#PageHeaderSubtitle {
         for asset_kind, selected_assets in (("main asset", selected_main_assets), ("annexe asset", selected_annexe_assets)):
             for scene_asset in selected_assets:
                 self._append_integration_log(f"Trying P4 load for {asset_kind} {scene_asset}")
+                self._append_integration_log(f"[INFO] P4 asset requested: {scene_asset}")
                 catalog_candidates = self._integration_catalog_candidates(scene_asset)
                 asset_loaded = False
                 if catalog_candidates:
@@ -3601,6 +3656,7 @@ QLabel#PageHeaderSubtitle {
                     )
 
                 for catalog_name in catalog_candidates:
+                    self._append_integration_log(f"[INFO] P4 candidate tested: {catalog_name}")
                     self._append_integration_log(f"[INFO] Trying {catalog_name}")
                     try:
                         loader = QDLoad.by_catalog(catalog_name, category)
@@ -3630,17 +3686,36 @@ QLabel#PageHeaderSubtitle {
                         )
                         if not loaded_top_nodes:
                             self._append_integration_log("[WARN] Could not resolve loaded roots for parenting.")
+                            self._integration_record_loaded_p4_asset_path(
+                                scene_asset=scene_asset,
+                                catalog_name=catalog_name,
+                                loaded_top_nodes=loaded_top_nodes,
+                                candidate_name=catalog_name,
+                                loader=loader,
+                            )
                         else:
                             self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
                             self._integration_record_loaded_p4_asset_path(
                                 scene_asset=scene_asset,
                                 catalog_name=catalog_name,
                                 loaded_top_nodes=loaded_top_nodes,
+                                candidate_name=catalog_name,
+                                loader=loader,
                             )
+                            memo_key = self._strip_namespaces_from_name(scene_asset).strip().upper()
+                            memo = self.integration_loaded_p4_asset_paths.get(memo_key, {})
+                            self._append_integration_log(f"[INFO] P4 depot path: {memo.get('depot_path', '<unknown>') or '<unknown>'}")
+                            self._append_integration_log(f"[INFO] P4 local path: {memo.get('local_path', '<unknown>') or '<unknown>'}")
+                            self._append_integration_log(f"[INFO] P4 loaded file: {memo.get('loaded_file', '<unknown>') or '<unknown>'}")
+                            self._append_integration_log(f"[INFO] Deduced sourceimages: {memo.get('sourceimages', '<unknown>') or '<unknown>'}")
                         asset_loaded = True
                         break
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] {catalog_name} failed: {exc}")
+                        self._append_integration_log("[INFO] P4 depot path: <unknown>")
+                        self._append_integration_log("[INFO] P4 local path: <unknown>")
+                        self._append_integration_log("[INFO] P4 loaded file: <unknown>")
+                        self._append_integration_log("[INFO] Deduced sourceimages: <unknown>")
                         continue
 
                 if not asset_loaded:
