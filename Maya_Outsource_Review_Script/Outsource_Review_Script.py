@@ -2943,6 +2943,32 @@ QLabel#PageHeaderSubtitle {
                 return asset_file
         return ""
 
+    def _integration_extract_qd_asset_file(self, qd_return_value: Any) -> str:
+        if qd_return_value is None:
+            return ""
+        try:
+            direct_value = getattr(qd_return_value, "file", "")
+        except Exception:
+            direct_value = ""
+        if isinstance(direct_value, str) and direct_value.strip():
+            return os.path.normpath(direct_value.strip())
+
+        serialized_value = ""
+        if isinstance(qd_return_value, str):
+            serialized_value = qd_return_value
+        else:
+            try:
+                serialized_value = repr(qd_return_value)
+            except Exception:
+                serialized_value = str(qd_return_value)
+        if not serialized_value:
+            return ""
+
+        file_match = re.search(r"file\s*=\s*['\"]([^'\"]+\.asset)['\"]", serialized_value, re.IGNORECASE)
+        if file_match:
+            return os.path.normpath(file_match.group(1).strip())
+        return ""
+
     def _integration_record_loaded_p4_asset_path(
         self,
         scene_asset: str,
@@ -2952,11 +2978,17 @@ QLabel#PageHeaderSubtitle {
         loader=None,
         new_references: Optional[List[str]] = None,
         qd_asset_file_from_logs: str = "",
+        qd_return_value: Any = None,
     ) -> None:
         normalized_scene_asset = self._strip_namespaces_from_name(scene_asset).strip().upper()
         safe_candidate = candidate_name or catalog_name or "<unknown>"
         safe_depot_path = "<unknown>"
-        local_file_path = os.path.normpath(qd_asset_file_from_logs) if qd_asset_file_from_logs else ""
+        qd_asset_file = self._integration_extract_qd_asset_file(qd_return_value)
+        if qd_asset_file:
+            self._append_integration_log(f"[INFO] Parsed QDTools asset file: {qd_asset_file}")
+        local_file_path = os.path.normpath(qd_asset_file) if qd_asset_file else ""
+        if not local_file_path and qd_asset_file_from_logs:
+            local_file_path = os.path.normpath(qd_asset_file_from_logs)
         maya_new_references = [os.path.normpath(path) for path in (new_references or []) if path]
 
         for node in loaded_top_nodes:
@@ -3000,6 +3032,7 @@ QLabel#PageHeaderSubtitle {
             self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
                 "asset_name": normalized_scene_asset,
                 "candidate": safe_candidate,
+                "asset_file": local_file_path or "<unknown>",
                 "depot_path": safe_depot_path,
                 "local_path": "<unknown>",
                 "loaded_file": "<unknown>",
@@ -3018,6 +3051,7 @@ QLabel#PageHeaderSubtitle {
             self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
                 "asset_name": normalized_scene_asset,
                 "candidate": safe_candidate,
+                "asset_file": "<unknown>",
                 "depot_path": safe_depot_path,
                 "local_path": "<unknown>",
                 "loaded_file": "<unknown>",
@@ -3027,15 +3061,15 @@ QLabel#PageHeaderSubtitle {
             return
 
         local_file_path = os.path.normpath(local_file_path)
-        if qd_asset_file_from_logs:
-            self._append_integration_log(f"[INFO] QD asset path detected: {local_file_path}")
-        else:
-            self._append_integration_log("[WARN] QD asset path could not be extracted from qdXml.read logs.")
+        if not qd_asset_file and not qd_asset_file_from_logs:
+            self._append_integration_log("[WARN] QD asset path could not be extracted from QDTools return value or qdXml.read logs.")
         parent_dir = os.path.dirname(local_file_path)
         sourceimages = self._integration_deduce_sourceimages_from_loaded_file(local_file_path)
+        self._append_integration_log(f"[INFO] Deduced sourceimages: {sourceimages or '<unknown>'}")
         self.integration_loaded_p4_asset_paths[normalized_scene_asset] = {
             "asset_name": normalized_scene_asset,
             "candidate": safe_candidate,
+            "asset_file": local_file_path,
             "depot_path": safe_depot_path,
             "local_path": local_file_path,
             "loaded_file": local_file_path,
@@ -3044,9 +3078,7 @@ QLabel#PageHeaderSubtitle {
             "parent_dir": os.path.normpath(parent_dir) if parent_dir else "",
             "sourceimages": sourceimages or "<unknown>",
         }
-        self._append_integration_log(
-            f"[INFO] P4 path memoized for {normalized_scene_asset} | candidate={safe_candidate} | depot={safe_depot_path} | local={local_file_path} | sourceimages={sourceimages or '<unknown>'}"
-        )
+        self._append_integration_log(f"[INFO] Stored P4 path data for {normalized_scene_asset}")
 
     def pick_integration_texture_sourceimages_folder(self) -> None:
         picked = cmds.fileDialog2(dialogStyle=2, fileMode=3, caption="Select Texture Sourceimages Folder")
@@ -3753,6 +3785,7 @@ QLabel#PageHeaderSubtitle {
                                 loader=loader,
                                 new_references=new_refs,
                                 qd_asset_file_from_logs=qd_asset_file_from_logs,
+                                qd_return_value=update_result,
                             )
                         else:
                             self._parent_loaded_nodes_for_asset_kind(asset_kind, loaded_top_nodes)
@@ -3764,6 +3797,7 @@ QLabel#PageHeaderSubtitle {
                                 loader=loader,
                                 new_references=new_refs,
                                 qd_asset_file_from_logs=qd_asset_file_from_logs,
+                                qd_return_value=update_result,
                             )
                             memo_key = self._strip_namespaces_from_name(scene_asset).strip().upper()
                             memo = self.integration_loaded_p4_asset_paths.get(memo_key, {})
