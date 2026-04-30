@@ -3976,16 +3976,10 @@ QLabel#PageHeaderSubtitle {
         self._integration_write_crash_marker("BEFORE P4 CONNECT")
         self._append_integration_log("[INFO] Checking P4 connection...")
         try:
-            self._integration_write_crash_marker("BEFORE import QDTech module")
             from qdHelpers.qdTech.qdTech import QDTech
-            self._integration_write_crash_marker("AFTER import QDTech module")
 
-            self._integration_write_crash_marker("BEFORE P4 reconnect call")
             QDTech.connection.p4.reconnect()
-            self._integration_write_crash_marker("AFTER P4 reconnect call")
-            self._integration_write_crash_marker("BEFORE P4 status update call")
             QDTech.connection.update_status()
-            self._integration_write_crash_marker("AFTER P4 status update call")
             self._integration_write_crash_marker("AFTER P4 CONNECT")
             self._append_integration_log("[INFO] P4 reconnected and status updated.")
             try:
@@ -4041,9 +4035,7 @@ QLabel#PageHeaderSubtitle {
             return result
 
         try:
-            self._integration_write_crash_marker("BEFORE import QDTools modules", asset=asset_name)
             from qdTools.qdAssembly.qdUtils.qdLoad import QDLoad
-            self._integration_write_crash_marker("AFTER import QDTools modules", asset=asset_name)
         except Exception as exc:
             result["critical_error"] = f"qdTools import failed for '{asset_name}': {exc}"
             self._append_integration_log(f"[FAIL] {result['critical_error']}")
@@ -4059,9 +4051,7 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log(f"[INFO] P4 candidate tested: {catalog_name}")
             self._append_integration_log(f"[INFO] Trying {catalog_name}")
             try:
-                self._integration_write_crash_marker("BEFORE QD candidate lookup", asset=asset_name, candidate=catalog_name)
                 loader = QDLoad.by_catalog(catalog_name, category)
-                self._integration_write_crash_marker("AFTER QD candidate lookup", asset=asset_name, candidate=catalog_name)
                 if loader is None:
                     raise RuntimeError("QDLoad.by_catalog returned None")
                 update_callable = getattr(loader, "update_status", None)
@@ -4074,12 +4064,12 @@ QLabel#PageHeaderSubtitle {
                 io_stderr = io.StringIO()
                 with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
                     self._integration_write_crash_marker(
-                        "BEFORE QD asset load call",
+                        "BEFORE QDTOOLS LOAD",
                         asset=asset_name,
                         candidate=catalog_name,
                     )
                     update_result = update_callable(b_recursive=True)
-                self._integration_write_crash_marker("AFTER QD asset load call", asset=asset_name, candidate=catalog_name)
+                self._integration_write_crash_marker("AFTER QDTOOLS LOAD", asset=asset_name)
                 self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
                 qd_log_excerpt = "\n".join(
                     chunk for chunk in [io_stdout.getvalue(), io_stderr.getvalue(), repr(update_result)] if chunk
