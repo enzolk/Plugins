@@ -2105,6 +2105,7 @@ QLabel#PageHeaderSubtitle {
 
         cmds.text(label="Logs / Result", align="left")
         self.ui["integration_logs"] = cmds.textScrollList(allowMultiSelection=False, height=200)
+        self._integration_show_last_crash_diagnostic()
 
         cmds.setParent("..")
         if not qt_header_mode:
@@ -2247,6 +2248,40 @@ QLabel#PageHeaderSubtitle {
     def _append_integration_log(self, message: str) -> None:
         self._append_list_control_item("integration_logs", message)
         self.log("INFO", "Integration", message)
+
+    def _integration_write_crash_marker(self, message: str, **data: Any) -> None:
+        try:
+            import datetime
+
+            path = r"C:\Users\elr\Documents\Test\OutsourceReview_P4_CrashLog.txt"
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            line = f"[{timestamp}] {message}"
+            if data:
+                details = " | ".join(f"{k}={v}" for k, v in data.items())
+                line += " | " + details
+
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            pass
+
+    def _integration_show_last_crash_diagnostic(self) -> None:
+        path = r"C:\Users\elr\Documents\Test\OutsourceReview_P4_CrashLog.txt"
+        try:
+            if not os.path.exists(path):
+                return
+            with open(path, "r", encoding="utf-8") as f:
+                last_lines = f.readlines()[-20:]
+        except Exception:
+            return
+        if not last_lines:
+            return
+        self.add_result("INFO", "Integration", "Last crash diagnostic:")
+        for line in last_lines:
+            self.add_result("INFO", "Integration", line.strip())
 
     def _is_prefixed_catalog_asset(self, catalog_name: str) -> bool:
         return bool(catalog_name and catalog_name.startswith(INTEGRATION_QDTOOLS_PREFIXES))
@@ -3938,12 +3973,14 @@ QLabel#PageHeaderSubtitle {
 
     def _integration_ensure_p4_connection(self) -> bool:
         """Ensure Perforce is reachable before any integration action that loads from P4."""
+        self._integration_write_crash_marker("BEFORE P4 CONNECT")
         self._append_integration_log("[INFO] Checking P4 connection...")
         try:
             from qdHelpers.qdTech.qdTech import QDTech
 
             QDTech.connection.p4.reconnect()
             QDTech.connection.update_status()
+            self._integration_write_crash_marker("AFTER P4 CONNECT")
             self._append_integration_log("[INFO] P4 reconnected and status updated.")
             try:
                 self.add_result("INFO", "Integration", "P4 reconnected and status updated.")
@@ -4008,7 +4045,9 @@ QLabel#PageHeaderSubtitle {
         catalog_candidates = self._integration_catalog_candidates(asset_name)
         result["candidates"] = catalog_candidates[:]
         self._append_integration_log(f"[INFO] Candidates for {asset_name}: {', '.join(catalog_candidates) if catalog_candidates else '<none>'}")
+        self._integration_write_crash_marker("START ASSET LOAD", asset=asset_name)
         for catalog_name in catalog_candidates:
+            self._integration_write_crash_marker("TRY CANDIDATE", candidate=catalog_name)
             self._append_integration_log(f"[INFO] P4 candidate tested: {catalog_name}")
             self._append_integration_log(f"[INFO] Trying {catalog_name}")
             try:
@@ -4024,7 +4063,13 @@ QLabel#PageHeaderSubtitle {
                 io_stdout = io.StringIO()
                 io_stderr = io.StringIO()
                 with redirect_stdout(io_stdout), redirect_stderr(io_stderr):
+                    self._integration_write_crash_marker(
+                        "BEFORE QDTOOLS LOAD",
+                        asset=asset_name,
+                        candidate=catalog_name,
+                    )
                     update_result = update_callable(b_recursive=True)
+                self._integration_write_crash_marker("AFTER QDTOOLS LOAD", asset=asset_name)
                 self._append_integration_log(f"[INFO] QDTools return value: {repr(update_result)}")
                 qd_log_excerpt = "\n".join(
                     chunk for chunk in [io_stdout.getvalue(), io_stderr.getvalue(), repr(update_result)] if chunk
@@ -4035,7 +4080,9 @@ QLabel#PageHeaderSubtitle {
                 new_refs = sorted(refs_after - refs_before)
                 self._append_integration_log(f"[INFO] New Maya references detected: {len(new_refs)}")
                 for ref_path in new_refs:
+                    self._integration_write_crash_marker("BEFORE MAYA IMPORT", asset=asset_name)
                     self._append_integration_log(f"[INFO] New Maya reference: {ref_path}")
+                    self._integration_write_crash_marker("AFTER MAYA IMPORT", asset=asset_name)
 
                 loaded_top_nodes = self._resolve_loaded_roots_with_fallback(
                     scene_asset=asset_name,
@@ -4067,6 +4114,7 @@ QLabel#PageHeaderSubtitle {
                 result["loaded_candidate"] = catalog_name
                 return result
             except Exception as exc:
+                self._integration_write_crash_marker("EXCEPTION", error=str(exc), asset=asset_name)
                 self._append_integration_log(f"[WARN] Candidate {catalog_name} failed: {exc}")
                 self._append_integration_log(traceback.format_exc().rstrip())
                 continue
