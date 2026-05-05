@@ -3279,6 +3279,37 @@ QLabel#PageHeaderSubtitle {
             return os.path.normpath(os.path.join(os.path.dirname(parent_dir), "annexes"))
         return ""
 
+    def _integration_annex_file_matches_asset(self, filename_no_ext: str, asset_base_name: str) -> Tuple[bool, str]:
+        file_base = (filename_no_ext or "").strip().upper()
+        asset_base = (asset_base_name or "").strip().upper()
+        if not file_base or not asset_base:
+            return False, ""
+
+        if file_base == asset_base:
+            return True, "exact"
+        if file_base.startswith(f"{asset_base}_"):
+            return True, "classic"
+
+        technical_suffixes = {"LOW", "HIGH", "BAKE", "FINAL", "LOD0", "LOD1"}
+        file_tokens = [token for token in file_base.split("_") if token]
+        asset_tokens = [token for token in asset_base.split("_") if token]
+        if len(asset_tokens) < 2 or len(file_tokens) < len(asset_tokens):
+            return False, ""
+
+        base_common_tokens = asset_tokens[:-1]
+        variant_token = asset_tokens[-1]
+        if file_tokens[:len(base_common_tokens)] != base_common_tokens:
+            return False, ""
+
+        suffix_tokens = file_tokens[len(base_common_tokens):]
+        while suffix_tokens and suffix_tokens[-1] in technical_suffixes:
+            suffix_tokens = suffix_tokens[:-1]
+
+        if variant_token in suffix_tokens:
+            return True, "grouped"
+
+        return False, ""
+
     def _integration_find_target_qd_nodeprop(self, asset_name: str):
         try:
             from qdTools.qdAssembly.qdUtils.qdFind import QDFind
@@ -3357,24 +3388,24 @@ QLabel#PageHeaderSubtitle {
             candidate_files: List[str] = []
             exact_match_files: List[str] = []
             prefix_match_files: List[str] = []
-            prefix_upper = annex_prefix.upper()
+            grouped_match_files: List[str] = []
             base_name_upper = base_name.upper()
             try:
                 for root, _, files in os.walk(annexes_dir):
                     for file_name in files:
                         normalized_path = os.path.normpath(os.path.join(root, file_name))
-                        file_name_upper = file_name.upper()
                         file_stem_upper = os.path.splitext(file_name)[0].upper()
 
-                        is_prefix_match = file_name_upper.startswith(prefix_upper)
-                        is_exact_match = file_stem_upper == base_name_upper
-
-                        if is_prefix_match or is_exact_match:
+                        is_match, match_type = self._integration_annex_file_matches_asset(file_stem_upper, base_name_upper)
+                        if is_match:
                             candidate_files.append(normalized_path)
-                            if is_prefix_match:
-                                prefix_match_files.append(normalized_path)
-                            if is_exact_match:
+                            if match_type == "exact":
                                 exact_match_files.append(normalized_path)
+                            elif match_type == "classic":
+                                prefix_match_files.append(normalized_path)
+                            elif match_type == "grouped":
+                                grouped_match_files.append(normalized_path)
+                                self._append_integration_log(f"[INFO] Step 09 grouped annex match: {file_name}")
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Step 09 candidate scan failed for '{asset_name}': {exc}")
                 continue
@@ -3383,6 +3414,7 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log(f"[INFO] Step 09 candidate files: {candidate_files}")
             self._append_integration_log(f"[INFO] Step 09 exact-match files: {exact_match_files}")
             self._append_integration_log(f"[INFO] Step 09 prefix-match files: {prefix_match_files}")
+            self._append_integration_log(f"[INFO] Step 09 grouped-match files: {grouped_match_files}")
             if not candidate_files:
                 self._append_integration_log(f"[WARN] Step 09 no candidate files found for base '{base_name}'.")
                 continue
