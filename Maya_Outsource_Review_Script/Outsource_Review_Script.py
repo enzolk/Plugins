@@ -2327,6 +2327,36 @@ QLabel#PageHeaderSubtitle {
             return False
         return node == branch_root or node.startswith(f"{branch_root}|")
 
+    def _integration_normalized_annexe_candidate_name(self, node: str) -> str:
+        return self._strip_namespaces_from_name(self._short_name(node)).strip().upper()
+
+    def _integration_build_main_asset_name_prefixes(self, asset_name: str) -> Set[str]:
+        prefixes: Set[str] = set()
+        normalized = self._strip_namespaces_from_name(asset_name or "").strip().upper()
+        if not normalized:
+            return prefixes
+        prefixes.add(f"{normalized}_")
+        stripped = self._integration_strip_qd_prefix(normalized).strip().upper()
+        if stripped:
+            prefixes.add(f"{stripped}_")
+        return prefixes
+
+    def _integration_is_locator_name(self, normalized_name: str) -> bool:
+        return (
+            normalized_name.startswith("LOCATOR")
+            or "LOCATOR_" in normalized_name
+        )
+
+    def _integration_is_technical_group_name(self, normalized_name: str) -> bool:
+        return (
+            normalized_name.endswith("_MESH")
+            or normalized_name.endswith("_COLLIDE")
+            or normalized_name.endswith("_COLLIDER")
+            or "_MESH_" in normalized_name
+            or "_COLLIDE_" in normalized_name
+            or "_COLLIDER_" in normalized_name
+        )
+
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
@@ -2347,24 +2377,47 @@ QLabel#PageHeaderSubtitle {
                 detected.setdefault(catalog_name, set()).add(node)
 
         annexe_assets: Set[str] = set()
+        main_asset_prefixes_by_source: Dict[str, Set[str]] = {}
+        for source_asset in detected.keys():
+            main_asset_prefixes_by_source[source_asset] = self._integration_build_main_asset_name_prefixes(source_asset)
         for catalog_name, source_nodes in detected.items():
+            main_prefixes = main_asset_prefixes_by_source.get(catalog_name, set())
             for source_node in source_nodes:
                 pending_children = cmds.listRelatives(source_node, children=True, fullPath=True, type="transform") or []
                 while pending_children:
                     child = pending_children.pop()
                     child_catalog = self._extract_catalog_asset_from_name(child)
-                    if not child_catalog or child_catalog == catalog_name:
+                    normalized_candidate = self._integration_normalized_annexe_candidate_name(child)
+                    self._append_integration_log(f"[ANNEXE] candidate checked: {child}")
+                    self._append_integration_log(f"[ANNEXE] normalized candidate name: {normalized_candidate}")
+
+                    if not child_catalog:
+                        self._append_integration_log("[ANNEXE] rejected: no catalog asset name detected")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    if child_catalog.startswith(f"{catalog_name}_"):
-                        # Technical child naming variation of the main asset.
+                    if child_catalog == catalog_name:
+                        self._append_integration_log("[ANNEXE] rejected: same as source main asset")
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                        continue
+                    if any(normalized_candidate.startswith(prefix) for prefix in main_prefixes):
+                        self._append_integration_log("[ANNEXE] rejected: starts with main asset name")
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                        continue
+                    if self._integration_is_locator_name(normalized_candidate):
+                        self._append_integration_log("[ANNEXE] rejected: locator")
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                        continue
+                    if self._integration_is_technical_group_name(normalized_candidate):
+                        self._append_integration_log("[ANNEXE] rejected: technical group")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     if child_catalog not in detected:
+                        self._append_integration_log("[ANNEXE] rejected: unknown catalog asset")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     annexe_assets.add(child_catalog)
                     annexe_sources.setdefault(child_catalog, set()).add(catalog_name)
+                    self._append_integration_log(f"[ANNEXE] accepted annexe: {child_catalog}")
                     pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
 
         self.integration_catalog_assets = sorted(detected.keys())
