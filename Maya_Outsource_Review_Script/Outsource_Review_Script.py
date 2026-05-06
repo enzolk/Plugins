@@ -1827,7 +1827,7 @@ QLabel#PageHeaderSubtitle {
         cmds.setParent("..")
 
         cmds.separator(style="in")
-        cmds.text(label="Step 09 — Bake Readiness", align="left")
+        cmds.text(label="Step 10 — Bake Readiness", align="left")
         self._build_manual_root_selector("bake_ready_high_root_menu", "Select Bake High Root", "bake_high")
         self._build_manual_root_selector("bake_ready_low_root_menu", "Select Bake Low Root", "bake_low")
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
@@ -2089,7 +2089,43 @@ QLabel#PageHeaderSubtitle {
         cmds.setParent("..")
         cmds.separator(style="in")
 
-        cmds.text(label="Step 09 — Add Annexes Automatically", align="left")
+        cmds.text(label="Step 09 — Collider", align="left")
+        cmds.text(
+            label="Create or replace colliders for loaded P4 assets under Main_Assets.",
+            align="left",
+            wordWrap=True,
+        )
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8), (4, "both", 8)])
+        cmds.text(label="Mode", align="left")
+        self.ui["integration_collider_mode_menu"] = cmds.optionMenu()
+        cmds.menuItem(label="All")
+        cmds.menuItem(label="Selected Only")
+        cmds.text(label="Collider Type", align="left")
+        self.ui["integration_collider_type_menu"] = cmds.optionMenu()
+        cmds.menuItem(label="Simple Collider")
+        cmds.menuItem(label="Hull Collider")
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.text(label="Hull Max Vertices", align="left")
+        self.ui["integration_collider_hull_max_vertices"] = cmds.intField(value=32, minValue=4, maxValue=255)
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(
+            label="Create / Replace Colliders",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.integration_create_or_replace_colliders(),
+        )
+        cmds.button(
+            label="Apply Collider Proxy Attributes Only",
+            height=UI_PRIMARY_BUTTON_HEIGHT,
+            backgroundColor=UI_COLOR_BG_ACCENT,
+            command=lambda *_: self.integration_apply_collider_proxy_attributes_only(),
+        )
+        cmds.setParent("..")
+        cmds.separator(style="in")
+
+        cmds.text(label="Step 10 — Add Annexes Automatically", align="left")
         cmds.text(
             label="Automatically find and add annex files for all loaded P4 main assets using their stored .asset paths.",
             align="left",
@@ -3346,16 +3382,151 @@ QLabel#PageHeaderSubtitle {
                 return qd
         return None
 
+    def _integration_get_collider_targets(self, mode_label: str) -> Dict[str, str]:
+        targets: Dict[str, str] = {}
+        all_roots = self._integration_collect_loaded_p4_roots_under_main_assets()
+        if mode_label == "All":
+            for k,v in all_roots.items():
+                if v:
+                    targets[k]=v[0]
+            return targets
+        selected = cmds.ls(selection=True, long=True) or []
+        if not selected:
+            self._append_integration_log("[WARN] Collider step: no asset selected in Selected Only mode.")
+            return {}
+        main_groups = self._integration_find_main_assets_groups()
+        for sel in selected:
+            for base,roots in all_roots.items():
+                root = roots[0] if roots else ""
+                if not root:
+                    continue
+                if sel == root or sel.startswith(root+"|") or root.startswith(sel+"|"):
+                    targets[base]=root
+            if not targets:
+                for mg in main_groups:
+                    if sel.startswith(mg+"|"):
+                        parts = [p for p in sel[len(mg):].split("|") if p]
+                        if parts:
+                            asset_short = self._integration_remove_prefix(parts[0].upper())
+                            if asset_short in all_roots and all_roots[asset_short]:
+                                targets[asset_short]=all_roots[asset_short][0]
+        return targets
+
+    def _integration_find_suffix_group(self, asset_root: str, suffix: str) -> Optional[str]:
+        candidates = [asset_root] + (cmds.listRelatives(asset_root, allDescendents=True, type="transform", fullPath=True) or [])
+        for node in candidates:
+            if self._strip_namespaces_from_name(self._short_name(node)).upper().endswith(suffix.upper()):
+                return node
+        return None
+
+    def _integration_apply_proxy_attrs(self, collider: str) -> None:
+        attrs = {"qdVisible":0,"qdCastShadows":0,"qdReceiveDecals":0,"qdIndexLODGeneration":0,"qdUseSceneZone":0,"qdCollideIsProxy":1,"qdCollideShapeType":6}
+        try:
+            cmds.select(collider, replace=True)
+            mel.eval("AOL_COLLIDE_MESH_PROXY(1);")
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] Proxy MEL failed on {self._short_name(collider)}: {exc}")
+        for a,v in attrs.items():
+            try:
+                if cmds.attributeQuery(a, node=collider, exists=True):
+                    cmds.setAttr(f"{collider}.{a}", v)
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Attr {a} failed on {self._short_name(collider)}: {exc}")
+
+    def integration_create_or_replace_colliders(self) -> None:
+        mode = cmds.optionMenu(self.ui.get("integration_collider_mode_menu"), q=True, value=True) if self.ui.get("integration_collider_mode_menu") else "All"
+        col_type = cmds.optionMenu(self.ui.get("integration_collider_type_menu"), q=True, value=True) if self.ui.get("integration_collider_type_menu") else "Simple Collider"
+        max_v = cmds.intField(self.ui.get("integration_collider_hull_max_vertices"), q=True, value=True) if self.ui.get("integration_collider_hull_max_vertices") else 32
+        targets = self._integration_get_collider_targets(mode)
+        if not targets:
+            self._append_integration_log("[WARN] Collider step: no targets found.")
+            return
+        for base, asset_root in sorted(targets.items()):
+            try:
+                self._append_integration_log(f"[INFO] Collider asset: {base} | mode: {mode} | type: {col_type}")
+                mesh_grp = self._integration_find_suffix_group(asset_root, "_MESH")
+                if not mesh_grp:
+                    self._append_integration_log(f"[WARN] _MESH introuvable: {base}")
+                    continue
+                self._append_integration_log(f"[INFO] _MESH trouvé: {mesh_grp}")
+                collide_grp = self._integration_find_suffix_group(asset_root, "_COLLIDE")
+                if not collide_grp:
+                    coll_name = f"{self._integration_remove_prefix(base)}_COLLIDE"
+                    collide_grp = cmds.createNode("transform", name=coll_name, parent=asset_root)
+                    self._append_integration_log(f"[INFO] _COLLIDE créé: {collide_grp}")
+                else:
+                    self._append_integration_log(f"[INFO] _COLLIDE trouvé: {collide_grp}")
+                for ch in cmds.listRelatives(collide_grp, children=True, fullPath=True) or []:
+                    try: cmds.delete(ch)
+                    except Exception: pass
+                src_meshes = cmds.listRelatives(mesh_grp, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+                src_transforms = sorted(set(cmds.listRelatives(src_meshes, parent=True, fullPath=True) or [])) if src_meshes else []
+                if not src_transforms:
+                    self._append_integration_log(f"[WARN] aucun mesh source sous _MESH: {base}")
+                    continue
+                before = set(cmds.ls(type='transform', long=True) or [])
+                created=[]
+                if col_type == "Simple Collider":
+                    cmds.select(src_transforms, replace=True)
+                    mel.eval("AriBoundingSizePrimitive();")
+                    mel.eval("AriBoundingSizePrimitive_GO(0);")
+                    after = set(cmds.ls(type='transform', long=True) or [])
+                    created = sorted(list(after-before))
+                else:
+                    try:
+                        if not cmds.pluginInfo("DDConvexHull.mll", query=True, loaded=True): cmds.loadPlugin("DDConvexHull.mll")
+                        from qdThirdParty.DDConvexHull.scripts.DDConvexHullUtils import createHull
+                        cmds.select(src_transforms, replace=True)
+                        src = src_transforms[0]
+                        if len(src_transforms)>1:
+                            dups = cmds.duplicate(src_transforms, rr=True) or []
+                            src = cmds.polyUnite(dups, ch=False, mergeUVSets=True, name=f"{self._integration_remove_prefix(base)}_COLLIDE_TMP")[0]
+                        hull_node, hull_shape, result_mesh = createHull(meshname=f"{self._integration_remove_prefix(base)}_COLLIDER")
+                        cmds.setAttr(f"{hull_node}.maxVertices", max(4, min(255, int(max_v))))
+                        created = cmds.ls(result_mesh, long=True) or []
+                        if len(src_transforms)>1 and cmds.objExists(src): cmds.delete(src)
+                    except Exception as exc:
+                        self._append_integration_log(f"[WARN] erreur DDConvexHull: {exc}")
+                if not created:
+                    self._append_integration_log("[WARN] collider créé introuvable")
+                    continue
+                for c in created:
+                    try:
+                        final = cmds.parent(c, collide_grp)[0]
+                    except Exception:
+                        final = c
+                    self._integration_apply_proxy_attrs(final)
+                    self._append_integration_log(f"[INFO] collider reparenté + proxy: {final}")
+            except Exception as exc:
+                self._append_integration_log(f"[WARN] Collider error on {base}: {exc}")
+
+    def integration_apply_collider_proxy_attributes_only(self) -> None:
+        mode = cmds.optionMenu(self.ui.get("integration_collider_mode_menu"), q=True, value=True) if self.ui.get("integration_collider_mode_menu") else "All"
+        targets = self._integration_get_collider_targets(mode)
+        if not targets:
+            self._append_integration_log("[WARN] Collider proxy-only: no targets found.")
+            return
+        for base, root in sorted(targets.items()):
+            collide_grp = self._integration_find_suffix_group(root, "_COLLIDE")
+            if not collide_grp:
+                self._append_integration_log(f"[WARN] _COLLIDE introuvable: {base}")
+                continue
+            meshes = cmds.listRelatives(collide_grp, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+            transforms = sorted(set(cmds.listRelatives(meshes, parent=True, fullPath=True) or []))
+            for t in transforms:
+                self._integration_apply_proxy_attrs(t)
+            self._append_integration_log(f"[INFO] Proxy attrs applied: {base} ({len(transforms)})")
+
     def add_annexes_automatically_to_loaded_p4_assets(self) -> None:
         try:
             from qdTools.qdAssembly.qdUi.qdAssetManager.asset.asset_nodes import AssetDag
             from qdTools.qdAssembly.qdUi.qdAssetManager.managers.manager_annex import AnnexesManager
         except Exception as exc:
-            self._append_integration_log(f"[WARN] qdTools AnnexesManager/AssetDag unavailable. Step 09 aborted. Error: {exc}")
+            self._append_integration_log(f"[WARN] qdTools AnnexesManager/AssetDag unavailable. Step 10 aborted. Error: {exc}")
             return
 
         if not self.integration_loaded_p4_asset_paths:
-            self._append_integration_log("[WARN] Step 09: no loaded P4 asset path memo found. Load assets first (Step 02).")
+            self._append_integration_log("[WARN] Step 10: no loaded P4 asset path memo found. Load assets first (Step 02).")
             return
 
         processed_assets = 0
@@ -3366,24 +3537,24 @@ QLabel#PageHeaderSubtitle {
             memo = self.integration_loaded_p4_asset_paths.get(asset_key, {}) or {}
             asset_name = memo.get("asset_name") or asset_key
             asset_file = memo.get("asset_file") or memo.get("file_path") or memo.get("local_path") or ""
-            self._append_integration_log(f"[INFO] Step 09 asset: {asset_name}")
-            self._append_integration_log(f"[INFO] Step 09 asset path: {asset_file or '<unknown>'}")
+            self._append_integration_log(f"[INFO] Step 10 asset: {asset_name}")
+            self._append_integration_log(f"[INFO] Step 10 asset path: {asset_file or '<unknown>'}")
 
             if not asset_file or asset_file == "<unknown>":
-                self._append_integration_log(f"[WARN] Step 09 no known .asset path for '{asset_name}'.")
+                self._append_integration_log(f"[WARN] Step 10 no known .asset path for '{asset_name}'.")
                 continue
 
             annexes_dir = self._integration_deduce_annexes_directory(asset_file)
-            self._append_integration_log(f"[INFO] Step 09 annexes dir: {annexes_dir or '<unresolved>'}")
+            self._append_integration_log(f"[INFO] Step 10 annexes dir: {annexes_dir or '<unresolved>'}")
             if not annexes_dir or not os.path.isdir(annexes_dir):
-                self._append_integration_log(f"[WARN] Step 09 annexes folder not found for '{asset_name}': {annexes_dir}")
+                self._append_integration_log(f"[WARN] Step 10 annexes folder not found for '{asset_name}': {annexes_dir}")
                 continue
 
             stripped_name = self._integration_strip_qd_prefix(asset_name)
             base_name = stripped_name
             annex_prefix = f"{base_name}_"
-            self._append_integration_log(f"[INFO] Step 09 annex base name: {base_name}")
-            self._append_integration_log(f"[INFO] Step 09 annex prefix: {annex_prefix}")
+            self._append_integration_log(f"[INFO] Step 10 annex base name: {base_name}")
+            self._append_integration_log(f"[INFO] Step 10 annex prefix: {annex_prefix}")
 
             candidate_files: List[str] = []
             exact_match_files: List[str] = []
@@ -3405,30 +3576,30 @@ QLabel#PageHeaderSubtitle {
                                 prefix_match_files.append(normalized_path)
                             elif match_type == "grouped":
                                 grouped_match_files.append(normalized_path)
-                                self._append_integration_log(f"[INFO] Step 09 grouped annex match: {file_name}")
+                                self._append_integration_log(f"[INFO] Step 10 grouped annex match: {file_name}")
             except Exception as exc:
-                self._append_integration_log(f"[WARN] Step 09 candidate scan failed for '{asset_name}': {exc}")
+                self._append_integration_log(f"[WARN] Step 10 candidate scan failed for '{asset_name}': {exc}")
                 continue
 
-            self._append_integration_log(f"[INFO] Step 09 candidates found: {len(candidate_files)}")
-            self._append_integration_log(f"[INFO] Step 09 candidate files: {candidate_files}")
-            self._append_integration_log(f"[INFO] Step 09 exact-match files: {exact_match_files}")
-            self._append_integration_log(f"[INFO] Step 09 prefix-match files: {prefix_match_files}")
-            self._append_integration_log(f"[INFO] Step 09 grouped-match files: {grouped_match_files}")
+            self._append_integration_log(f"[INFO] Step 10 candidates found: {len(candidate_files)}")
+            self._append_integration_log(f"[INFO] Step 10 candidate files: {candidate_files}")
+            self._append_integration_log(f"[INFO] Step 10 exact-match files: {exact_match_files}")
+            self._append_integration_log(f"[INFO] Step 10 prefix-match files: {prefix_match_files}")
+            self._append_integration_log(f"[INFO] Step 10 grouped-match files: {grouped_match_files}")
             if not candidate_files:
-                self._append_integration_log(f"[WARN] Step 09 no candidate files found for base '{base_name}'.")
+                self._append_integration_log(f"[WARN] Step 10 no candidate files found for base '{base_name}'.")
                 continue
 
             try:
                 valid_annexes, rejected = AnnexesManager.validate_annexes(candidate_files)
             except Exception as exc:
-                self._append_integration_log(f"[WARN] Step 09 annex validation failed for '{asset_name}': {exc}")
+                self._append_integration_log(f"[WARN] Step 10 annex validation failed for '{asset_name}': {exc}")
                 continue
 
-            self._append_integration_log(f"[INFO] Step 09 valid annexes: {len(valid_annexes)}")
-            self._append_integration_log(f"[INFO] Step 09 rejected annexes: {len(rejected)}")
+            self._append_integration_log(f"[INFO] Step 10 valid annexes: {len(valid_annexes)}")
+            self._append_integration_log(f"[INFO] Step 10 rejected annexes: {len(rejected)}")
             if rejected:
-                self._append_integration_log(f"[INFO] Step 09 rejected list: {rejected}")
+                self._append_integration_log(f"[INFO] Step 10 rejected list: {rejected}")
             rejected_candidates: List[str] = []
             for rejected_item in rejected or []:
                 if isinstance(rejected_item, str):
@@ -3439,15 +3610,15 @@ QLabel#PageHeaderSubtitle {
                         rejected_candidates.append(rejected_path)
                     else:
                         rejected_candidates.append(str(rejected_item))
-            self._append_integration_log(f"[INFO] Step 09 rejected by AnnexesManager: {rejected_candidates}")
+            self._append_integration_log(f"[INFO] Step 10 rejected by AnnexesManager: {rejected_candidates}")
 
             if not valid_annexes:
-                self._append_integration_log(f"[WARN] Step 09 no valid annexes for '{asset_name}'.")
+                self._append_integration_log(f"[WARN] Step 10 no valid annexes for '{asset_name}'.")
                 continue
 
             target_qd = self._integration_find_target_qd_nodeprop(asset_name)
             if target_qd is None:
-                self._append_integration_log(f"[WARN] Step 09 QDNodeProp not found for '{asset_name}'.")
+                self._append_integration_log(f"[WARN] Step 10 QDNodeProp not found for '{asset_name}'.")
                 continue
 
             try:
@@ -3456,13 +3627,13 @@ QLabel#PageHeaderSubtitle {
                 processed_assets += 1
                 added_assets += 1
                 total_valid_annexes += len(valid_annexes)
-                self._append_integration_log(f"[OK] Step 09 annexes added for '{asset_name}': {len(valid_annexes)}")
+                self._append_integration_log(f"[OK] Step 10 annexes added for '{asset_name}': {len(valid_annexes)}")
             except Exception as exc:
-                self._append_integration_log(f"[WARN] Step 09 add_annexes failed for '{asset_name}': {exc}")
+                self._append_integration_log(f"[WARN] Step 10 add_annexes failed for '{asset_name}': {exc}")
 
-        self._append_integration_log(f"[INFO] Step 09 summary - assets with annexes added: {added_assets}")
-        self._append_integration_log(f"[INFO] Step 09 summary - total valid annexes added: {total_valid_annexes}")
-        self._append_integration_log(f"[INFO] Step 09 summary - processed loaded assets: {processed_assets}")
+        self._append_integration_log(f"[INFO] Step 10 summary - assets with annexes added: {added_assets}")
+        self._append_integration_log(f"[INFO] Step 10 summary - total valid annexes added: {total_valid_annexes}")
+        self._append_integration_log(f"[INFO] Step 10 summary - processed loaded assets: {processed_assets}")
 
     def _integration_resolve_mesh_group_from_selection(
         self, selected_node: str, selection_is_mesh: bool
