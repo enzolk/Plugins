@@ -2111,9 +2111,8 @@ QLabel#PageHeaderSubtitle {
         cmds.text(label="Hull Max Vertices", align="left")
         self.ui["integration_collider_hull_vertices"] = cmds.intField(value=32, minValue=4, maxValue=128)
         cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
-        cmds.button(label="Create Simple Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.create_colliders_for_loaded_p4_assets(mode="simple"))
-        cmds.button(label="Create Convex Hull Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.create_colliders_for_loaded_p4_assets(mode="hull"))
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.button(label="Create Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.create_colliders_for_loaded_p4_assets())
         cmds.button(label="Apply Proxy Attributes To Existing Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.apply_proxy_attributes_to_existing_colliders())
         cmds.setParent("..")
         cmds.separator(style="in")
@@ -3431,7 +3430,33 @@ QLabel#PageHeaderSubtitle {
                     pass
         return removed
 
-    def create_colliders_for_loaded_p4_assets(self, mode: str = "simple") -> None:
+    def _integration_get_collider_mode(self) -> str:
+        menu = self.ui.get("integration_collider_mode_menu")
+        if menu and cmds.control(menu, exists=True):
+            value = cmds.optionMenu(menu, q=True, value=True)
+            if value == "Convex Hull":
+                return "hull"
+        return "simple"
+
+    def _integration_ensure_qds_collide_shader(self) -> str:
+        mat = "QDS_COLLIDE"
+        sg = f"{mat}SG"
+        if not cmds.objExists(mat):
+            mat = cmds.shadingNode("qdLitShader", asShader=True, name=mat)
+        try:
+            cmds.setAttr(f"{mat}.baseColor", 1, 1, 0, type="double3")
+        except Exception:
+            pass
+        if not cmds.objExists(sg):
+            sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name=sg)
+        try:
+            cmds.connectAttr(f"{mat}.outColor", f"{sg}.surfaceShader", force=True)
+        except Exception:
+            pass
+        return sg
+
+    def create_colliders_for_loaded_p4_assets(self) -> None:
+        mode = self._integration_get_collider_mode()
         scope = self._integration_get_collider_scope()
         hull_vertices = int(cmds.intField(self.ui.get("integration_collider_hull_vertices"), q=True, value=True)) if self.ui.get("integration_collider_hull_vertices") else 32
         targets = self._integration_collect_target_assets_for_collider(scope)
@@ -3467,6 +3492,34 @@ QLabel#PageHeaderSubtitle {
                     for _ in mesh_transforms:
                         hull_node, _, _ = createHull(meshname=f"{asset_short}_COLLIDER")
                         cmds.setAttr(f"{hull_node}.maxVertices", hull_vertices)
+                        result_mesh = (cmds.ls(hull_node, long=True) or [hull_node])[0]
+                        qds_sg = self._integration_ensure_qds_collide_shader()
+                        try:
+                            cmds.sets(result_mesh, edit=True, forceElement=qds_sg)
+                        except Exception:
+                            pass
+                        try:
+                            cmds.bakePartialHistory(result_mesh, prePostDeformers=True)
+                        except Exception:
+                            pass
+                        for attr, val in (
+                            ("qdVisible", 0),
+                            ("qdCastShadows", 0),
+                            ("qdReceiveDecals", 0),
+                            ("qdIndexLODGeneration", 0),
+                            ("qdUseSceneZone", 0),
+                            ("qdCollideIsProxy", 1),
+                            ("qdCollideShapeType", 6),
+                        ):
+                            try:
+                                cmds.setAttr(f"{result_mesh}.{attr}", val)
+                            except Exception:
+                                pass
+                        try:
+                            cmds.select(result_mesh, r=True)
+                            mel.eval('AOL_COLLIDE_MESH_PROXY(1);')
+                        except Exception:
+                            pass
                 else:
                     mel.eval('AriBoundingSizePrimitive();')
                     mel.eval('AriBoundingSizePrimitive_GO(0);')
