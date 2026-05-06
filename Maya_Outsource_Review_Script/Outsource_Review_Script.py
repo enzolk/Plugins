@@ -3414,13 +3414,8 @@ QLabel#PageHeaderSubtitle {
 
     def _integration_find_suffix_group(self, asset_root: str, suffix: str) -> Optional[str]:
         candidates = [asset_root] + (cmds.listRelatives(asset_root, allDescendents=True, type="transform", fullPath=True) or [])
-        expected_suffix = suffix.upper()
-        asset_scope = f"{asset_root}|"
         for node in candidates:
-            if node != asset_root and not node.startswith(asset_scope):
-                continue
-            short = self._strip_namespaces_from_name(self._short_name(node)).upper()
-            if short.endswith(expected_suffix):
+            if self._strip_namespaces_from_name(self._short_name(node)).upper().endswith(suffix.upper()):
                 return node
         return None
 
@@ -3460,11 +3455,9 @@ QLabel#PageHeaderSubtitle {
                         f"[WARN] No existing _COLLIDE group found for asset {base}. Skipping collider generation."
                     )
                     continue
-                collide_children = cmds.listRelatives(collide_grp, children=True, fullPath=True) or []
-                self._append_integration_log(f"[INFO] Found existing _COLLIDE group, empty={len(collide_children) == 0}: {collide_grp}")
-                self._append_integration_log(f"[INFO] Using existing _COLLIDE group as final parent: {collide_grp}")
+                self._append_integration_log(f"[INFO] Original collide group preserved: {collide_grp}")
                 removed_children = 0
-                for ch in collide_children:
+                for ch in cmds.listRelatives(collide_grp, children=True, fullPath=True) or []:
                     try:
                         cmds.delete(ch)
                         removed_children += 1
@@ -3506,35 +3499,21 @@ QLabel#PageHeaderSubtitle {
                 for c in created:
                     if not cmds.objExists(c):
                         continue
-                    candidate_transforms = []
-                    if cmds.nodeType(c) == "transform":
-                        candidate_transforms.append(c)
-                    candidate_transforms.extend(cmds.listRelatives(c, allDescendents=True, type="transform", fullPath=True) or [])
-                    for transform in sorted(set(candidate_transforms)):
-                        if not cmds.objExists(transform) or transform in processed:
+                    generated_meshes = cmds.listRelatives(c, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
+                    if cmds.nodeType(c) == "transform" and cmds.listRelatives(c, shapes=True, noIntermediate=True, fullPath=True):
+                        generated_meshes.extend(cmds.listRelatives(c, shapes=True, noIntermediate=True, fullPath=True) or [])
+                    for mesh in sorted(set(generated_meshes)):
+                        mesh_parent = (cmds.listRelatives(mesh, parent=True, fullPath=True) or [None])[0]
+                        if not mesh_parent or mesh_parent in processed:
                             continue
-                        direct_shapes = cmds.listRelatives(transform, shapes=True, noIntermediate=True, type="mesh", fullPath=True) or []
-                        if not direct_shapes:
-                            continue
-                        processed.add(transform)
-                        self._append_integration_log(f"[INFO] Generated collider transform: {transform}")
-                        parent_before = (cmds.listRelatives(transform, parent=True, fullPath=True) or [None])[0]
+                        processed.add(mesh_parent)
+                        self._append_integration_log(f"[INFO] New collider generated: {mesh_parent}")
                         try:
-                            final = cmds.parent(transform, collide_grp)[0]
+                            final = cmds.parent(mesh_parent, collide_grp)[0]
                         except Exception:
-                            final = transform
-                        self._append_integration_log(f"[INFO] Reparented mesh collider under existing _COLLIDE group: {final}")
+                            final = mesh_parent
+                        self._append_integration_log(f"[INFO] New collider reparented under original collide group: {final}")
                         self._integration_apply_proxy_attrs(final)
-                        if parent_before and cmds.objExists(parent_before):
-                            try:
-                                has_mesh_shape = bool(cmds.listRelatives(parent_before, shapes=True, noIntermediate=True, type="mesh", fullPath=True) or [])
-                                has_children = bool(cmds.listRelatives(parent_before, children=True, fullPath=True) or [])
-                                if (not has_mesh_shape) and (not has_children):
-                                    removed_path = parent_before
-                                    cmds.delete(parent_before)
-                                    self._append_integration_log(f"[INFO] Removed temporary intermediate group: {removed_path}")
-                            except Exception:
-                                pass
                 for c in created:
                     if not cmds.objExists(c):
                         continue
