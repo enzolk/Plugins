@@ -2255,6 +2255,8 @@ QLabel#PageHeaderSubtitle {
         if not cleaned or "_" not in cleaned:
             return None
         cleaned_upper = cleaned.upper()
+        if cleaned_upper.startswith("LOCATOR"):
+            return None
         if cleaned_upper.endswith(("_HIGH", "_LOW", "_PLACEHOLDER")):
             return None
         if not re.fullmatch(r"[A-Z0-9_]+_[A-Z]", cleaned_upper):
@@ -2330,6 +2332,7 @@ QLabel#PageHeaderSubtitle {
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
+        self._clear_list_control("integration_logs")
         main_assets_groups = self._integration_find_main_assets_groups()
         p4_main_assets: Set[str] = set()
         source_assets: Set[str] = set()
@@ -2356,8 +2359,14 @@ QLabel#PageHeaderSubtitle {
                     if not child_catalog or child_catalog == catalog_name:
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    if child_catalog.startswith(f"{catalog_name}_"):
-                        # Technical child naming variation of the main asset.
+                    if child_catalog.startswith("LOCATOR"):
+                        self._append_integration_log(f"[CLASSIFY SKIP] Locator ignored: {child_catalog}")
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                        continue
+                    if self._integration_is_child_variant_of_asset(child_catalog, catalog_name):
+                        self._append_integration_log(
+                            f"[CLASSIFY SKIP] Child variant ignored: {child_catalog} under {catalog_name}"
+                        )
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     if child_catalog not in detected:
@@ -2365,6 +2374,7 @@ QLabel#PageHeaderSubtitle {
                         continue
                     annexe_assets.add(child_catalog)
                     annexe_sources.setdefault(child_catalog, set()).add(catalog_name)
+                    self._append_integration_log(f"[CLASSIFY] Annexe Asset: {child_catalog} linked to {catalog_name}")
                     pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
 
         self.integration_catalog_assets = sorted(detected.keys())
@@ -2373,7 +2383,6 @@ QLabel#PageHeaderSubtitle {
         self.integration_detection_sources = detected
         self.integration_annexe_sources = annexe_sources
         self._refresh_integration_catalog_list_ui()
-        self._clear_list_control("integration_logs")
 
         for p4_asset in sorted(p4_main_assets):
             self._append_integration_log(
@@ -2430,6 +2439,18 @@ QLabel#PageHeaderSubtitle {
             if cleaned.startswith(prefix):
                 return cleaned[len(prefix):]
         return cleaned
+
+    def _integration_is_child_variant_of_asset(self, child_catalog: str, parent_catalog: str) -> bool:
+        child = self._integration_remove_prefix(child_catalog)
+        parent = self._integration_remove_prefix(parent_catalog)
+
+        if not child or not parent:
+            return False
+        if child == parent:
+            return True
+        if child.startswith(f"{parent}_"):
+            return True
+        return False
 
     def _integration_best_asset_root(self, nodes: List[str]) -> Optional[str]:
         existing = [node for node in nodes if node and cmds.objExists(node)]
