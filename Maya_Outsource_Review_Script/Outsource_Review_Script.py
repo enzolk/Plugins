@@ -3451,19 +3451,14 @@ QLabel#PageHeaderSubtitle {
                 self._append_integration_log(f"[INFO] _MESH trouvé: {mesh_grp}")
                 collide_grp = self._integration_find_suffix_group(asset_root, "_COLLIDE")
                 if not collide_grp:
-                    self._append_integration_log(
-                        f"[WARN] No existing _COLLIDE group found for asset {base}. Skipping collider generation."
-                    )
-                    continue
-                self._append_integration_log(f"[INFO] Original collide group preserved: {collide_grp}")
-                removed_children = 0
+                    coll_name = f"{self._integration_remove_prefix(base)}_COLLIDE"
+                    collide_grp = cmds.createNode("transform", name=coll_name, parent=asset_root)
+                    self._append_integration_log(f"[INFO] _COLLIDE créé: {collide_grp}")
+                else:
+                    self._append_integration_log(f"[INFO] _COLLIDE trouvé: {collide_grp}")
                 for ch in cmds.listRelatives(collide_grp, children=True, fullPath=True) or []:
-                    try:
-                        cmds.delete(ch)
-                        removed_children += 1
-                    except Exception:
-                        pass
-                self._append_integration_log(f"[INFO] Old collider children removed: {removed_children}")
+                    try: cmds.delete(ch)
+                    except Exception: pass
                 src_meshes = cmds.listRelatives(mesh_grp, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
                 src_transforms = sorted(set(cmds.listRelatives(src_meshes, parent=True, fullPath=True) or [])) if src_meshes else []
                 if not src_transforms:
@@ -3495,38 +3490,13 @@ QLabel#PageHeaderSubtitle {
                 if not created:
                     self._append_integration_log("[WARN] collider créé introuvable")
                     continue
-                processed = set()
                 for c in created:
-                    if not cmds.objExists(c):
-                        continue
-                    generated_meshes = cmds.listRelatives(c, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                    if cmds.nodeType(c) == "transform" and cmds.listRelatives(c, shapes=True, noIntermediate=True, fullPath=True):
-                        generated_meshes.extend(cmds.listRelatives(c, shapes=True, noIntermediate=True, fullPath=True) or [])
-                    for mesh in sorted(set(generated_meshes)):
-                        mesh_parent = (cmds.listRelatives(mesh, parent=True, fullPath=True) or [None])[0]
-                        if not mesh_parent or mesh_parent in processed:
-                            continue
-                        processed.add(mesh_parent)
-                        self._append_integration_log(f"[INFO] New collider generated: {mesh_parent}")
-                        try:
-                            final = cmds.parent(mesh_parent, collide_grp)[0]
-                        except Exception:
-                            final = mesh_parent
-                        self._append_integration_log(f"[INFO] New collider reparented under original collide group: {final}")
-                        self._integration_apply_proxy_attrs(final)
-                for c in created:
-                    if not cmds.objExists(c):
-                        continue
                     try:
-                        short_name = self._strip_namespaces_from_name(self._short_name(c)).upper()
-                        if (
-                            c != collide_grp
-                            and (short_name.endswith("_COLLIDE") or short_name.endswith("_COLLIDER"))
-                            and not (cmds.listRelatives(c, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or [])
-                        ):
-                            cmds.delete(c)
+                        final = cmds.parent(c, collide_grp)[0]
                     except Exception:
-                        pass
+                        final = c
+                    self._integration_apply_proxy_attrs(final)
+                    self._append_integration_log(f"[INFO] collider reparenté + proxy: {final}")
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Collider error on {base}: {exc}")
 
