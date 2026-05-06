@@ -3456,16 +3456,9 @@ QLabel#PageHeaderSubtitle {
                     self._append_integration_log(f"[INFO] _COLLIDE créé: {collide_grp}")
                 else:
                     self._append_integration_log(f"[INFO] _COLLIDE trouvé: {collide_grp}")
-                self._append_integration_log(f"[INFO] Collide group preserved: {self._short_name(collide_grp)}")
-                old_children = cmds.listRelatives(collide_grp, children=True, fullPath=True) or []
-                removed_children = 0
-                for ch in old_children:
-                    try:
-                        cmds.delete(ch)
-                        removed_children += 1
-                    except Exception:
-                        pass
-                self._append_integration_log(f"[INFO] Old children removed: {removed_children}")
+                for ch in cmds.listRelatives(collide_grp, children=True, fullPath=True) or []:
+                    try: cmds.delete(ch)
+                    except Exception: pass
                 src_meshes = cmds.listRelatives(mesh_grp, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
                 src_transforms = sorted(set(cmds.listRelatives(src_meshes, parent=True, fullPath=True) or [])) if src_meshes else []
                 if not src_transforms:
@@ -3497,37 +3490,13 @@ QLabel#PageHeaderSubtitle {
                 if not created:
                     self._append_integration_log("[WARN] collider créé introuvable")
                     continue
-                collider_nodes = []
-                for node in created:
-                    if not cmds.objExists(node):
-                        continue
-                    mesh_shapes = cmds.listRelatives(node, shapes=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                    if mesh_shapes:
-                        collider_nodes.append(node)
-                        continue
-                    descendant_meshes = cmds.listRelatives(node, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                    if descendant_meshes:
-                        collider_nodes.extend(cmds.listRelatives(descendant_meshes, parent=True, fullPath=True) or [])
-                collider_nodes = sorted(set(collider_nodes))
-                if not collider_nodes:
-                    self._append_integration_log("[WARN] collider mesh transform introuvable")
-                    continue
-                desired_child_name = f"{self._integration_remove_prefix(base)}_COLLIDER"
-                for collider_node in collider_nodes:
+                for c in created:
                     try:
-                        final = cmds.parent(collider_node, collide_grp)[0]
+                        final = cmds.parent(c, collide_grp)[0]
                     except Exception:
-                        final = collider_node
-                    clean_name = self._strip_namespaces_from_name(self._short_name(final))
-                    if clean_name != desired_child_name:
-                        try:
-                            final = cmds.rename(final, desired_child_name)
-                        except Exception:
-                            pass
-                    self._append_integration_log(f"[INFO] Collider child created: {self._short_name(final)}")
-                    self._append_integration_log(f"[INFO] Collider child parented under: {self._short_name(collide_grp)}")
+                        final = c
                     self._integration_apply_proxy_attrs(final)
-                    self._append_integration_log("[INFO] Proxy applied to collider child only")
+                    self._append_integration_log(f"[INFO] collider reparenté + proxy: {final}")
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Collider error on {base}: {exc}")
 
