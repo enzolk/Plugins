@@ -3600,12 +3600,23 @@ QLabel#PageHeaderSubtitle {
                     continue
                 after = set(cmds.ls(type='transform', long=True) or [])
                 created_nodes = [n for n in sorted(after-before) if cmds.listRelatives(n, shapes=True, type='mesh', fullPath=True)]
-                for n in created_nodes:
+                mesh_group_short = self._strip_namespaces_from_name(self._short_name(mesh_group))
+                if mesh_group_short.endswith("_MESH"):
+                    collider_base_name = mesh_group_short[:-5] + "_COLLIDER"
+                else:
+                    collider_base_name = mesh_group_short + "_COLLIDER"
+                multi_colliders = len(created_nodes) > 1
+                for index, n in enumerate(created_nodes, start=1):
+                    desired_name = collider_base_name if not multi_colliders else f"{collider_base_name}_{index:02d}"
                     try:
-                        cmds.parent(n, collide_group)
+                        n = cmds.rename(n, desired_name)
+                    except Exception as exc:
+                        self._append_integration_log(f"[WARN] Step 09 renommage collider échoué ({n} -> {desired_name}): {exc}")
+                    try:
+                        n = cmds.parent(n, collide_group)[0]
                         new_nodes.append(n)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self._append_integration_log(f"[WARN] Step 09 reparent collider échoué ({n}): {exc}")
                 if created_nodes:
                     self._append_integration_log(f"[INFO] Step 09 reparent sous _COLLIDE: {'OK' if len(new_nodes)==len(created_nodes) else 'FAIL'}")
                     try:
