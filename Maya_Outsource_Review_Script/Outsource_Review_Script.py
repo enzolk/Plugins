@@ -2330,20 +2330,22 @@ QLabel#PageHeaderSubtitle {
     def _integration_normalized_annexe_candidate_name(self, node: str) -> str:
         return self._strip_namespaces_from_name(self._short_name(node)).strip().upper()
 
-    def _integration_build_main_asset_base_names(self, asset_name: str) -> Set[str]:
-        base_names: Set[str] = set()
+    def _integration_build_main_asset_name_prefixes(self, asset_name: str) -> Set[str]:
+        prefixes: Set[str] = set()
         normalized = self._strip_namespaces_from_name(asset_name or "").strip().upper()
         if not normalized:
-            return base_names
-        base_names.add(normalized)
+            return prefixes
+        prefixes.add(f"{normalized}_")
         stripped = self._integration_strip_qd_prefix(normalized).strip().upper()
         if stripped:
-            base_names.add(stripped)
-        return base_names
+            prefixes.add(f"{stripped}_")
+        return prefixes
 
-    def _integration_is_locator_name(self, name: str) -> bool:
-        clean = self._strip_namespaces_from_name(name or "").strip().lower()
-        return clean.startswith("locator")
+    def _integration_is_locator_name(self, normalized_name: str) -> bool:
+        return (
+            normalized_name.startswith("LOCATOR")
+            or "LOCATOR_" in normalized_name
+        )
 
     def _integration_is_technical_group_name(self, normalized_name: str) -> bool:
         return (
@@ -2356,7 +2358,6 @@ QLabel#PageHeaderSubtitle {
         )
 
     def detect_catalog_assets_for_integration(self) -> List[str]:
-        self._clear_list_control("integration_logs")
         detected: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
         main_assets_groups = self._integration_find_main_assets_groups()
@@ -2367,12 +2368,6 @@ QLabel#PageHeaderSubtitle {
         for node in transforms:
             if not cmds.objExists(node):
                 continue
-            normalized_candidate = self._integration_normalized_annexe_candidate_name(node)
-            self._append_integration_log(f"[DEBUG] candidate checked: {node}")
-            self._append_integration_log(f"[DEBUG] normalized candidate name: {normalized_candidate}")
-            if self._integration_is_locator_name(node):
-                self._append_integration_log(f"[DEBUG] Reject main candidate {normalized_candidate}: locator name")
-                continue
             catalog_name = self._extract_catalog_asset_from_name(node)
             if catalog_name:
                 if self._integration_is_under_main_assets(node, main_assets_groups):
@@ -2380,27 +2375,22 @@ QLabel#PageHeaderSubtitle {
                     continue
                 source_assets.add(catalog_name)
                 detected.setdefault(catalog_name, set()).add(node)
-                self._append_integration_log(f"[DEBUG] Accept main asset {catalog_name}")
-
-        main_base_names: Set[str] = set()
-        for main_asset in detected.keys():
-            main_base_names.update(self._integration_build_main_asset_base_names(main_asset))
 
         annexe_assets: Set[str] = set()
+        main_asset_prefixes_by_source: Dict[str, Set[str]] = {}
+        for source_asset in detected.keys():
+            main_asset_prefixes_by_source[source_asset] = self._integration_build_main_asset_name_prefixes(source_asset)
         for catalog_name, source_nodes in detected.items():
+            main_prefixes = main_asset_prefixes_by_source.get(catalog_name, set())
             for source_node in source_nodes:
                 pending_children = cmds.listRelatives(source_node, children=True, fullPath=True, type="transform") or []
                 while pending_children:
                     child = pending_children.pop()
                     child_catalog = self._extract_catalog_asset_from_name(child)
                     normalized_candidate = self._integration_normalized_annexe_candidate_name(child)
-                    self._append_integration_log(f"[DEBUG] candidate checked: {child}")
-                    self._append_integration_log(f"[DEBUG] normalized candidate name: {normalized_candidate}")
+                    self._append_integration_log(f"[ANNEXE] candidate checked: {child}")
+                    self._append_integration_log(f"[ANNEXE] normalized candidate name: {normalized_candidate}")
 
-                    if self._integration_is_locator_name(child):
-                        self._append_integration_log(f"[DEBUG] Reject annexe candidate {normalized_candidate}: locator name")
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
-                        continue
                     if not child_catalog:
                         self._append_integration_log("[ANNEXE] rejected: no catalog asset name detected")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
@@ -2409,9 +2399,12 @@ QLabel#PageHeaderSubtitle {
                         self._append_integration_log("[ANNEXE] rejected: same as source main asset")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    if any(normalized_candidate == main_name or normalized_candidate.startswith(main_name + "_") for main_name in main_base_names):
-                        matched_main = next((main_name for main_name in sorted(main_base_names) if normalized_candidate == main_name or normalized_candidate.startswith(main_name + "_")), "")
-                        self._append_integration_log(f"[DEBUG] Reject annexe candidate {normalized_candidate}: starts with main asset {matched_main}")
+                    if any(normalized_candidate.startswith(prefix) for prefix in main_prefixes):
+                        self._append_integration_log("[ANNEXE] rejected: starts with main asset name")
+                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                        continue
+                    if self._integration_is_locator_name(normalized_candidate):
+                        self._append_integration_log("[ANNEXE] rejected: locator")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     if self._integration_is_technical_group_name(normalized_candidate):
@@ -2424,7 +2417,7 @@ QLabel#PageHeaderSubtitle {
                         continue
                     annexe_assets.add(child_catalog)
                     annexe_sources.setdefault(child_catalog, set()).add(catalog_name)
-                    self._append_integration_log(f"[DEBUG] Accept annexe {child_catalog}")
+                    self._append_integration_log(f"[ANNEXE] accepted annexe: {child_catalog}")
                     pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
 
         self.integration_catalog_assets = sorted(detected.keys())
@@ -2433,6 +2426,7 @@ QLabel#PageHeaderSubtitle {
         self.integration_detection_sources = detected
         self.integration_annexe_sources = annexe_sources
         self._refresh_integration_catalog_list_ui()
+        self._clear_list_control("integration_logs")
 
         for p4_asset in sorted(p4_main_assets):
             self._append_integration_log(
