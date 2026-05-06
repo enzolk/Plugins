@@ -3438,6 +3438,98 @@ QLabel#PageHeaderSubtitle {
                 return "hull"
         return "simple"
 
+
+    def _integration_create_convex_hull_from_source(self, source: str, hull_vertices: int) -> str:
+        plugin = "DDConvexHull.mll"
+
+        if not cmds.pluginInfo(plugin, query=True, loaded=True):
+            cmds.loadPlugin(plugin)
+
+        cmds.select(source, replace=True)
+
+        name = source.split("|")[-1].split(":")[-1].split(".")[0]
+
+        from qdThirdParty.DDConvexHull.scripts.DDConvexHullUtils import createHull
+
+        hull_node, hull_shape, result_mesh = createHull(
+            meshname=f"{name}_COLLIDER"
+        )
+
+        cmds.setAttr(f"{hull_node}.maxVertices", hull_vertices)
+
+        result_mesh = cmds.ls(result_mesh, long=True)[0]
+
+        mat = "QDS_COLLIDE"
+        sg = f"{mat}SG"
+
+        if not cmds.objExists(mat):
+            mat = cmds.shadingNode(
+                "qdLitShader",
+                name=mat,
+                asShader=True
+            )
+
+            cmds.setAttr(
+                f"{mat}.baseColor",
+                1,
+                1,
+                0,
+                type="double3"
+            )
+
+        if not cmds.objExists(sg):
+            sg = cmds.sets(
+                renderable=True,
+                noSurfaceShader=True,
+                empty=True,
+                name=sg
+            )
+
+        if not cmds.isConnected(
+            f"{mat}.outColor",
+            f"{sg}.surfaceShader"
+        ):
+            cmds.connectAttr(
+                f"{mat}.outColor",
+                f"{sg}.surfaceShader",
+                force=True
+            )
+
+        cmds.sets(
+            result_mesh,
+            edit=True,
+            forceElement=sg
+        )
+
+        cmds.bakePartialHistory(
+            result_mesh,
+            prePostDeformers=True
+        )
+
+        attrs = {
+            "qdVisible": 0,
+            "qdCastShadows": 0,
+            "qdReceiveDecals": 0,
+            "qdIndexLODGeneration": 0,
+            "qdUseSceneZone": 0,
+            "qdCollideIsProxy": 1,
+            "qdCollideShapeType": 6,
+        }
+
+        for attr, value in attrs.items():
+            if cmds.attributeQuery(attr, node=result_mesh, exists=True):
+                cmds.setAttr(f"{result_mesh}.{attr}", value)
+
+        cmds.select(result_mesh, replace=True)
+
+        self._append_integration_log(f"[INFO] Step 09 Hull source: {source}")
+        self._append_integration_log(f"[INFO] Step 09 Hull node créé: {hull_node}")
+        self._append_integration_log(f"[INFO] Step 09 Hull result_mesh créé: {result_mesh}")
+        self._append_integration_log(f"[INFO] Step 09 Hull vertices appliqué: {hull_vertices}")
+        self._append_integration_log(f"[INFO] Step 09 Hull shader assigné: {sg}")
+
+        return result_mesh
+
     def _integration_ensure_qds_collide_shader(self) -> str:
         mat = "QDS_COLLIDE"
         sg = f"{mat}SG"
@@ -3483,69 +3575,51 @@ QLabel#PageHeaderSubtitle {
                 continue
             removed = self._integration_remove_child_colliders(collide_group)
             self._append_integration_log(f"[INFO] Step 09 anciens colliders supprimés: {removed}")
-            before = set(cmds.ls(type='transform', long=True) or [])
-            cmds.select(mesh_transforms, r=True)
-            try:
-                if mode == 'hull':
-                    cmds.loadPlugin('DDConvexHull.mll', quiet=True)
-                    from qdThirdParty.DDConvexHull.scripts.DDConvexHullUtils import createHull
-                    for _ in mesh_transforms:
-                        hull_node, _, _ = createHull(meshname=f"{asset_short}_COLLIDER")
-                        cmds.setAttr(f"{hull_node}.maxVertices", hull_vertices)
-                        result_mesh = (cmds.ls(hull_node, long=True) or [hull_node])[0]
-                        qds_sg = self._integration_ensure_qds_collide_shader()
-                        try:
-                            cmds.sets(result_mesh, edit=True, forceElement=qds_sg)
-                        except Exception:
-                            pass
-                        try:
-                            cmds.bakePartialHistory(result_mesh, prePostDeformers=True)
-                        except Exception:
-                            pass
-                        for attr, val in (
-                            ("qdVisible", 0),
-                            ("qdCastShadows", 0),
-                            ("qdReceiveDecals", 0),
-                            ("qdIndexLODGeneration", 0),
-                            ("qdUseSceneZone", 0),
-                            ("qdCollideIsProxy", 1),
-                            ("qdCollideShapeType", 6),
-                        ):
-                            try:
-                                cmds.setAttr(f"{result_mesh}.{attr}", val)
-                            except Exception:
-                                pass
-                        try:
-                            cmds.select(result_mesh, r=True)
-                            mel.eval('AOL_COLLIDE_MESH_PROXY(1);')
-                        except Exception:
-                            pass
-                else:
+            new_nodes = []
+            if mode == 'hull':
+                for source in mesh_transforms:
+                    try:
+                        result_mesh = self._integration_create_convex_hull_from_source(source, hull_vertices)
+                        cmds.parent(result_mesh, collide_group)
+                        self._append_integration_log(f"[INFO] Step 09 Hull reparent sous _COLLIDE: {result_mesh} -> {collide_group}")
+                        cmds.select(result_mesh, replace=True)
+                        mel.eval("AOL_COLLIDE_MESH_PROXY(1);")
+                        self._append_integration_log(f"[INFO] Step 09 Hull AOL_COLLIDE_MESH_PROXY appliqué: {result_mesh}")
+                        new_nodes.append(result_mesh)
+                    except Exception as exc:
+                        self._append_integration_log(f"[WARN] Step 09 création hull échouée ({source}): {exc}")
+                        continue
+            else:
+                before = set(cmds.ls(type='transform', long=True) or [])
+                cmds.select(mesh_transforms, r=True)
+                try:
                     mel.eval('AriBoundingSizePrimitive();')
                     mel.eval('AriBoundingSizePrimitive_GO(0);')
-            except Exception as exc:
-                self._append_integration_log(f"[WARN] Step 09 création collider échouée: {exc}")
-                continue
-            after = set(cmds.ls(type='transform', long=True) or [])
-            new_nodes = [n for n in sorted(after-before) if cmds.listRelatives(n, shapes=True, type='mesh', fullPath=True)]
+                except Exception as exc:
+                    self._append_integration_log(f"[WARN] Step 09 création collider échouée: {exc}")
+                    continue
+                after = set(cmds.ls(type='transform', long=True) or [])
+                created_nodes = [n for n in sorted(after-before) if cmds.listRelatives(n, shapes=True, type='mesh', fullPath=True)]
+                for n in created_nodes:
+                    try:
+                        cmds.parent(n, collide_group)
+                        new_nodes.append(n)
+                    except Exception:
+                        pass
+                if created_nodes:
+                    self._append_integration_log(f"[INFO] Step 09 reparent sous _COLLIDE: {'OK' if len(new_nodes)==len(created_nodes) else 'FAIL'}")
+                    try:
+                        cmds.select(new_nodes, r=True)
+                        mel.eval('AOL_COLLIDE_MESH_PROXY(1);')
+                        self._append_integration_log("[INFO] Step 09 proxy attributes appliqués: OK")
+                    except Exception:
+                        self._append_integration_log("[WARN] Step 09 proxy attributes appliqués: FAIL")
+
             if not new_nodes:
                 self._append_integration_log(f"[WARN] Step 09 aucun collider créé par la commande: {asset_short}")
                 continue
-            ok=0
-            for n in new_nodes:
-                try:
-                    cmds.parent(n, collide_group)
-                    ok+=1
-                except Exception:
-                    pass
+
             self._append_integration_log(f"[INFO] Step 09 nouveaux colliders créés: {len(new_nodes)}")
-            self._append_integration_log(f"[INFO] Step 09 reparent sous _COLLIDE: {'OK' if ok==len(new_nodes) else 'FAIL'}")
-            try:
-                cmds.select(new_nodes, r=True)
-                mel.eval('AOL_COLLIDE_MESH_PROXY(1);')
-                self._append_integration_log("[INFO] Step 09 proxy attributes appliqués: OK")
-            except Exception:
-                self._append_integration_log("[WARN] Step 09 proxy attributes appliqués: FAIL")
             if mode == 'hull':
                 self._append_integration_log(f"[INFO] Step 09 hull vertices utilisés: {hull_vertices}")
         if prev_sel: cmds.select(prev_sel, r=True)
