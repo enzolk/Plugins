@@ -3461,18 +3461,8 @@ QLabel#PageHeaderSubtitle {
                     )
                     continue
                 collide_children = cmds.listRelatives(collide_grp, children=True, fullPath=True) or []
-                collide_was_empty = len(collide_children) == 0
-                self._append_integration_log(f"[INFO] Original _COLLIDE group found: {collide_grp}")
-                self._append_integration_log(f"[INFO] Original _COLLIDE was empty: {collide_was_empty}")
+                self._append_integration_log(f"[INFO] Found existing _COLLIDE group, empty={len(collide_children) == 0}: {collide_grp}")
                 self._append_integration_log(f"[INFO] Using existing _COLLIDE group as final parent: {collide_grp}")
-                temp_null_path = None
-                if collide_was_empty:
-                    try:
-                        temp_null_path = cmds.createNode("transform", name="Collider_Null", parent=collide_grp)
-                        self._append_integration_log("[INFO] Temporary Collider_Null created")
-                    except Exception:
-                        temp_null_path = None
-                collide_children = cmds.listRelatives(collide_grp, children=True, fullPath=True) or []
                 removed_children = 0
                 for ch in collide_children:
                     try:
@@ -3480,8 +3470,6 @@ QLabel#PageHeaderSubtitle {
                         removed_children += 1
                     except Exception:
                         pass
-                if temp_null_path:
-                    self._append_integration_log("[INFO] Temporary Collider_Null removed")
                 self._append_integration_log(f"[INFO] Old collider children removed: {removed_children}")
                 src_meshes = cmds.listRelatives(mesh_grp, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
                 src_transforms = sorted(set(cmds.listRelatives(src_meshes, parent=True, fullPath=True) or [])) if src_meshes else []
@@ -3560,51 +3548,6 @@ QLabel#PageHeaderSubtitle {
                             cmds.delete(c)
                     except Exception:
                         pass
-
-                direct_children = cmds.listRelatives(collide_grp, children=True, fullPath=True, type="transform") or []
-                for direct_child in list(direct_children):
-                    if not cmds.objExists(direct_child):
-                        continue
-                    short_child = self._strip_namespaces_from_name(self._short_name(direct_child)).upper()
-                    if not short_child.endswith("_COLLIDE"):
-                        continue
-                    mesh_desc = cmds.listRelatives(direct_child, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                    mesh_transforms = sorted(set(cmds.listRelatives(mesh_desc, parent=True, fullPath=True) or [])) if mesh_desc else []
-                    if not mesh_transforms:
-                        continue
-                    self._append_integration_log(f"[INFO] Intermediate _COLLIDE child found: {direct_child}")
-                    for mesh_transform in mesh_transforms:
-                        if not cmds.objExists(mesh_transform):
-                            continue
-                        current_parent = (cmds.listRelatives(mesh_transform, parent=True, fullPath=True) or [None])[0]
-                        if current_parent == collide_grp:
-                            continue
-                        try:
-                            moved = cmds.parent(mesh_transform, collide_grp)[0]
-                        except Exception:
-                            moved = mesh_transform
-                        self._append_integration_log(f"[INFO] Reparented collider mesh from intermediate group: {moved}")
-                    if cmds.objExists(direct_child):
-                        try:
-                            cmds.delete(direct_child)
-                            self._append_integration_log(f"[INFO] Removed intermediate _COLLIDE group: {direct_child}")
-                        except Exception:
-                            pass
-
-                leftovers = cmds.listRelatives(collide_grp, children=True, fullPath=True, type="transform") or []
-                for leftover in leftovers:
-                    if not cmds.objExists(leftover):
-                        continue
-                    if self._strip_namespaces_from_name(self._short_name(leftover)) == "Collider_Null":
-                        try:
-                            cmds.delete(leftover)
-                            self._append_integration_log("[INFO] Temporary Collider_Null removed")
-                        except Exception:
-                            pass
-
-                final_meshes = cmds.listRelatives(collide_grp, allDescendents=True, type="mesh", noIntermediate=True, fullPath=True) or []
-                final_count = len(set(cmds.listRelatives(final_meshes, parent=True, fullPath=True) or [])) if final_meshes else 0
-                self._append_integration_log(f"[INFO] Final colliders under original _COLLIDE: {final_count}")
             except Exception as exc:
                 self._append_integration_log(f"[WARN] Collider error on {base}: {exc}")
 
