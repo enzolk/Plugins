@@ -3501,11 +3501,27 @@ QLabel#PageHeaderSubtitle {
             forceElement=sg
         )
 
-        cmds.bakePartialHistory(
-            result_mesh,
-            prePostDeformers=True
-        )
+        cmds.select(result_mesh, replace=True)
 
+        self._append_integration_log(f"[INFO] Step 09 Hull source: {source}")
+        self._append_integration_log(f"[INFO] Step 09 Hull node créé: {hull_node}")
+        self._append_integration_log(f"[INFO] Step 09 Hull result_mesh créé: {result_mesh}")
+        self._append_integration_log(f"[INFO] Step 09 Hull vertices appliqué: {hull_vertices}")
+        self._append_integration_log(f"[INFO] Step 09 Hull shader assigné: {sg}")
+
+        return result_mesh
+
+    def _integration_delete_history_on_collider(self, result_collider: str) -> bool:
+        try:
+            cmds.select(result_collider, replace=True)
+            cmds.bakePartialHistory(result_collider, prePostDeformers=True)
+            self._append_integration_log(f"[INFO] Delete history applied on collider: {result_collider}")
+            return True
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] Delete history failed on collider {result_collider}: {exc}")
+            return False
+
+    def _integration_apply_qd_collider_attrs(self, result_collider: str) -> None:
         attrs = {
             "qdVisible": 0,
             "qdCastShadows": 0,
@@ -3517,18 +3533,8 @@ QLabel#PageHeaderSubtitle {
         }
 
         for attr, value in attrs.items():
-            if cmds.attributeQuery(attr, node=result_mesh, exists=True):
-                cmds.setAttr(f"{result_mesh}.{attr}", value)
-
-        cmds.select(result_mesh, replace=True)
-
-        self._append_integration_log(f"[INFO] Step 09 Hull source: {source}")
-        self._append_integration_log(f"[INFO] Step 09 Hull node créé: {hull_node}")
-        self._append_integration_log(f"[INFO] Step 09 Hull result_mesh créé: {result_mesh}")
-        self._append_integration_log(f"[INFO] Step 09 Hull vertices appliqué: {hull_vertices}")
-        self._append_integration_log(f"[INFO] Step 09 Hull shader assigné: {sg}")
-
-        return result_mesh
+            if cmds.attributeQuery(attr, node=result_collider, exists=True):
+                cmds.setAttr(f"{result_collider}.{attr}", value)
 
     def _integration_ensure_qds_collide_shader(self) -> str:
         mat = "QDS_COLLIDE"
@@ -3580,11 +3586,13 @@ QLabel#PageHeaderSubtitle {
                 for source in mesh_transforms:
                     try:
                         result_mesh = self._integration_create_convex_hull_from_source(source, hull_vertices)
+                        self._integration_delete_history_on_collider(result_mesh)
                         cmds.parent(result_mesh, collide_group)
                         self._append_integration_log(f"[INFO] Step 09 Hull reparent sous _COLLIDE: {result_mesh} -> {collide_group}")
                         cmds.select(result_mesh, replace=True)
                         mel.eval("AOL_COLLIDE_MESH_PROXY(1);")
                         self._append_integration_log(f"[INFO] Step 09 Hull AOL_COLLIDE_MESH_PROXY appliqué: {result_mesh}")
+                        self._integration_apply_qd_collider_attrs(result_mesh)
                         new_nodes.append(result_mesh)
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] Step 09 création hull échouée ({source}): {exc}")
@@ -3601,6 +3609,7 @@ QLabel#PageHeaderSubtitle {
                 after = set(cmds.ls(type='transform', long=True) or [])
                 created_nodes = [n for n in sorted(after-before) if cmds.listRelatives(n, shapes=True, type='mesh', fullPath=True)]
                 for n in created_nodes:
+                    self._integration_delete_history_on_collider(n)
                     try:
                         cmds.parent(n, collide_group)
                         new_nodes.append(n)
