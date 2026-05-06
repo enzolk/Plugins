@@ -2379,7 +2379,8 @@ QLabel#PageHeaderSubtitle {
 
         self.integration_catalog_assets = sorted(detected.keys())
         self.integration_annexe_catalog_assets = sorted(annexe_assets)
-        self.integration_main_catalog_assets = sorted(set(self.integration_catalog_assets) - annexe_assets)
+        main_candidates = sorted(set(self.integration_catalog_assets) - annexe_assets)
+        self.integration_main_catalog_assets = self._integration_filter_nested_main_assets(main_candidates)
         self.integration_detection_sources = detected
         self.integration_annexe_sources = annexe_sources
         self._refresh_integration_catalog_list_ui()
@@ -2451,6 +2452,38 @@ QLabel#PageHeaderSubtitle {
         if child.startswith(f"{parent}_"):
             return True
         return False
+
+    def _integration_filter_nested_main_assets(self, assets: List[str]) -> List[str]:
+        cleaned_assets = sorted({asset for asset in assets if asset})
+        if len(cleaned_assets) < 2:
+            return cleaned_assets
+
+        normalized_map: Dict[str, str] = {}
+        for asset in cleaned_assets:
+            no_namespace = self._strip_namespaces_from_name(asset).strip("_ ").upper()
+            normalized_map[asset] = self._integration_remove_prefix(no_namespace)
+
+        filtered_assets: List[str] = []
+        for asset in cleaned_assets:
+            normalized_asset = normalized_map.get(asset, "")
+            skip_asset = False
+            for parent_asset in cleaned_assets:
+                if parent_asset == asset:
+                    continue
+                normalized_parent = normalized_map.get(parent_asset, "")
+                if not normalized_parent or not normalized_asset:
+                    continue
+                if len(normalized_parent) >= len(normalized_asset):
+                    continue
+                if normalized_asset.startswith(f"{normalized_parent}_"):
+                    self._append_integration_log(
+                        f"[CLASSIFY SKIP] Nested main asset ignored: {asset} under {parent_asset}"
+                    )
+                    skip_asset = True
+                    break
+            if not skip_asset:
+                filtered_assets.append(asset)
+        return filtered_assets
 
     def _integration_best_asset_root(self, nodes: List[str]) -> Optional[str]:
         existing = [node for node in nodes if node and cmds.objExists(node)]
