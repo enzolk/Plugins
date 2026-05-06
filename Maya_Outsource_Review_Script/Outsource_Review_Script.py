@@ -3547,6 +3547,14 @@ QLabel#PageHeaderSubtitle {
             pass
         return sg
 
+    def _integration_delete_history_on_collider(self, result_collider: str) -> None:
+        try:
+            cmds.select(result_collider, replace=True)
+            cmds.bakePartialHistory(result_collider, prePostDeformers=True)
+            self._append_integration_log(f"[INFO] Delete history applied on collider: {result_collider}")
+        except Exception as exc:
+            self._append_integration_log(f"[WARN] Delete history failed on collider: {result_collider} ({exc})")
+
     def create_colliders_for_loaded_p4_assets(self) -> None:
         mode = self._integration_get_collider_mode()
         scope = self._integration_get_collider_scope()
@@ -3580,6 +3588,7 @@ QLabel#PageHeaderSubtitle {
                 for source in mesh_transforms:
                     try:
                         result_mesh = self._integration_create_convex_hull_from_source(source, hull_vertices)
+                        self._integration_delete_history_on_collider(result_mesh)
                         cmds.parent(result_mesh, collide_group)
                         self._append_integration_log(f"[INFO] Step 09 Hull reparent sous _COLLIDE: {result_mesh} -> {collide_group}")
                         cmds.select(result_mesh, replace=True)
@@ -3612,6 +3621,7 @@ QLabel#PageHeaderSubtitle {
                         n = cmds.rename(n, desired_name)
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] Step 09 renommage collider échoué ({n} -> {desired_name}): {exc}")
+                    self._integration_delete_history_on_collider(n)
                     try:
                         n = cmds.parent(n, collide_group)[0]
                         new_nodes.append(n)
