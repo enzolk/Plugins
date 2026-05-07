@@ -2108,6 +2108,12 @@ QLabel#PageHeaderSubtitle {
         cmds.menuItem(label="Convex Hull")
         cmds.setParent("..")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.text(label="Collider Source Mode", align="left")
+        self.ui["integration_collider_source_mode_menu"] = cmds.optionMenu()
+        cmds.menuItem(label="Per Mesh")
+        cmds.menuItem(label="Combined Selection")
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
         cmds.text(label="Hull Max Vertices", align="left")
         self.ui["integration_collider_hull_vertices"] = cmds.intField(value=32, minValue=4, maxValue=128)
         cmds.setParent("..")
@@ -3492,6 +3498,78 @@ QLabel#PageHeaderSubtitle {
                 return "hull"
         return "simple"
 
+    def _integration_get_collider_source_mode(self) -> str:
+        menu = self.ui.get("integration_collider_source_mode_menu")
+        if menu and cmds.control(menu, exists=True):
+            value = cmds.optionMenu(menu, q=True, value=True)
+            if value == "Combined Selection":
+                return "Combined Selection"
+        return "Per Mesh"
+
+    def _integration_collect_mesh_sources_under_group(self, mesh_group: str) -> List[str]:
+        mesh_transforms = cmds.listRelatives(mesh_group, allDescendents=True, type="transform", fullPath=True) or []
+        return [n for n in mesh_transforms if cmds.listRelatives(n, shapes=True, type="mesh", fullPath=True)]
+
+    def _integration_collect_selected_mesh_sources_for_asset(self, asset: str, mesh_group: str, collide_group: str) -> List[str]:
+        selected = cmds.ls(selection=True, long=True) or []
+        selected_meshes = []
+        for node in selected:
+            if not self._integration_is_in_branch(node, asset):
+                continue
+            transform = node
+            if cmds.nodeType(transform) == "mesh":
+                parents = cmds.listRelatives(transform, parent=True, type="transform", fullPath=True) or []
+                if not parents:
+                    continue
+                transform = parents[0]
+            if cmds.nodeType(transform) != "transform":
+                continue
+            if not cmds.listRelatives(transform, shapes=True, type="mesh", fullPath=True):
+                continue
+            if not self._integration_is_in_branch(transform, mesh_group):
+                continue
+            if collide_group and self._integration_is_in_branch(transform, collide_group):
+                continue
+            selected_meshes.append(transform)
+        uniq = []
+        for mesh in selected_meshes:
+            if mesh not in uniq:
+                uniq.append(mesh)
+        return uniq
+
+    def _integration_collect_collider_jobs(self, scope_mode: str, source_mode: str) -> List[Dict[str, Any]]:
+        jobs: List[Dict[str, Any]] = []
+        targets = self._integration_collect_target_assets_for_collider(scope_mode)
+        selected = cmds.ls(selection=True, long=True) or []
+        selected_only = scope_mode == "Selected Only"
+        for asset in targets:
+            mesh_group, collide_group = self._integration_find_mesh_and_collide_groups(asset)
+            if not mesh_group or not collide_group:
+                continue
+            selected_meshes = self._integration_collect_selected_mesh_sources_for_asset(asset, mesh_group, collide_group) if selected_only else []
+            use_selected_mesh_only = bool(selected_meshes)
+            if selected_only and selected and not use_selected_mesh_only:
+                # Selected Only mais pas de mesh direct sous _MESH => comportement actuel (asset entier)
+                pass
+            sources = selected_meshes if use_selected_mesh_only else self._integration_collect_mesh_sources_under_group(mesh_group)
+            deduped = []
+            for source in sources:
+                if source not in deduped:
+                    deduped.append(source)
+            if not deduped:
+                continue
+            jobs.append(
+                {
+                    "asset": asset,
+                    "mesh_group": mesh_group,
+                    "collide_group": collide_group,
+                    "sources": deduped,
+                    "source_mode": source_mode,
+                    "selected_mesh_only": use_selected_mesh_only,
+                }
+            )
+        return jobs
+
 
     def _integration_create_convex_hull_from_source(self, source: str, hull_vertices: int) -> str:
         plugin = "DDConvexHull.mll"
@@ -3612,83 +3690,111 @@ QLabel#PageHeaderSubtitle {
     def create_colliders_for_loaded_p4_assets(self) -> None:
         mode = self._integration_get_collider_mode()
         scope = self._integration_get_collider_scope()
+        source_mode = self._integration_get_collider_source_mode()
         hull_vertices = int(cmds.intField(self.ui.get("integration_collider_hull_vertices"), q=True, value=True)) if self.ui.get("integration_collider_hull_vertices") else 32
-        targets = self._integration_collect_target_assets_for_collider(scope)
-        self._append_integration_log(f"[INFO] Step 09 mode: {scope}")
-        self._append_integration_log(f"[INFO] Step 09 type: {'Convex Hull' if mode=='hull' else 'Simple Collider'}")
-        self._append_integration_log(f"[INFO] Step 09 assets détectés: {len(targets)}")
+        jobs = self._integration_collect_collider_jobs(scope, source_mode)
+        self._append_integration_log(f"[INFO] Scope Mode: {scope}")
+        self._append_integration_log(f"[INFO] Collider Source Mode: {source_mode}")
+        self._append_integration_log(f"[INFO] Collider Mode: {'Convex Hull' if mode=='hull' else 'Simple Collider'}")
+        self._append_integration_log(f"[INFO] Jobs detected: {len(jobs)}")
+        if scope == "Selected Only" and not jobs:
+            self._append_integration_log("[WARN] Selected Only active but no valid source under _MESH")
         prev_sel = cmds.ls(selection=True, long=True) or []
-        for asset in targets:
+        for job in jobs:
+            asset = job["asset"]
+            mesh_group = job["mesh_group"]
+            collide_group = job["collide_group"]
+            mesh_transforms = job["sources"]
             asset_short = self._strip_namespaces_from_name(self._short_name(asset))
-            self._append_integration_log(f"[INFO] Step 09 asset traité: {asset_short}")
-            mesh_group, collide_group = self._integration_find_mesh_and_collide_groups(asset)
-            if not mesh_group:
-                self._append_integration_log(f"[WARN] Step 09 _MESH manquant: {asset_short}")
-                continue
-            self._append_integration_log(f"[INFO] Step 09 _MESH trouvé: {mesh_group}")
-            if not collide_group:
-                self._append_integration_log(f"[WARN] Step 09 _COLLIDE manquant: {asset_short}")
-                continue
-            self._append_integration_log(f"[INFO] Step 09 _COLLIDE trouvé: {collide_group}")
-            mesh_transforms = cmds.listRelatives(mesh_group, allDescendents=True, type="transform", fullPath=True) or []
-            mesh_transforms = [n for n in mesh_transforms if cmds.listRelatives(n, shapes=True, type='mesh', fullPath=True)]
-            if not mesh_transforms:
-                self._append_integration_log(f"[WARN] Step 09 aucun mesh sous _MESH: {asset_short}")
-                continue
-            removed = self._integration_remove_child_colliders(collide_group)
+            self._append_integration_log(f"[INFO] Asset: {asset_short}")
+            self._append_integration_log(f"[INFO] Sources selected: {len(mesh_transforms)}")
+            removed = 0
+            if scope == "Selected Only" and source_mode == "Per Mesh" and job.get("selected_mesh_only"):
+                collide_children = cmds.listRelatives(collide_group, children=True, type="transform", fullPath=True) or []
+                source_prefixes = [f"{self._strip_namespaces_from_name(self._short_name(src))}_COLLIDER" for src in mesh_transforms]
+                for child in collide_children:
+                    short = self._strip_namespaces_from_name(self._short_name(child))
+                    if any(short.upper().startswith(prefix.upper()) for prefix in source_prefixes):
+                        try:
+                            cmds.delete(child)
+                            removed += 1
+                        except Exception:
+                            pass
+            else:
+                removed = self._integration_remove_child_colliders(collide_group)
             self._append_integration_log(f"[INFO] Step 09 anciens colliders supprimés: {removed}")
             new_nodes = []
-            if mode == 'hull':
-                for source in mesh_transforms:
+            if mode == "hull":
+                source_batches = [[src] for src in mesh_transforms] if source_mode == "Per Mesh" else [mesh_transforms]
+                for batch in source_batches:
+                    source = batch[0]
+                    self._append_integration_log(f"[INFO] Combined source count: {len(batch)}")
                     try:
-                        result_mesh = self._integration_create_convex_hull_from_source(source, hull_vertices)
+                        source_for_hull = source
+                        temp_to_delete = []
+                        if source_mode == "Combined Selection":
+                            dups = [cmds.duplicate(src, rr=True)[0] for src in batch]
+                            temp_to_delete.extend(dups)
+                            source_for_hull = cmds.polyUnite(dups, ch=False, mergeUVSets=True, name=f"{asset_short}_COLLIDER_TMP")[0]
+                            temp_to_delete.append(source_for_hull)
+                            cmds.delete(source_for_hull, constructionHistory=True)
+                        result_mesh = self._integration_create_convex_hull_from_source(source_for_hull, hull_vertices)
+                        for tmp in temp_to_delete:
+                            if cmds.objExists(tmp):
+                                cmds.delete(tmp)
+                        desired_base = f"{asset_short}_COLLIDER" if source_mode == "Combined Selection" else f"{self._strip_namespaces_from_name(self._short_name(source))}_COLLIDER"
+                        result_mesh = cmds.rename(result_mesh, desired_base)
                         self._integration_delete_history_on_collider(result_mesh)
-                        cmds.parent(result_mesh, collide_group)
-                        self._append_integration_log(f"[INFO] Step 09 Hull reparent sous _COLLIDE: {result_mesh} -> {collide_group}")
+                        result_mesh = cmds.parent(result_mesh, collide_group)[0]
+                        self._append_integration_log(f"[INFO] Collider created: {result_mesh}")
+                        self._append_integration_log(f"[INFO] Collider parented under: {collide_group}")
                         cmds.select(result_mesh, replace=True)
                         mel.eval("AOL_COLLIDE_MESH_PROXY(1);")
-                        self._append_integration_log(f"[INFO] Step 09 Hull AOL_COLLIDE_MESH_PROXY appliqué: {result_mesh}")
+                        self._append_integration_log("[INFO] Proxy attributes applied: OK")
                         new_nodes.append(result_mesh)
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] Step 09 création hull échouée ({source}): {exc}")
                         continue
             else:
-                before = set(cmds.ls(type='transform', long=True) or [])
-                cmds.select(mesh_transforms, r=True)
-                try:
-                    mel.eval('AriBoundingSizePrimitive();')
-                    mel.eval('AriBoundingSizePrimitive_GO(0);')
-                except Exception as exc:
-                    self._append_integration_log(f"[WARN] Step 09 création collider échouée: {exc}")
-                    continue
-                after = set(cmds.ls(type='transform', long=True) or [])
-                created_nodes = [n for n in sorted(after-before) if cmds.listRelatives(n, shapes=True, type='mesh', fullPath=True)]
-                mesh_group_short = self._strip_namespaces_from_name(self._short_name(mesh_group))
-                if mesh_group_short.endswith("_MESH"):
-                    collider_base_name = mesh_group_short[:-5] + "_COLLIDER"
-                else:
-                    collider_base_name = mesh_group_short + "_COLLIDER"
-                multi_colliders = len(created_nodes) > 1
-                for index, n in enumerate(created_nodes, start=1):
-                    desired_name = collider_base_name if not multi_colliders else f"{collider_base_name}_{index:02d}"
+                source_batches = [[src] for src in mesh_transforms] if source_mode == "Per Mesh" else [mesh_transforms]
+                for batch in source_batches:
+                    for src in batch:
+                        self._append_integration_log(f"[INFO] Source mesh: {src}")
+                    self._append_integration_log(f"[INFO] Combined source count: {len(batch)}")
+                    before = set(cmds.ls(type="transform", long=True) or [])
+                    cmds.select(batch, r=True)
+                    try:
+                        mel.eval("AriBoundingSizePrimitive();")
+                        mel.eval("AriBoundingSizePrimitive_GO(0);")
+                    except Exception as exc:
+                        self._append_integration_log(f"[WARN] Step 09 création collider échouée: {exc}")
+                        continue
+                    after = set(cmds.ls(type="transform", long=True) or [])
+                    created_nodes = [n for n in sorted(after - before) if cmds.listRelatives(n, shapes=True, type="mesh", fullPath=True)]
+                    if not created_nodes:
+                        continue
+                    n = created_nodes[0]
+                    desired_name = f"{asset_short}_COLLIDER" if source_mode == "Combined Selection" else f"{self._strip_namespaces_from_name(self._short_name(batch[0]))}_COLLIDER"
                     try:
                         n = cmds.rename(n, desired_name)
-                    except Exception as exc:
-                        self._append_integration_log(f"[WARN] Step 09 renommage collider échoué ({n} -> {desired_name}): {exc}")
+                    except Exception:
+                        pass
                     self._integration_delete_history_on_collider(n)
+                    self._append_integration_log("[INFO] Delete history applied: OK")
                     try:
                         n = cmds.parent(n, collide_group)[0]
                         new_nodes.append(n)
+                        self._append_integration_log(f"[INFO] Collider created: {n}")
+                        self._append_integration_log(f"[INFO] Collider parented under: {collide_group}")
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] Step 09 reparent collider échoué ({n}): {exc}")
-                if created_nodes:
-                    self._append_integration_log(f"[INFO] Step 09 reparent sous _COLLIDE: {'OK' if len(new_nodes)==len(created_nodes) else 'FAIL'}")
+                if new_nodes:
                     try:
                         cmds.select(new_nodes, r=True)
-                        mel.eval('AOL_COLLIDE_MESH_PROXY(1);')
-                        self._append_integration_log("[INFO] Step 09 proxy attributes appliqués: OK")
+                        mel.eval("AOL_COLLIDE_MESH_PROXY(1);")
+                        self._append_integration_log("[INFO] Proxy attributes applied: OK")
                     except Exception:
-                        self._append_integration_log("[WARN] Step 09 proxy attributes appliqués: FAIL")
+                        self._append_integration_log("[WARN] Proxy attributes applied: FAIL")
 
             if not new_nodes:
                 self._append_integration_log(f"[WARN] Step 09 aucun collider créé par la commande: {asset_short}")
