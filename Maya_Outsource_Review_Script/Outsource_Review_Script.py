@@ -2114,11 +2114,19 @@ QLabel#PageHeaderSubtitle {
         cmds.menuItem(label="Combined Selection")
         cmds.setParent("..")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.text(label="Simple Collider Shape", align="left")
+        self.ui["integration_collider_simple_shape_menu"] = cmds.optionMenu()
+        cmds.menuItem(label="Cube Shape")
+        cmds.menuItem(label="Cylinder Shape")
+        cmds.menuItem(label="Sphere Shape")
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
         cmds.text(label="Hull Max Vertices", align="left")
         self.ui["integration_collider_hull_vertices"] = cmds.intField(value=32, minValue=4, maxValue=128)
         cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "both", 0), (2, "both", 8)])
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=3, columnAttach=[(1, "both", 0), (2, "both", 8), (3, "both", 8)])
         cmds.button(label="Create Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.create_colliders_for_loaded_p4_assets())
+        cmds.button(label="Delete Existing Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.delete_existing_colliders_for_loaded_p4_assets())
         cmds.button(label="Apply Proxy Attributes To Existing Colliders", height=UI_BUTTON_HEIGHT, backgroundColor=UI_COLOR_BG_ACCENT_SOFT, command=lambda *_: self.apply_proxy_attributes_to_existing_colliders())
         cmds.setParent("..")
         cmds.separator(style="in")
@@ -3506,6 +3514,14 @@ QLabel#PageHeaderSubtitle {
                 return "Combined Selection"
         return "Per Mesh"
 
+    def _integration_get_simple_collider_shape_mode(self) -> str:
+        menu = self.ui.get("integration_collider_simple_shape_menu")
+        if menu and cmds.control(menu, exists=True):
+            value = cmds.optionMenu(menu, q=True, value=True)
+            if value in ("Cube Shape", "Cylinder Shape", "Sphere Shape"):
+                return value
+        return "Cube Shape"
+
     def _integration_collect_mesh_sources_under_group(self, mesh_group: str) -> List[str]:
         mesh_transforms = cmds.listRelatives(mesh_group, allDescendents=True, type="transform", fullPath=True) or []
         return [n for n in mesh_transforms if cmds.listRelatives(n, shapes=True, type="mesh", fullPath=True)]
@@ -3569,6 +3585,47 @@ QLabel#PageHeaderSubtitle {
                 }
             )
         return jobs
+
+    def _integration_collect_selected_collider_targets(self) -> Tuple[List[str], List[str], bool]:
+        selected = cmds.ls(selection=True, long=True) or []
+        if not selected:
+            return [], [], False
+        assets: List[str] = []
+        collider_nodes: List[str] = []
+        main_assets_roots = self._integration_find_main_assets_groups()
+        main_assets = main_assets_roots[0] if main_assets_roots else ""
+        for node in selected:
+            current = node
+            while current:
+                short_upper = self._strip_namespaces_from_name(self._short_name(current)).upper()
+                if short_upper.endswith("_COLLIDE"):
+                    parent_asset = (cmds.listRelatives(current, parent=True, type="transform", fullPath=True) or [""])[0]
+                    if parent_asset and parent_asset not in assets:
+                        assets.append(parent_asset)
+                    if cmds.nodeType(node) == "transform":
+                        has_mesh = bool(cmds.listRelatives(node, shapes=True, type="mesh", fullPath=True))
+                        parent = (cmds.listRelatives(node, parent=True, type="transform", fullPath=True) or [""])[0]
+                        if has_mesh and parent == current and node not in collider_nodes:
+                            collider_nodes.append(node)
+                    break
+                if short_upper.endswith("_MESH"):
+                    parent_asset = (cmds.listRelatives(current, parent=True, type="transform", fullPath=True) or [""])[0]
+                    if parent_asset and parent_asset not in assets:
+                        assets.append(parent_asset)
+                    break
+                parent = (cmds.listRelatives(current, parent=True, type="transform", fullPath=True) or [""])[0]
+                if not parent:
+                    if main_assets and current != main_assets:
+                        root_parent = (cmds.listRelatives(current, parent=True, type="transform", fullPath=True) or [""])[0]
+                        if root_parent == main_assets and current not in assets:
+                            assets.append(current)
+                    break
+                if parent == main_assets:
+                    if current not in assets:
+                        assets.append(current)
+                    break
+                current = parent
+        return assets, collider_nodes, True
 
 
     def _integration_create_convex_hull_from_source(self, source: str, hull_vertices: int) -> str:
@@ -3683,7 +3740,7 @@ QLabel#PageHeaderSubtitle {
         try:
             cmds.select(result_collider, replace=True)
             cmds.bakePartialHistory(result_collider, prePostDeformers=True)
-            self._append_integration_log(f"[INFO] Delete history applied on collider: {result_collider}")
+            self._append_integration_log(f"[INFO] Delete history applied: {result_collider}")
         except Exception as exc:
             self._append_integration_log(f"[WARN] Delete history failed on collider: {result_collider} ({exc})")
 
@@ -3691,11 +3748,22 @@ QLabel#PageHeaderSubtitle {
         mode = self._integration_get_collider_mode()
         scope = self._integration_get_collider_scope()
         source_mode = self._integration_get_collider_source_mode()
+        simple_shape = self._integration_get_simple_collider_shape_mode()
+        shape_label_to_arg = {"Cube Shape": 0, "Cylinder Shape": 1, "Sphere Shape": 2}
+        shape_label_to_log = {"Cube Shape": "Cube", "Cylinder Shape": "Cylinder", "Sphere Shape": "Sphere"}
         hull_vertices = int(cmds.intField(self.ui.get("integration_collider_hull_vertices"), q=True, value=True)) if self.ui.get("integration_collider_hull_vertices") else 32
         jobs = self._integration_collect_collider_jobs(scope, source_mode)
+        if not jobs:
+            self._append_integration_log("[WARN] Step 09 aucun asset valide trouvé.")
+            return
+        if any(not job.get("collide_group") for job in jobs):
+            self._append_integration_log("[WARN] Step 09 aucun _COLLIDE trouvé.")
         self._append_integration_log(f"[INFO] Scope Mode: {scope}")
+        self._append_integration_log("[INFO] Create Colliders does not delete existing colliders.")
         self._append_integration_log(f"[INFO] Collider Source Mode: {source_mode}")
         self._append_integration_log(f"[INFO] Collider Mode: {'Convex Hull' if mode=='hull' else 'Simple Collider'}")
+        if mode == "simple":
+            self._append_integration_log(f"[INFO] Simple Collider Shape: {shape_label_to_log.get(simple_shape, 'Cube')}")
         self._append_integration_log(f"[INFO] Jobs detected: {len(jobs)}")
         if scope == "Selected Only" and not jobs:
             self._append_integration_log("[WARN] Selected Only active but no valid source under _MESH")
@@ -3708,21 +3776,6 @@ QLabel#PageHeaderSubtitle {
             asset_short = self._strip_namespaces_from_name(self._short_name(asset))
             self._append_integration_log(f"[INFO] Asset: {asset_short}")
             self._append_integration_log(f"[INFO] Sources selected: {len(mesh_transforms)}")
-            removed = 0
-            if scope == "Selected Only" and source_mode == "Per Mesh" and job.get("selected_mesh_only"):
-                collide_children = cmds.listRelatives(collide_group, children=True, type="transform", fullPath=True) or []
-                source_prefixes = [f"{self._strip_namespaces_from_name(self._short_name(src))}_COLLIDER" for src in mesh_transforms]
-                for child in collide_children:
-                    short = self._strip_namespaces_from_name(self._short_name(child))
-                    if any(short.upper().startswith(prefix.upper()) for prefix in source_prefixes):
-                        try:
-                            cmds.delete(child)
-                            removed += 1
-                        except Exception:
-                            pass
-            else:
-                removed = self._integration_remove_child_colliders(collide_group)
-            self._append_integration_log(f"[INFO] Step 09 anciens colliders supprimés: {removed}")
             new_nodes = []
             if mode == "hull":
                 source_batches = [[src] for src in mesh_transforms] if source_mode == "Per Mesh" else [mesh_transforms]
@@ -3746,8 +3799,8 @@ QLabel#PageHeaderSubtitle {
                         result_mesh = cmds.rename(result_mesh, desired_base)
                         self._integration_delete_history_on_collider(result_mesh)
                         result_mesh = cmds.parent(result_mesh, collide_group)[0]
-                        self._append_integration_log(f"[INFO] Collider created: {result_mesh}")
-                        self._append_integration_log(f"[INFO] Collider parented under: {collide_group}")
+                        self._append_integration_log(f"[INFO] Created collider: {result_mesh}")
+                        self._append_integration_log("[INFO] Parent under _COLLIDE: OK")
                         cmds.select(result_mesh, replace=True)
                         mel.eval("AOL_COLLIDE_MESH_PROXY(1);")
                         self._append_integration_log("[INFO] Proxy attributes applied: OK")
@@ -3765,7 +3818,7 @@ QLabel#PageHeaderSubtitle {
                     cmds.select(batch, r=True)
                     try:
                         mel.eval("AriBoundingSizePrimitive();")
-                        mel.eval("AriBoundingSizePrimitive_GO(0);")
+                        mel.eval(f"AriBoundingSizePrimitive_GO({shape_label_to_arg.get(simple_shape, 0)});")
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] Step 09 création collider échouée: {exc}")
                         continue
@@ -3780,12 +3833,11 @@ QLabel#PageHeaderSubtitle {
                     except Exception:
                         pass
                     self._integration_delete_history_on_collider(n)
-                    self._append_integration_log("[INFO] Delete history applied: OK")
                     try:
                         n = cmds.parent(n, collide_group)[0]
                         new_nodes.append(n)
-                        self._append_integration_log(f"[INFO] Collider created: {n}")
-                        self._append_integration_log(f"[INFO] Collider parented under: {collide_group}")
+                        self._append_integration_log(f"[INFO] Created collider: {n}")
+                        self._append_integration_log("[INFO] Parent under _COLLIDE: OK")
                     except Exception as exc:
                         self._append_integration_log(f"[WARN] Step 09 reparent collider échoué ({n}): {exc}")
                 if new_nodes:
@@ -3805,6 +3857,60 @@ QLabel#PageHeaderSubtitle {
                 self._append_integration_log(f"[INFO] Step 09 hull vertices utilisés: {hull_vertices}")
         if prev_sel: cmds.select(prev_sel, r=True)
         else: cmds.select(clear=True)
+
+    def delete_existing_colliders_for_loaded_p4_assets(self) -> None:
+        scope = self._integration_get_collider_scope()
+        self._append_integration_log(f"[INFO] Delete Existing Colliders scope: {'All' if scope == 'All P4 Assets' else 'Selected Only'}")
+        deleted: List[str] = []
+        if scope == "All P4 Assets":
+            targets = self._integration_collect_target_assets_for_collider(scope)
+            if not targets:
+                self._append_integration_log("[WARN] Step 09 aucun asset valide trouvé.")
+                return
+            for asset in targets:
+                _, collide_group = self._integration_find_mesh_and_collide_groups(asset)
+                if not collide_group:
+                    continue
+                children = cmds.listRelatives(collide_group, children=True, type="transform", fullPath=True) or []
+                for child in children:
+                    if cmds.listRelatives(child, shapes=True, type="mesh", fullPath=True):
+                        try:
+                            cmds.delete(child)
+                            deleted.append(child)
+                            self._append_integration_log(f"[INFO] Deleted collider: {child}")
+                        except Exception:
+                            pass
+        else:
+            targets, specific_colliders, had_selection = self._integration_collect_selected_collider_targets()
+            if not had_selection:
+                self._append_integration_log("[WARN] Step 09 sélection invalide en Selected Only.")
+                return
+            for collider in specific_colliders:
+                if cmds.objExists(collider):
+                    try:
+                        cmds.delete(collider)
+                        deleted.append(collider)
+                        self._append_integration_log(f"[INFO] Deleted collider: {collider}")
+                    except Exception:
+                        pass
+            for asset in targets:
+                _, collide_group = self._integration_find_mesh_and_collide_groups(asset)
+                if not collide_group:
+                    continue
+                children = cmds.listRelatives(collide_group, children=True, type="transform", fullPath=True) or []
+                for child in children:
+                    if child in specific_colliders:
+                        continue
+                    if cmds.listRelatives(child, shapes=True, type="mesh", fullPath=True):
+                        try:
+                            cmds.delete(child)
+                            deleted.append(child)
+                            self._append_integration_log(f"[INFO] Deleted collider: {child}")
+                        except Exception:
+                            pass
+        if not deleted:
+            self._append_integration_log("[WARN] Step 09 aucun collider à supprimer.")
+        self._append_integration_log(f"[INFO] Deleted colliders count: {len(deleted)}")
 
     def apply_proxy_attributes_to_existing_colliders(self) -> None:
         scope = self._integration_get_collider_scope()
