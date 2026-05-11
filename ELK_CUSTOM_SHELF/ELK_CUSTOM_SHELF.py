@@ -450,7 +450,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def compute_horizontal_widths(self):
         groups = self.grouped_items()
         n = max(1, len(groups))
-        available = max(420, self.scroll.viewport().width() - 4 if hasattr(self, "scroll") else self.width())
+        reserve = self.horizontal_options_space()
+        available = max(280, (self.scroll.viewport().width() - 4 if hasattr(self, "scroll") else self.width()) - reserve)
         spacing = 8 * max(0, n - 1)
 
         collapsed_w = 54
@@ -487,6 +488,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         self._horizontal_widths = widths
 
+    def horizontal_options_space(self):
+        return 40 if hasattr(self, "h_options_btn") and self.h_options_btn is not None else 0
+
     def build(self):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.setStyleSheet("""
@@ -512,7 +516,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.title_label=QtWidgets.QLabel("ELK UI"); self.title_label.setStyleSheet("color:#ffad3b;font-size:15px;font-weight:900;"); top.addWidget(self.title_label)
         self.search_box=QtWidgets.QLineEdit(); self.search_box.setPlaceholderText("Search tools..."); self.search_box.textChanged.connect(self.on_search); top.addWidget(self.search_box,1)
         self.view_btn=QtWidgets.QPushButton("Grid"); self.view_btn.clicked.connect(self.toggle_view); top.addWidget(self.view_btn)
-        self.options_btn=QtWidgets.QPushButton("Options"); self.options_btn.clicked.connect(self.open_options_dialog); top.addWidget(self.options_btn)
+        self.options_btn=QtWidgets.QToolButton(); self.options_btn.setText("⚙"); self.options_btn.setToolTip("Options"); self.options_btn.clicked.connect(self.open_options_dialog); self.options_btn.setFixedSize(32,32); self.options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;font-size:16px;font-weight:700;} QToolButton:hover{background:#505050;}")
+        top.addWidget(self.options_btn)
         main.addLayout(top)
 
         self.scroll=QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setMinimumHeight(0)
@@ -605,17 +610,22 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.clear(); self.category_widgets=[]; groups=self.grouped_items()
         if not groups:
             lab=QtWidgets.QLabel("No tool found"); lab.setAlignment(QtCore.Qt.AlignCenter); lab.setStyleSheet("color:%s;padding:30px;"%MUTED); self.content_lay.addWidget(lab); self.content_lay.addStretch(); return
+        self.h_options_btn = None
         if self.is_horizontal_mode():
             self.compute_horizontal_widths()
         for cat,items in groups:
             w=Category(cat,items,self); self.category_widgets.append(w); self.content_lay.addWidget(w)
         if self.is_horizontal_mode():
             self.content_lay.addStretch()
-            self.h_options_btn = QtWidgets.QPushButton("Options")
+            self.h_options_btn = QtWidgets.QToolButton()
+            self.h_options_btn.setText("⚙")
+            self.h_options_btn.setToolTip("Options")
+            self.h_options_btn.setFixedSize(32, 32)
             self.h_options_btn.clicked.connect(self.open_options_dialog)
-            self.h_options_btn.setFixedHeight(32)
+            self.h_options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;font-size:16px;font-weight:700;} QToolButton:hover{background:#505050;}")
             self.content_lay.addWidget(self.h_options_btn, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
-        self.content_lay.addStretch()
+        else:
+            self.content_lay.addStretch()
         self.reflow()
 
     def resizeEvent(self,e):
