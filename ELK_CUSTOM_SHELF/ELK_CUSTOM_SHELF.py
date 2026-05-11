@@ -360,11 +360,33 @@ class ELKMinimalUI(QtWidgets.QWidget):
         max_h = self.max_height_px if self.max_height_px > 0 else 16777215
         self.setMaximumHeight(max_h)
 
-        # Apply the cap to the container window/workspace control as well,
-        # so the option controls the full window height and not only the UI body.
-        for widget in (self.parentWidget(), self.window()):
-            if widget is not None:
-                widget.setMaximumHeight(max_h)
+        # Apply the cap only to the immediate ELK host widget.
+        # Do NOT touch self.window() here because in Maya dock mode it can
+        # resolve to a higher-level app window and unintentionally clamp Maya.
+        host = self.parentWidget()
+        if host is not None:
+            host.setMaximumHeight(max_h)
+
+        # When docked in a Maya workspaceControl, also clamp the control itself.
+        # Without this, Maya can keep stretching the dock area vertically even if
+        # the Qt widget has a lower max height.
+        if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+            try:
+                cmds.workspaceControl(
+                    WORKSPACE_NAME,
+                    edit=True,
+                    minimumHeight=0,
+                    maximumHeight=max_h
+                )
+                if self.max_height_px > 0:
+                    cmds.workspaceControl(
+                        WORKSPACE_NAME,
+                        edit=True,
+                        heightProperty="preferred",
+                        resizeHeight=max_h
+                    )
+            except Exception:
+                pass
 
         # When docked in a Maya workspaceControl, also clamp the control itself.
         # Without this, Maya can keep stretching the dock area vertically even if
