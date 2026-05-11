@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """ELK UI Minimal Adaptive Shelf - Maya Dockable / Auto Launch.
 
-Automatically switches to a horizontal shelf layout when the panel is wider than tall,
-and to a vertical grid/list layout when it is taller than wide.
+Automatically switches to a horizontal shelf layout only when the panel is
+wider than tall and its height is 250 px or less. Otherwise it uses the
+vertical grid/list layout.
 """
 import traceback
 import maya.cmds as cmds
@@ -330,7 +331,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return self.layout_mode == "horizontal"
 
     def desired_layout_mode(self):
-        return "horizontal" if self.width() > max(1, self.height()) else "vertical"
+        w = max(1, self.width())
+        h = max(1, self.height())
+        return "horizontal" if (w > h and h <= 250) else "vertical"
 
     def available_width(self):
         if hasattr(self,'scroll'):
