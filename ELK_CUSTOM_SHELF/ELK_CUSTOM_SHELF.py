@@ -128,10 +128,11 @@ class VectorIcon(QtWidgets.QWidget):
 
 class ToolButton(QtWidgets.QFrame):
     clicked=QtCore.Signal(dict)
-    def __init__(self,item,color="#36d6ff",compact=False,parent=None):
+    def __init__(self,item,color="#36d6ff",compact=False,tight=False,parent=None):
         super(ToolButton,self).__init__(parent)
         self.item=item
         self.compact=compact
+        self.tight=tight
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setToolTip(_clean_tooltip((item.get("label", "Tool") + "\n\n" + item.get("tooltip", "")).strip()))
         self.setObjectName("ToolButton")
@@ -141,23 +142,32 @@ class ToolButton(QtWidgets.QFrame):
         if compact:
             lay.setContentsMargins(0,0,0,0)
             lay.setSpacing(0)
-            icon = VectorIcon(item.get("label","tool"), item_color(item), 24)
+            icon_size = 20 if tight else 24
+            icon = VectorIcon(item.get("label","tool"), item_color(item), icon_size)
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
-            self.setFixedSize(56,48)
+            self.setFixedSize(48,42) if tight else self.setFixedSize(56,48)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QLabel{background:transparent;border:0px;}")
         else:
-            lay.setContentsMargins(10,7,10,7)
-            lay.setSpacing(8)
-            lay.addWidget(VectorIcon(item.get("label","tool"), item_color(item), 18))
+            if self.tight:
+                lay.setContentsMargins(7,5,7,5)
+                lay.setSpacing(6)
+                icon_size = 16
+                min_height = 30
+            else:
+                lay.setContentsMargins(10,7,10,7)
+                lay.setSpacing(8)
+                icon_size = 18
+                min_height = 34
+            lay.addWidget(VectorIcon(item.get("label","tool"), item_color(item), icon_size))
             lab=QtWidgets.QLabel(item.get("label","Tool"))
             lab.setObjectName("ToolLabel")
             lab.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
             lab.setStyleSheet("QLabel#ToolLabel{background:transparent;color:%s;font-weight:600;font-size:12px;border:0px;}"%TEXT)
             lab.setWordWrap(False)
             lay.addWidget(lab,1)
-            self.setMinimumHeight(34)
+            self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
     def mouseReleaseEvent(self,e):
@@ -271,6 +281,8 @@ class Category(QtWidgets.QFrame):
         horizontal = self.parent_ui.is_horizontal_mode()
         width=max(1,self.parent_ui.available_width())
 
+        is_tight = width < 540
+
         if horizontal:
             # Shelf mode: opened categories receive the available room.
             # Collapsed categories become a very narrow vertical tab.
@@ -291,8 +303,10 @@ class Category(QtWidgets.QFrame):
                 self.setMinimumWidth(cat_w)
                 self.setMaximumWidth(cat_w)
                 self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-            self.grid.setContentsMargins(10, 0, 10, 10)
-            self.grid.setSpacing(6)
+            hpad = 6 if is_tight else 10
+            bpad = 6 if is_tight else 10
+            self.grid.setContentsMargins(hpad, 0, hpad, bpad)
+            self.grid.setSpacing(4 if is_tight else 6)
             cols = max(1, len(self.items))
         else:
             self.body.setVisible(self.expanded)
@@ -302,8 +316,10 @@ class Category(QtWidgets.QFrame):
             self.setMaximumWidth(16777215)
             self.setMinimumHeight(0)
             self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-            self.grid.setContentsMargins(10, 0, 10, 10)
-            self.grid.setSpacing(7)
+            hpad = 6 if width < 500 else 10
+            bpad = 6 if width < 500 else 10
+            self.grid.setContentsMargins(hpad, 0, hpad, bpad)
+            self.grid.setSpacing(5 if width < 500 else 7)
             cols=1 if self.parent_ui.view_mode=="list" or width<430 else max(2,min(6,int(width/205)))
 
         self.count_label.setVisible(not horizontal or self.expanded)
@@ -313,7 +329,7 @@ class Category(QtWidgets.QFrame):
             return
 
         for i,item in enumerate(self.items):
-            btn=ToolButton(item,self.color,compact=horizontal); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
+            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
 
 class ELKMinimalUI(QtWidgets.QWidget):
     def __init__(self,parent=None):
@@ -506,6 +522,14 @@ class ELKMinimalUI(QtWidgets.QWidget):
             return
         if self.is_horizontal_mode():
             self.compute_horizontal_widths()
+            tight = self.height() <= 180 or self.width() <= 760
+            self.layout().setContentsMargins(4, 4, 4, 4) if tight else self.layout().setContentsMargins(10, 10, 10, 10)
+            self.layout().setSpacing(4 if tight else 8)
+            self.content_lay.setSpacing(5 if tight else 8)
+        else:
+            self.layout().setContentsMargins(10, 10, 10, 10)
+            self.layout().setSpacing(8)
+            self.content_lay.setSpacing(8)
         for c in self.category_widgets: c.reflow()
 
 
