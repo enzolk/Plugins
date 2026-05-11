@@ -568,9 +568,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
         if self.h_search_popup is None or self.h_search_btn is None:
             return
         btn_pos = self.h_search_btn.mapTo(self, QtCore.QPoint(0, 0))
-        base_h = max(24, int(self.height() * 0.12))
-        popup_h = min(34, base_h)
-        popup_w = max(140, min(320, int(self.width() * 0.28)))
+        scale = 1.15
+        base_h = max(30, int(self.height() * 0.14 * scale))
+        popup_h = min(44, base_h)
+        popup_w = max(165, min(360, int(self.width() * 0.30 * scale)))
         x = btn_pos.x() - popup_w - 8
         y = btn_pos.y() + int((self.h_search_btn.height() - popup_h) * 0.5)
         self.h_search_popup.setGeometry(x, y, popup_w, popup_h)
@@ -693,12 +694,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 self.h_search_popup.setVisible(False)
                 self.h_search_popup.setStyleSheet("QFrame{background:#373737;border:1px solid #565656;border-radius:7px;}")
                 hlay = QtWidgets.QHBoxLayout(self.h_search_popup)
-                hlay.setContentsMargins(6, 4, 6, 4)
-                hlay.setSpacing(4)
+                hlay.setContentsMargins(7, 5, 7, 5)
+                hlay.setSpacing(5)
                 self.h_search_line = QtWidgets.QLineEdit(self.h_search_popup)
                 self.h_search_line.setPlaceholderText("Search tools...")
                 self.h_search_line.textChanged.connect(self.on_search)
-                self.h_search_line.setStyleSheet("QLineEdit{background:#2f2f2f;color:%s;border:1px solid #565656;border-radius:5px;padding:4px 6px;}" % TEXT)
+                self.h_search_line.setMinimumHeight(30)
+                self.h_search_line.setStyleSheet("QLineEdit{background:#2f2f2f;color:%s;border:1px solid #565656;border-radius:6px;padding:6px 8px;font-size:13px;}" % TEXT)
                 hlay.addWidget(self.h_search_line, 1)
             if self.h_search_line is not None:
                 self.h_search_line.setText(self.search_box.text())
