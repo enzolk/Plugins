@@ -281,7 +281,7 @@ class Category(QtWidgets.QFrame):
                 self.collapsed_header.setVisible(True)
                 self.setMinimumWidth(cat_w)
                 self.setMaximumWidth(cat_w)
-                self.setMinimumHeight(104)
+                self.setMinimumHeight(0)
                 self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
             else:
                 cat_w = int(self.parent_ui.horizontal_category_width(self.name))
@@ -324,6 +324,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.category_widgets=[]
         self.search=""
         self.setObjectName(WINDOW_NAME)
+        self.setMinimumHeight(0)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.build()
         self.refresh()
 
@@ -535,6 +537,8 @@ def show():
         control_widget = wrapInstance(int(ptr), QtWidgets.QWidget)
         control_widget.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         control_widget.setStyleSheet("background:%s;" % BG)
+        control_widget.setMinimumHeight(0)
+        control_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
         old_layout = control_widget.layout()
         if old_layout is not None:
