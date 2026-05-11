@@ -656,8 +656,6 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
     def refresh(self):
         self.apply_layout_mode()
-        was_horizontal_search_visible = bool(self.h_search_popup and self.h_search_popup.isVisible())
-        keep_horizontal_search_visible = was_horizontal_search_visible or bool(self.search)
         self.clear(); self.category_widgets=[]; groups=self.grouped_items()
         if not groups:
             lab=QtWidgets.QLabel("No tool found"); lab.setAlignment(QtCore.Qt.AlignCenter); lab.setStyleSheet("color:%s;padding:30px;"%MUTED); self.content_lay.addWidget(lab); self.content_lay.addStretch(); return
@@ -707,9 +705,6 @@ class ELKMinimalUI(QtWidgets.QWidget):
             if self.h_search_line is not None:
                 self.h_search_line.setText(self.search_box.text())
             self.update_horizontal_search_geometry()
-            self.show_horizontal_search(keep_horizontal_search_visible)
-            if keep_horizontal_search_visible and self.h_search_popup is not None:
-                self.h_search_popup.raise_()
         else:
             self.show_horizontal_search(False)
             self.content_lay.addStretch()
