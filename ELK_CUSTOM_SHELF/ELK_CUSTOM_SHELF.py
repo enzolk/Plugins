@@ -489,7 +489,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self._horizontal_widths = widths
 
     def horizontal_options_space(self):
-        return 40 if hasattr(self, "h_options_btn") and self.h_options_btn is not None else 0
+        return 40 if hasattr(self, "h_options_stack") and self.h_options_stack is not None else 0
 
     def build(self):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -526,12 +526,54 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.content_lay=QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.TopToBottom, self.content)
         self.content_lay.setContentsMargins(0,0,0,0); self.content_lay.setSpacing(8)
         self.scroll.setWidget(self.content); main.addWidget(self.scroll,1)
+        self.h_options_stack = None
+        self.h_options_btn = None
+        self.h_search_btn = None
+        self.h_search_popup = None
+        self.h_search_line = None
 
         try:
             ShortcutClass = getattr(QtWidgets, "QShortcut", None) or getattr(QtGui, "QShortcut", None)
             if ShortcutClass:
-                sc=ShortcutClass(QtGui.QKeySequence("Ctrl+F"), self); sc.activated.connect(lambda: self.search_box.setFocus()); self._shortcut=sc
+                sc=ShortcutClass(QtGui.QKeySequence("Ctrl+F"), self); sc.activated.connect(self.focus_search); self._shortcut=sc
         except Exception: pass
+
+    def focus_search(self):
+        if self.is_horizontal_mode():
+            self.show_horizontal_search(True)
+            if self.h_search_line is not None:
+                self.h_search_line.setFocus()
+                self.h_search_line.selectAll()
+        else:
+            self.search_box.setFocus()
+            self.search_box.selectAll()
+
+    def show_horizontal_search(self, visible):
+        if self.h_search_popup is None:
+            return
+        self.h_search_popup.setVisible(bool(visible))
+        if visible:
+            self.update_horizontal_search_geometry()
+
+    def toggle_horizontal_search(self):
+        if self.h_search_popup is None:
+            return
+        visible = not self.h_search_popup.isVisible()
+        self.show_horizontal_search(visible)
+        if visible and self.h_search_line is not None:
+            self.h_search_line.setFocus()
+            self.h_search_line.selectAll()
+
+    def update_horizontal_search_geometry(self):
+        if self.h_search_popup is None or self.h_search_btn is None:
+            return
+        btn_pos = self.h_search_btn.mapTo(self, QtCore.QPoint(0, 0))
+        base_h = max(24, int(self.height() * 0.12))
+        popup_h = min(34, base_h)
+        popup_w = max(140, min(320, int(self.width() * 0.28)))
+        x = btn_pos.x() - popup_w - 8
+        y = btn_pos.y() + int((self.h_search_btn.height() - popup_h) * 0.5)
+        self.h_search_popup.setGeometry(x, y, popup_w, popup_h)
 
     def apply_layout_mode(self):
         new_mode = self.desired_layout_mode()
@@ -586,7 +628,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.reflow()
 
     def on_search(self,t):
-        self.search=(t or '').lower().strip(); self.refresh()
+        text = t or ''
+        sender = self.sender()
+        if sender is self.search_box and self.h_search_line is not None and self.h_search_line.text() != text:
+            self.h_search_line.blockSignals(True); self.h_search_line.setText(text); self.h_search_line.blockSignals(False)
+        elif sender is self.h_search_line and self.search_box.text() != text:
+            self.search_box.blockSignals(True); self.search_box.setText(text); self.search_box.blockSignals(False)
+        self.search=text.lower().strip(); self.refresh()
 
     def toggle_view(self):
         self.view_mode="list" if self.view_mode=="grid" else "grid"; self.view_btn.setText("List" if self.view_mode=="list" else "Grid"); self.refresh()
@@ -611,20 +659,52 @@ class ELKMinimalUI(QtWidgets.QWidget):
         if not groups:
             lab=QtWidgets.QLabel("No tool found"); lab.setAlignment(QtCore.Qt.AlignCenter); lab.setStyleSheet("color:%s;padding:30px;"%MUTED); self.content_lay.addWidget(lab); self.content_lay.addStretch(); return
         self.h_options_btn = None
+        self.h_options_stack = None
+        self.h_search_btn = None
         if self.is_horizontal_mode():
             self.compute_horizontal_widths()
         for cat,items in groups:
             w=Category(cat,items,self); self.category_widgets.append(w); self.content_lay.addWidget(w)
         if self.is_horizontal_mode():
             self.content_lay.addStretch()
+            self.h_options_stack = QtWidgets.QFrame()
+            v = QtWidgets.QVBoxLayout(self.h_options_stack)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(6)
             self.h_options_btn = QtWidgets.QToolButton()
             self.h_options_btn.setText("⚙")
             self.h_options_btn.setToolTip("Options")
             self.h_options_btn.setFixedSize(32, 32)
             self.h_options_btn.clicked.connect(self.open_options_dialog)
             self.h_options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;font-size:16px;font-weight:700;} QToolButton:hover{background:#505050;}")
-            self.content_lay.addWidget(self.h_options_btn, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
+            v.addWidget(self.h_options_btn, 0, QtCore.Qt.AlignHCenter)
+            self.h_search_btn = QtWidgets.QToolButton()
+            self.h_search_btn.setText("🔍")
+            self.h_search_btn.setToolTip("Search / Filter")
+            self.h_search_btn.setFixedSize(32, 32)
+            self.h_search_btn.clicked.connect(self.toggle_horizontal_search)
+            self.h_search_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;font-size:14px;font-weight:700;} QToolButton:hover{background:#505050;}")
+            v.addWidget(self.h_search_btn, 0, QtCore.Qt.AlignHCenter)
+            v.addStretch()
+            self.content_lay.addWidget(self.h_options_stack, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
+
+            if self.h_search_popup is None:
+                self.h_search_popup = QtWidgets.QFrame(self)
+                self.h_search_popup.setVisible(False)
+                self.h_search_popup.setStyleSheet("QFrame{background:#373737;border:1px solid #565656;border-radius:7px;}")
+                hlay = QtWidgets.QHBoxLayout(self.h_search_popup)
+                hlay.setContentsMargins(6, 4, 6, 4)
+                hlay.setSpacing(4)
+                self.h_search_line = QtWidgets.QLineEdit(self.h_search_popup)
+                self.h_search_line.setPlaceholderText("Search tools...")
+                self.h_search_line.textChanged.connect(self.on_search)
+                self.h_search_line.setStyleSheet("QLineEdit{background:#2f2f2f;color:%s;border:1px solid #565656;border-radius:5px;padding:4px 6px;}" % TEXT)
+                hlay.addWidget(self.h_search_line, 1)
+            if self.h_search_line is not None:
+                self.h_search_line.setText(self.search_box.text())
+            self.update_horizontal_search_geometry()
         else:
+            self.show_horizontal_search(False)
             self.content_lay.addStretch()
         self.reflow()
 
@@ -647,6 +727,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.layout().setContentsMargins(10, 10, 10, 10)
             self.layout().setSpacing(8)
             self.content_lay.setSpacing(8)
+        self.update_horizontal_search_geometry()
         for c in self.category_widgets: c.reflow()
 
 
