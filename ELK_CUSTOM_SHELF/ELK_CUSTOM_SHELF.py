@@ -357,10 +357,14 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return 0
 
     def _apply_max_height_limit(self):
-        if self.max_height_px > 0:
-            self.setMaximumHeight(self.max_height_px)
-        else:
-            self.setMaximumHeight(16777215)
+        max_h = self.max_height_px if self.max_height_px > 0 else 16777215
+        self.setMaximumHeight(max_h)
+
+        # Apply the cap to the container window/workspace control as well,
+        # so the option controls the full window height and not only the UI body.
+        for widget in (self.parentWidget(), self.window()):
+            if widget is not None:
+                widget.setMaximumHeight(max_h)
 
     def is_horizontal_mode(self):
         return self.layout_mode == "horizontal"
