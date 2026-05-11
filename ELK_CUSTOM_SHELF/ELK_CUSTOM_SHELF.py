@@ -668,7 +668,7 @@ def show():
             dockToMainWindow=("right", 1),
             initialWidth=420,
             minimumWidth=260,
-            minimumHeight=80,
+            minimumHeight=0,
             widthProperty="preferred",
             heightProperty="preferred"
         )
