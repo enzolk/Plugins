@@ -258,8 +258,14 @@ class Category(QtWidgets.QFrame):
         ch.addWidget(self.collapsed_arrow,0,QtCore.Qt.AlignHCenter)
         self.collapsed_header.mouseReleaseEvent=self.toggle_event; self.outer.addWidget(self.collapsed_header)
 
-        self.body=QtWidgets.QWidget(); self.body.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        self.grid=QtWidgets.QGridLayout(self.body); self.grid.setContentsMargins(10,0,10,10); self.grid.setSpacing(7); self.outer.addWidget(self.body)
+        self.body_scroll = QtWidgets.QScrollArea()
+        self.body_scroll.setWidgetResizable(True)
+        self.body_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.body_scroll.setStyleSheet("QScrollArea{background:transparent;border:0px;} QScrollBar:vertical{background:#2a2a2a;width:8px;margin:0;} QScrollBar::handle:vertical{background:#565656;border-radius:4px;min-height:22px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;} QScrollBar:horizontal{background:#2a2a2a;height:8px;margin:0;} QScrollBar::handle:horizontal{background:#565656;border-radius:4px;min-width:22px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}")
+        self.body = QtWidgets.QWidget(); self.body.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.grid = QtWidgets.QGridLayout(self.body); self.grid.setContentsMargins(10,0,10,10); self.grid.setSpacing(7)
+        self.body_scroll.setWidget(self.body)
+        self.outer.addWidget(self.body_scroll, 1)
         self.setStyleSheet("QFrame#Category{background:#373737;border:1px solid #565656;border-radius:9px;} QFrame#CategoryHeader{background:transparent;border:0px;} QFrame#CollapsedCategoryHeader{background:transparent;border:0px;} QLabel{background:transparent;}")
         self.reflow()
 
@@ -269,7 +275,7 @@ class Category(QtWidgets.QFrame):
             self.parent_ui.collapsed_categories.discard(self.name)
         else:
             self.parent_ui.collapsed_categories.add(self.name)
-        self.body.setVisible(self.expanded)
+        self.body_scroll.setVisible(self.expanded)
         self.arrow.setText("⌄" if self.expanded else "›")
         if hasattr(self, "collapsed_arrow"):
             self.collapsed_arrow.setText("⌄" if not self.expanded else "›")
@@ -289,7 +295,7 @@ class Category(QtWidgets.QFrame):
             # Collapsed categories become a very narrow vertical tab.
             if not self.expanded:
                 cat_w = self.parent_ui.collapsed_category_width(self.name)
-                self.body.setVisible(False)
+                self.body_scroll.setVisible(False)
                 self.header.setVisible(False)
                 self.collapsed_header.setVisible(True)
                 self.setMinimumWidth(cat_w)
@@ -298,7 +304,7 @@ class Category(QtWidgets.QFrame):
                 self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
             else:
                 cat_w = int(self.parent_ui.horizontal_category_width(self.name))
-                self.body.setVisible(True)
+                self.body_scroll.setVisible(True)
                 self.header.setVisible(True)
                 self.collapsed_header.setVisible(False)
                 self.setMinimumWidth(cat_w)
@@ -309,8 +315,11 @@ class Category(QtWidgets.QFrame):
             self.grid.setContentsMargins(hpad, 0, hpad, bpad)
             self.grid.setSpacing(4 if is_tight else 6)
             cols = max(1, len(self.items))
+            self.grid.setSizeConstraint(QtWidgets.QLayout.SetMinimumSize)
+            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         else:
-            self.body.setVisible(self.expanded)
+            self.body_scroll.setVisible(self.expanded)
             self.header.setVisible(True)
             self.collapsed_header.setVisible(False)
             self.setMinimumWidth(0)
@@ -322,6 +331,9 @@ class Category(QtWidgets.QFrame):
             self.grid.setContentsMargins(hpad, 0, hpad, bpad)
             self.grid.setSpacing(5 if width < 500 else 7)
             cols=1 if self.parent_ui.view_mode=="list" or width<430 else max(2,min(6,int(width/205)))
+            self.grid.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
+            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
         self.count_label.setVisible(not horizontal or self.expanded)
         self.title.setVisible(True)
