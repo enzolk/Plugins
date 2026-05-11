@@ -512,13 +512,15 @@ class ELKMinimalUI(QtWidgets.QWidget):
         QtWidgets.QToolTip.setFont(QtGui.QFont("Segoe UI", 9))
 
         main=QtWidgets.QVBoxLayout(self); main.setContentsMargins(10,10,10,10); main.setSpacing(8)
-        top=QtWidgets.QHBoxLayout(); top.setSpacing(8)
+        self.top_bar = QtWidgets.QWidget(self)
+        self.top_bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+        top=QtWidgets.QHBoxLayout(self.top_bar); top.setContentsMargins(0,0,0,0); top.setSpacing(8)
         self.title_label=QtWidgets.QLabel("ELK UI"); self.title_label.setStyleSheet("color:#ffad3b;font-size:15px;font-weight:900;"); top.addWidget(self.title_label)
         self.search_box=QtWidgets.QLineEdit(); self.search_box.setPlaceholderText("Search tools..."); self.search_box.textChanged.connect(self.on_search); top.addWidget(self.search_box,1)
         self.view_btn=QtWidgets.QPushButton("Grid"); self.view_btn.clicked.connect(self.toggle_view); top.addWidget(self.view_btn)
         self.options_btn=QtWidgets.QToolButton(); self.options_btn.setText("⚙"); self.options_btn.setToolTip("Options"); self.options_btn.clicked.connect(self.open_options_dialog); self.options_btn.setFixedSize(32,32); self.options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;font-size:16px;font-weight:700;} QToolButton:hover{background:#505050;}")
         top.addWidget(self.options_btn)
-        main.addLayout(top)
+        main.addWidget(self.top_bar, 0)
 
         self.scroll=QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setMinimumHeight(0)
         self.scroll.setStyleSheet("QScrollArea{background:%s;border:none;} QScrollBar:vertical{background:#2a2a2a;width:10px;margin:0;} QScrollBar::handle:vertical{background:#565656;border-radius:5px;min-height:28px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;} QScrollBar:horizontal{background:#2a2a2a;height:10px;margin:0;} QScrollBar::handle:horizontal{background:#565656;border-radius:5px;min-width:28px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}"%BG)
@@ -547,21 +549,18 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.scroll.setWidgetResizable(True)
             self.scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-            self.title_label.setVisible(False)
-            self.search_box.setVisible(False)
-            self.view_btn.setVisible(False)
-            self.options_btn.setVisible(False)
+            self.top_bar.setVisible(False)
         else:
             self.content_lay.setDirection(QtWidgets.QBoxLayout.TopToBottom)
             self.content_lay.setAlignment(QtCore.Qt.AlignTop)
             self.scroll.setWidgetResizable(True)
             self.scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
             self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-            self.title_label.setVisible(True)
-            self.search_box.setVisible(True)
-            self.view_btn.setVisible(True)
-            self.options_btn.setVisible(True)
+            self.top_bar.setVisible(True)
         return True
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(1, 1)
 
     def open_options_dialog(self):
         dlg = QtWidgets.QDialog(self)
@@ -668,7 +667,7 @@ def show():
             dockToMainWindow=("right", 1),
             initialWidth=420,
             minimumWidth=260,
-            minimumHeight=80,
+            minimumHeight=0,
             widthProperty="preferred",
             heightProperty="preferred"
         )
