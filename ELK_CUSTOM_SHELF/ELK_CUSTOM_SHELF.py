@@ -366,6 +366,27 @@ class ELKMinimalUI(QtWidgets.QWidget):
             if widget is not None:
                 widget.setMaximumHeight(max_h)
 
+        # When docked in a Maya workspaceControl, also clamp the control itself.
+        # Without this, Maya can keep stretching the dock area vertically even if
+        # the Qt widget has a lower max height.
+        if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+            try:
+                cmds.workspaceControl(
+                    WORKSPACE_NAME,
+                    edit=True,
+                    minimumHeight=0,
+                    maximumHeight=max_h
+                )
+                if self.max_height_px > 0:
+                    cmds.workspaceControl(
+                        WORKSPACE_NAME,
+                        edit=True,
+                        heightProperty="preferred",
+                        resizeHeight=max_h
+                    )
+            except Exception:
+                pass
+
     def is_horizontal_mode(self):
         return self.layout_mode == "horizontal"
 
@@ -605,7 +626,7 @@ def show():
             minimumWidth=260,
             minimumHeight=80,
             widthProperty="preferred",
-            heightProperty="free"
+            heightProperty="preferred"
         )
 
         ptr = omui.MQtUtil.findControl(control)
