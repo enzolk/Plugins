@@ -370,6 +370,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
     def _apply_max_height_limit(self):
         max_h = self.max_height_px if self.max_height_px > 0 else 16777215
+        self.setMinimumWidth(0)
+        self.setMinimumHeight(0)
         self.setMaximumHeight(max_h)
 
         # Apply the cap only to the immediate ELK host widget.
@@ -377,6 +379,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         # resolve to a higher-level app window and unintentionally clamp Maya.
         host = self.parentWidget()
         if host is not None:
+            host.setMinimumWidth(0)
+            host.setMinimumHeight(0)
             host.setMaximumHeight(max_h)
 
         # When docked in a Maya workspaceControl, also clamp the control itself.
@@ -387,27 +391,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 cmds.workspaceControl(
                     WORKSPACE_NAME,
                     edit=True,
-                    minimumHeight=0,
-                    maximumHeight=max_h
-                )
-                if self.max_height_px > 0:
-                    cmds.workspaceControl(
-                        WORKSPACE_NAME,
-                        edit=True,
-                        heightProperty="preferred",
-                        resizeHeight=max_h
-                    )
-            except Exception:
-                pass
-
-        # When docked in a Maya workspaceControl, also clamp the control itself.
-        # Without this, Maya can keep stretching the dock area vertically even if
-        # the Qt widget has a lower max height.
-        if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
-            try:
-                cmds.workspaceControl(
-                    WORKSPACE_NAME,
-                    edit=True,
+                    minimumWidth=0,
                     minimumHeight=0,
                     maximumHeight=max_h
                 )
@@ -771,10 +755,10 @@ def show():
             floating=False,
             dockToMainWindow=("right", 1),
             initialWidth=420,
-            minimumWidth=260,
+            minimumWidth=0,
             minimumHeight=0,
-            widthProperty="preferred",
-            heightProperty="preferred"
+            widthProperty="free",
+            heightProperty="free"
         )
 
         ptr = omui.MQtUtil.findControl(control)
@@ -809,6 +793,7 @@ def show():
         globals()["ELK_UI_INSTANCE"] = ui
 
         cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True, restore=True)
+        cmds.workspaceControl(WORKSPACE_NAME, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
         return ui
 
     except Exception as dock_error:
