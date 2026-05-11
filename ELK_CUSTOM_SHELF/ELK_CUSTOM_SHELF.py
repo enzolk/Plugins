@@ -531,6 +531,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.h_search_btn = None
         self.h_search_popup = None
         self.h_search_line = None
+        self._keep_search_focus = False
 
         try:
             ShortcutClass = getattr(QtWidgets, "QShortcut", None) or getattr(QtGui, "QShortcut", None)
@@ -565,16 +566,26 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.h_search_line.selectAll()
 
     def update_horizontal_search_geometry(self):
-        if self.h_search_popup is None or self.h_search_btn is None:
+        if self.h_search_popup is None:
             return
-        btn_pos = self.h_search_btn.mapTo(self, QtCore.QPoint(0, 0))
         scale = 1.15
         base_h = max(30, int(self.height() * 0.14 * scale))
         popup_h = min(44, base_h)
         popup_w = max(165, min(360, int(self.width() * 0.30 * scale)))
-        x = btn_pos.x() - popup_w - 8
-        y = btn_pos.y() + int((self.h_search_btn.height() - popup_h) * 0.5)
-        self.h_search_popup.setGeometry(x, y, popup_w, popup_h)
+
+        # Keep the floating search anchored to the top-right of the panel,
+        # independent from the shelf widgets that are rebuilt during filtering.
+        right_margin = 46
+        x = max(6, self.width() - popup_w - right_margin)
+        y = 6
+
+        # If the search icon exists, align vertically with it for visual continuity.
+        if self.h_search_btn is not None:
+            btn_pos = self.h_search_btn.mapTo(self, QtCore.QPoint(0, 0))
+            y = max(4, btn_pos.y() + int((self.h_search_btn.height() - popup_h) * 0.5))
+
+        global_pos = self.mapToGlobal(QtCore.QPoint(x, y))
+        self.h_search_popup.setGeometry(global_pos.x(), global_pos.y(), popup_w, popup_h)
 
     def apply_layout_mode(self):
         new_mode = self.desired_layout_mode()
@@ -631,6 +642,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def on_search(self,t):
         text = t or ''
         sender = self.sender()
+        self._keep_search_focus = bool(sender is self.h_search_line and self.is_horizontal_mode())
         if sender is self.search_box and self.h_search_line is not None and self.h_search_line.text() != text:
             self.h_search_line.blockSignals(True); self.h_search_line.setText(text); self.h_search_line.blockSignals(False)
         elif sender is self.h_search_line and self.search_box.text() != text:
@@ -656,6 +668,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
     def refresh(self):
         self.apply_layout_mode()
+        was_horizontal_search_visible = bool(self.h_search_popup and self.h_search_popup.isVisible())
+        keep_horizontal_search_visible = was_horizontal_search_visible or bool(self.search)
         self.clear(); self.category_widgets=[]; groups=self.grouped_items()
         if not groups:
             lab=QtWidgets.QLabel("No tool found"); lab.setAlignment(QtCore.Qt.AlignCenter); lab.setStyleSheet("color:%s;padding:30px;"%MUTED); self.content_lay.addWidget(lab); self.content_lay.addStretch(); return
@@ -690,7 +704,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.content_lay.addWidget(self.h_options_stack, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
 
             if self.h_search_popup is None:
-                self.h_search_popup = QtWidgets.QFrame(self)
+                self.h_search_popup = QtWidgets.QFrame(self, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
                 self.h_search_popup.setVisible(False)
                 self.h_search_popup.setStyleSheet("QFrame{background:#373737;border:1px solid #565656;border-radius:7px;}")
                 hlay = QtWidgets.QHBoxLayout(self.h_search_popup)
@@ -705,10 +719,17 @@ class ELKMinimalUI(QtWidgets.QWidget):
             if self.h_search_line is not None:
                 self.h_search_line.setText(self.search_box.text())
             self.update_horizontal_search_geometry()
+            self.show_horizontal_search(keep_horizontal_search_visible)
+            if keep_horizontal_search_visible and self.h_search_popup is not None:
+                self.h_search_popup.raise_()
+                if self._keep_search_focus and self.h_search_line is not None:
+                    self.h_search_line.setFocus()
+                    self.h_search_line.setCursorPosition(len(self.h_search_line.text()))
         else:
             self.show_horizontal_search(False)
             self.content_lay.addStretch()
         self.reflow()
+        self._keep_search_focus = False
 
     def resizeEvent(self,e):
         super(ELKMinimalUI,self).resizeEvent(e)
