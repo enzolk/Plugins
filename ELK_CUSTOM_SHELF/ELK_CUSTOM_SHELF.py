@@ -324,7 +324,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.category_widgets=[]
         self.search=""
         self.setObjectName(WINDOW_NAME)
-        self.setMinimumHeight(0)
+        self.setMinimumSize(0, 0)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.build()
         self.refresh()
@@ -422,7 +422,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.view_btn=QtWidgets.QPushButton("Grid"); self.view_btn.clicked.connect(self.toggle_view); top.addWidget(self.view_btn)
         main.addLayout(top)
 
-        self.scroll=QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True)
+        self.scroll=QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setMinimumHeight(0)
         self.scroll.setStyleSheet("QScrollArea{background:%s;border:none;} QScrollBar:vertical{background:#2a2a2a;width:10px;margin:0;} QScrollBar::handle:vertical{background:#565656;border-radius:5px;min-height:28px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;} QScrollBar:horizontal{background:#2a2a2a;height:10px;margin:0;} QScrollBar::handle:horizontal{background:#565656;border-radius:5px;min-width:28px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}"%BG)
         self.content=QtWidgets.QWidget(); self.content.setAttribute(QtCore.Qt.WA_StyledBackground, True); self.content.setStyleSheet("background:%s;"%BG)
         self.content_lay=QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.TopToBottom, self.content)
@@ -527,7 +527,9 @@ def show():
             dockToMainWindow=("right", 1),
             initialWidth=420,
             minimumWidth=260,
-            widthProperty="preferred"
+            minimumHeight=80,
+            widthProperty="preferred",
+            heightProperty="free"
         )
 
         ptr = omui.MQtUtil.findControl(control)
@@ -537,7 +539,7 @@ def show():
         control_widget = wrapInstance(int(ptr), QtWidgets.QWidget)
         control_widget.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         control_widget.setStyleSheet("background:%s;" % BG)
-        control_widget.setMinimumHeight(0)
+        control_widget.setMinimumSize(0, 0)
         control_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
         old_layout = control_widget.layout()
