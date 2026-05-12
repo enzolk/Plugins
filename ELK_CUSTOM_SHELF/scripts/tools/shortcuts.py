@@ -1,3 +1,0 @@
-# ELK_META {"label": "ShortCuts", "short_name": "", "tooltip": "For each unique shortcut press, it:\n\n    Detects the shortcut.\n    Resolves possible actions.\n    Observes Maya command output right after the shortcut.\n    Infers the executed action by matching executed commands to possible actions.\n    Stores executed action ? shortcut links in a persistent table.", "source": "python"}
-import maya_shortcut_logger
-maya_shortcut_logger.open_shortcut_logger_ui()
