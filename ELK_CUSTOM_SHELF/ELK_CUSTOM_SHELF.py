@@ -43,7 +43,7 @@ else:
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
 ITEMS_META_FILE = BASE_DIR / "items_order.json"
-ICONS_DIR = BASE_DIR / "icons"
+ICONS_DIR = BASE_DIR / "Icons"
 
 ANIMATION_DURATION = 160
 REORDER_COOLDOWN_MS = 30
@@ -158,9 +158,6 @@ def bootstrap_scripts_from_legacy():
     if SCRIPTS_ROOT.exists() and any(SCRIPTS_ROOT.rglob('*.*')):
         return
     for item in LEGACY_SHELF_ITEMS:
-        category_name = item.get('category', 'Tools')
-        item['icon_svg'] = normalize_icon_name(item.get('icon_svg') or CATEGORY_DEFAULT_SVG.get(category_name, "tools.svg"))
-        item['icon_color'] = item.get('icon_color') or CATEGORY_COLORS.get(category_name, "#36d6ff")
         cat_dir = SCRIPTS_ROOT / _display_to_slug(item.get('category','tools'))
         cat_dir.mkdir(parents=True, exist_ok=True)
         stem = _slugify(item.get('label','script'))
@@ -249,16 +246,6 @@ def save_item_to_disk(item):
     return str(out)
 BG="#2a2a2a"; PANEL="#373737"; BUTTON_BG="#444444"; BUTTON_HOVER="#505050"; BORDER="#565656"; TEXT="#f0f0f0"; MUTED="#b7b7b7"
 CATEGORY_COLORS={"Tools":"#36d6ff","Object":"#5ee06c","Sculpting":"#b277ff","Action":"#ff9f2e","Nurbs":"#ffd34d","Deliver":"#4bc8ff","Vertex":"#56e3c4","Face":"#ff6b45"}
-CATEGORY_DEFAULT_SVG = {
-    "Tools": "tools.svg",
-    "Object": "box.svg",
-    "Sculpting": "brush.svg",
-    "Action": "arrow-curve-right.svg",
-    "Nurbs": "axis-x.svg",
-    "Deliver": "cube-send.svg",
-    "Vertex": "world.svg",
-    "Face": "face-mask.svg",
-}
 
 def run_item(item):
     cmd=item.get("command","") or ""
@@ -277,12 +264,18 @@ ICON_COLORS = [
     "#4cc9f0", "#f72585", "#90f1ef", "#caff70", "#ff8fab", "#b8f2e6",
 ]
 
+def stable_hash(text):
+    text = text or ""
+    h = 0
+    for ch in text:
+        h = (h * 33 + ord(ch)) & 0xffffffff
+    return h
+
 def item_color(item):
     picked = (item or {}).get("icon_color")
     if picked:
         return picked
-    category = (item or {}).get("category", "Tools")
-    return CATEGORY_COLORS.get(category, "#36d6ff")
+    return ICON_COLORS[stable_hash(item.get("label", "tool")) % len(ICON_COLORS)]
 
 
 def icon_catalog():
@@ -322,6 +315,73 @@ def _clean_tooltip(text, limit=240):
     if len(text) > limit:
         text = text[:limit].rstrip() + '…'
     return text
+
+class VectorIcon(QtWidgets.QWidget):
+    def __init__(self, kind="tool", color="#36d6ff", size=18, parent=None):
+        super(VectorIcon,self).__init__(parent)
+        self.kind=(kind or "tool").lower()
+        self.color=QtGui.QColor(color)
+        self.setFixedSize(size,size)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self,event):
+        p=QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w=self.width(); h=self.height(); c=self.color
+        pen=QtGui.QPen(c, max(1.35, w*.08))
+        pen.setCapStyle(QtCore.Qt.RoundCap); pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        p.setPen(pen); p.setBrush(QtCore.Qt.NoBrush)
+        k=self.kind
+        r=QtCore.QRectF(w*.2,h*.2,w*.6,h*.6)
+
+        # Category icons
+        if "tool" in k:
+            p.drawLine(w*.25,h*.75,w*.75,h*.25)
+            p.drawEllipse(QtCore.QRectF(w*.58,h*.08,w*.28,h*.28))
+            p.drawEllipse(QtCore.QRectF(w*.14,h*.64,w*.22,h*.22))
+        elif "object" in k:
+            pts=[QtCore.QPointF(w*.5,h*.12),QtCore.QPointF(w*.82,h*.3),QtCore.QPointF(w*.82,h*.68),QtCore.QPointF(w*.5,h*.88),QtCore.QPointF(w*.18,h*.68),QtCore.QPointF(w*.18,h*.3),QtCore.QPointF(w*.5,h*.12)]
+            for a,b in zip(pts,pts[1:]): p.drawLine(a,b)
+            p.drawLine(w*.18,h*.3,w*.5,h*.48); p.drawLine(w*.82,h*.3,w*.5,h*.48); p.drawLine(w*.5,h*.48,w*.5,h*.88)
+        elif "sculpt" in k:
+            p.drawEllipse(QtCore.QRectF(w*.18,h*.18,w*.52,h*.52)); p.drawLine(w*.62,h*.62,w*.86,h*.86)
+        elif "action" in k:
+            p.drawLine(w*.18,h*.52,w*.82,h*.52); p.drawLine(w*.62,h*.32,w*.82,h*.52); p.drawLine(w*.62,h*.72,w*.82,h*.52)
+        elif "nurbs" in k:
+            path=QtGui.QPainterPath(); path.moveTo(w*.12,h*.7); path.cubicTo(w*.35,h*.1,w*.65,h*.9,w*.88,h*.3); p.drawPath(path)
+        elif "deliver" in k or "export" in k or "import" in k:
+            p.drawRect(QtCore.QRectF(w*.25,h*.45,w*.5,h*.35)); p.drawLine(w*.5,h*.12,w*.5,h*.62); p.drawLine(w*.32,h*.3,w*.5,h*.12); p.drawLine(w*.68,h*.3,w*.5,h*.12)
+        else:
+            # Per-button icons: deterministic, no external library.
+            shape = stable_hash(k) % 12
+            if shape == 0:
+                p.drawRoundedRect(r, 4, 4); p.drawLine(w*.34,h*.5,w*.66,h*.5); p.drawLine(w*.5,h*.34,w*.5,h*.66)
+            elif shape == 1:
+                p.drawEllipse(r); p.drawLine(w*.50,h*.18,w*.50,h*.82); p.drawLine(w*.18,h*.50,w*.82,h*.50)
+            elif shape == 2:
+                p.drawRect(QtCore.QRectF(w*.22,h*.22,w*.46,h*.46)); p.drawRect(QtCore.QRectF(w*.36,h*.36,w*.46,h*.46))
+            elif shape == 3:
+                p.drawLine(w*.18,h*.28,w*.82,h*.28); p.drawLine(w*.18,h*.50,w*.82,h*.50); p.drawLine(w*.18,h*.72,w*.82,h*.72)
+                p.drawEllipse(QtCore.QRectF(w*.25,h*.20,w*.16,h*.16)); p.drawEllipse(QtCore.QRectF(w*.58,h*.42,w*.16,h*.16))
+            elif shape == 4:
+                p.drawLine(w*.5,h*.12,w*.5,h*.88); p.drawLine(w*.28,h*.34,w*.5,h*.12); p.drawLine(w*.72,h*.34,w*.5,h*.12)
+            elif shape == 5:
+                pts=[QtCore.QPointF(w*.5,h*.12),QtCore.QPointF(w*.82,h*.5),QtCore.QPointF(w*.5,h*.88),QtCore.QPointF(w*.18,h*.5),QtCore.QPointF(w*.5,h*.12)]
+                for a,b in zip(pts,pts[1:]): p.drawLine(a,b)
+            elif shape == 6:
+                p.drawArc(QtCore.QRectF(w*.18,h*.18,w*.64,h*.64), 30*16, 285*16); p.drawLine(w*.70,h*.20,w*.82,h*.42)
+            elif shape == 7:
+                p.drawLine(w*.20,h*.80,w*.80,h*.20); p.drawLine(w*.20,h*.20,w*.80,h*.80)
+            elif shape == 8:
+                p.drawEllipse(QtCore.QRectF(w*.18,h*.18,w*.24,h*.24)); p.drawEllipse(QtCore.QRectF(w*.58,h*.18,w*.24,h*.24)); p.drawEllipse(QtCore.QRectF(w*.38,h*.58,w*.24,h*.24)); p.drawLine(w*.42,h*.30,w*.58,h*.30); p.drawLine(w*.50,h*.42,w*.50,h*.58)
+            elif shape == 9:
+                path=QtGui.QPainterPath(); path.moveTo(w*.16,h*.70); path.cubicTo(w*.30,h*.18,w*.70,h*.18,w*.84,h*.70); p.drawPath(path)
+            elif shape == 10:
+                p.drawRoundedRect(QtCore.QRectF(w*.18,h*.25,w*.64,h*.5), 3, 3); p.drawLine(w*.32,h*.25,w*.32,h*.75); p.drawLine(w*.68,h*.25,w*.68,h*.75)
+            else:
+                p.drawLine(w*.18,h*.50,w*.82,h*.50); p.drawLine(w*.50,h*.18,w*.50,h*.82); p.drawEllipse(QtCore.QRectF(w*.38,h*.38,w*.24,h*.24))
+        p.end()
+
 
 class SvgIconWidget(QtWidgets.QWidget):
     def __init__(self, svg_name="", color="#36d6ff", size=18, parent=None):
@@ -370,7 +430,7 @@ class ToolButton(QtWidgets.QFrame):
             lay.setContentsMargins(0,0,0,0)
             lay.setSpacing(0)
             icon_size = 20 if tight else 24
-            icon = SvgIconWidget(item.get("icon_svg", "tools.svg"), item_color(item), icon_size)
+            icon = SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size)
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
@@ -387,7 +447,7 @@ class ToolButton(QtWidgets.QFrame):
                 lay.setSpacing(8)
                 icon_size = 18
                 min_height = 34
-            lay.addWidget(SvgIconWidget(item.get("icon_svg", "tools.svg"), item_color(item), icon_size))
+            lay.addWidget(SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size))
             lab=QtWidgets.QLabel(item.get("label","Tool"))
             lab.setObjectName("ToolLabel")
             lab.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
@@ -509,7 +569,7 @@ class Category(QtWidgets.QFrame):
     def build(self):
         self.outer=QtWidgets.QVBoxLayout(self); self.outer.setContentsMargins(0,0,0,0); self.outer.setSpacing(5)
         self.header=QtWidgets.QFrame(); self.header.setObjectName("CategoryHeader"); self.header.setCursor(QtCore.Qt.PointingHandCursor)
-        h=QtWidgets.QHBoxLayout(self.header); h.setContentsMargins(10,8,10,8); h.setSpacing(8); h.addWidget(SvgIconWidget(self.icon_svg or "tools.svg", self.icon_color or self.color, 16))
+        h=QtWidgets.QHBoxLayout(self.header); h.setContentsMargins(10,8,10,8); h.setSpacing(8); h.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 16) if self.icon_svg else VectorIcon(self.name,self.color,16))
         self.title=QtWidgets.QLabel(self.name.upper()); self.title.setStyleSheet("background:transparent;color:%s;font-weight:800;font-size:12px;border:0px;"%TEXT); h.addWidget(self.title,1)
         self.count_label=QtWidgets.QLabel(str(len(self.items))); self.count_label.setStyleSheet("background:transparent;color:%s;font-size:11px;border:0px;"%MUTED); h.addWidget(self.count_label)
         self.arrow=QtWidgets.QLabel("⌄"); self.arrow.setStyleSheet("background:transparent;color:%s;font-size:13px;border:0px;"%MUTED); h.addWidget(self.arrow)
@@ -519,7 +579,7 @@ class Category(QtWidgets.QFrame):
         # It takes the full available height, but only a very small width.
         self.collapsed_header=QtWidgets.QFrame(); self.collapsed_header.setObjectName("CollapsedCategoryHeader"); self.collapsed_header.setCursor(QtCore.Qt.PointingHandCursor)
         ch=QtWidgets.QVBoxLayout(self.collapsed_header); ch.setContentsMargins(5,5,5,5); ch.setSpacing(3)
-        ch.addWidget(SvgIconWidget(self.icon_svg or "tools.svg", self.icon_color or self.color, 17),0,QtCore.Qt.AlignHCenter)
+        ch.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 17) if self.icon_svg else VectorIcon(self.name,self.color,17),0,QtCore.Qt.AlignHCenter)
         self.collapsed_title=VerticalTextLabel(self.name.upper(), TEXT)
         ch.addWidget(self.collapsed_title,1,QtCore.Qt.AlignHCenter)
         self.collapsed_arrow=QtWidgets.QLabel("⌄"); self.collapsed_arrow.setAlignment(QtCore.Qt.AlignCenter); self.collapsed_arrow.setStyleSheet("background:transparent;color:%s;font-size:12px;border:0px;"%MUTED)
