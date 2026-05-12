@@ -1265,32 +1265,74 @@ class ELKMinimalUI(QtWidgets.QWidget):
         dlg.setWindowTitle("Choisir une icône SVG")
         lay = QtWidgets.QVBoxLayout(dlg)
         search = QtWidgets.QLineEdit()
-        search.setPlaceholderText("Rechercher une icône…")
+        search.setPlaceholderText("Tapez pour rechercher une icône…")
         lay.addWidget(search)
         lst = QtWidgets.QListWidget()
+        lst.setUniformItemSizes(True)
         lay.addWidget(lst, 1)
+        info = QtWidgets.QLabel("Tapez pour rechercher une icône.")
+        info.setStyleSheet("color:#b7b7b7;")
+        lay.addWidget(info)
         color = QtWidgets.QComboBox(); color.addItems(ICON_COLORS); color.setCurrentText(current_color if current_color in ICON_COLORS else ICON_COLORS[0])
         lay.addWidget(color)
         selection = {"name": normalize_icon_name(current_name)}
         token_query = tokenized(current_name)
+        max_results = 50
+        min_chars = 3
+        icon_cache = {}
+        icon_index = []
+        for p in icons:
+            icon_index.append((p, tokenized(p.stem), tokenized(p.name)))
+
+        def _fuzzy_match(query, target):
+            if not query:
+                return True
+            if query in target:
+                return True
+            qi = 0
+            for ch in target:
+                if qi < len(query) and query[qi] == ch:
+                    qi += 1
+                    if qi >= len(query):
+                        return True
+            return False
 
         def refill():
             lst.clear()
             q = tokenized(search.text())
-            for p in icons:
-                stem = p.stem
-                key = tokenized(p.name)
-                if q and q not in key:
+            if len(q) < min_chars:
+                info.setText("Tapez au moins {} caractères pour rechercher.".format(min_chars))
+                return
+
+            matches = []
+            for p, stem_key, name_key in icon_index:
+                if not (_fuzzy_match(q, stem_key) or _fuzzy_match(q, name_key)):
                     continue
-                it = QtWidgets.QListWidgetItem(stem)
+                matches.append((p, stem_key, name_key))
+
+            total = len(matches)
+            for p, stem_key, name_key in matches[:max_results]:
+                it = QtWidgets.QListWidgetItem(p.stem)
                 it.setData(QtCore.Qt.UserRole, p.name)
                 it.setToolTip(p.name)
-                it.setIcon(QtGui.QIcon(p.as_posix()))
+                if p.name not in icon_cache:
+                    icon_cache[p.name] = QtGui.QIcon(p.as_posix())
+                it.setIcon(icon_cache[p.name])
                 lst.addItem(it)
-                if (selection["name"] and p.name == selection["name"]) or (not selection["name"] and token_query and token_query in key):
+                if (selection["name"] and p.name == selection["name"]) or (not selection["name"] and token_query and (token_query in stem_key or token_query in name_key)):
                     lst.setCurrentItem(it)
+            if total > max_results:
+                info.setText("{} résultats affichés, affinez la recherche.".format(max_results))
+            elif total == 0:
+                info.setText("Aucun résultat.")
+            else:
+                info.setText("{} résultat(s).".format(total))
 
-        search.textChanged.connect(refill)
+        debounce = QtCore.QTimer(dlg)
+        debounce.setSingleShot(True)
+        debounce.setInterval(200)
+        debounce.timeout.connect(refill)
+        search.textChanged.connect(lambda _txt: debounce.start())
         refill()
         lst.itemClicked.connect(lambda it: selection.update({"name": it.data(QtCore.Qt.UserRole)}))
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
