@@ -39,6 +39,60 @@ else:
     except Exception:
         BASE_DIR = Path.cwd()
 SCRIPTS_ROOT = BASE_DIR / "scripts"
+CATEGORY_META_FILE = BASE_DIR / "categories.json"
+
+
+def _unique_fs_path(base_path):
+    p = Path(base_path)
+    if not p.exists():
+        return p
+    i = 2
+    while True:
+        cand = p.parent / f"{p.name}_{i}"
+        if not cand.exists():
+            return cand
+        i += 1
+
+def _load_category_meta():
+    data = {"order": [], "names": {}}
+    if CATEGORY_META_FILE.exists():
+        try:
+            parsed = json.loads(CATEGORY_META_FILE.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data["order"] = [str(x) for x in parsed.get("order", []) if str(x).strip()]
+                names = parsed.get("names", {})
+                if isinstance(names, dict):
+                    data["names"] = {str(k): str(v) for k, v in names.items() if str(k).strip()}
+        except Exception:
+            pass
+    return data
+
+def _save_category_meta(meta):
+    CATEGORY_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def _sync_category_meta_from_fs():
+    meta = _load_category_meta()
+    slugs = [d.name for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
+    names = dict(meta.get("names") or {})
+    order = [x for x in (meta.get("order") or []) if x in slugs]
+    for slug in slugs:
+        names.setdefault(slug, slug.replace('_', ' ').title())
+        if slug not in order:
+            order.append(slug)
+    meta = {"order": order, "names": names}
+    _save_category_meta(meta)
+    return meta
+
+def _display_to_slug(category_name):
+    name = (category_name or "").strip()
+    if not name:
+        return "tools"
+    meta = _sync_category_meta_from_fs()
+    target = name.casefold()
+    for slug, disp in (meta.get("names") or {}).items():
+        if (disp or "").strip().casefold() == target:
+            return slug
+    return _slugify(name)
 
 def _slugify(text):
     t = re.sub(r"[^a-zA-Z0-9_]+", "_", (text or "item").strip().lower()).strip("_")
@@ -72,7 +126,7 @@ def bootstrap_scripts_from_legacy():
     if SCRIPTS_ROOT.exists() and any(SCRIPTS_ROOT.rglob('*.*')):
         return
     for item in LEGACY_SHELF_ITEMS:
-        cat_dir = SCRIPTS_ROOT / _slugify(item.get('category','tools'))
+        cat_dir = SCRIPTS_ROOT / _display_to_slug(item.get('category','tools'))
         cat_dir.mkdir(parents=True, exist_ok=True)
         stem = _slugify(item.get('label','script'))
         ext = '.mel' if (item.get('source','python') or '').lower() == 'mel' else '.py'
@@ -102,9 +156,12 @@ def migrate_script_extensions():
 def load_shelf_items():
     bootstrap_scripts_from_legacy()
     migrate_script_extensions()
+    meta = _sync_category_meta_from_fs()
     items=[]
-    for cat_dir in sorted([d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()], key=lambda p: p.name):
-        cat = cat_dir.name.replace('_', ' ').title()
+    dirs = [d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
+    rank = {slug: i for i, slug in enumerate(meta.get('order') or [])}
+    for cat_dir in sorted(dirs, key=lambda p: (rank.get(p.name, 9999), p.name)):
+        cat = (meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
         for sp in sorted([x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]):
             try:
                 items.append(_read_script_file(sp, cat))
@@ -113,7 +170,7 @@ def load_shelf_items():
     return items
 
 def save_item_to_disk(item):
-    cat_dir = SCRIPTS_ROOT / _slugify(item.get('category','tools'))
+    cat_dir = SCRIPTS_ROOT / _display_to_slug(item.get('category','tools'))
     cat_dir.mkdir(parents=True, exist_ok=True)
     source = (item.get('source') or 'python').lower()
     ext = '.mel' if source == 'mel' else '.py'
@@ -715,27 +772,132 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.add_btn.setVisible(True)
         return True
 
+    def _category_rows(self):
+        meta = _sync_category_meta_from_fs()
+        rows = []
+        for slug in meta.get('order') or []:
+            path = SCRIPTS_ROOT / slug
+            if path.is_dir():
+                rows.append((slug, (meta.get('names') or {}).get(slug, slug.replace('_', ' ').title()), path))
+        return rows
+
+    def _refresh_ui_data(self):
+        self.shelf_items = load_shelf_items()
+        self.refresh()
+
     def open_options_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("ELK Options")
-        lay = QtWidgets.QVBoxLayout(dlg)
+        root = QtWidgets.QVBoxLayout(dlg)
+
         form = QtWidgets.QFormLayout()
-        spin = QtWidgets.QSpinBox()
-        spin.setRange(0, 4000)
-        spin.setSuffix(" px")
-        spin.setSpecialValueText("No limit")
-        spin.setValue(self.max_height_px)
+        spin = QtWidgets.QSpinBox(); spin.setRange(0, 4000); spin.setSuffix(" px"); spin.setSpecialValueText("No limit"); spin.setValue(self.max_height_px)
         form.addRow("Max UI height:", spin)
-        lay.addLayout(form)
+        root.addLayout(form)
+
+        grp = QtWidgets.QGroupBox("Category Manager")
+        gl = QtWidgets.QVBoxLayout(grp)
+        cat_list = QtWidgets.QListWidget(); cat_list.setMinimumHeight(180)
+        gl.addWidget(cat_list)
+        row = QtWidgets.QHBoxLayout()
+        for label, fn in (("+ Add", "add"), ("Rename", "ren"), ("Delete", "del"), ("↑", "up"), ("↓", "down")):
+            b = QtWidgets.QPushButton(label); b.setProperty("op", fn); row.addWidget(b)
+            setattr(self, f"_cat_btn_{fn}", b)
+        gl.addLayout(row)
+        root.addWidget(grp)
+
+        def reload_list(select_slug=None):
+            cat_list.clear()
+            for slug, disp, path in self._category_rows():
+                it = QtWidgets.QListWidgetItem(f"{disp}    [{slug}]")
+                it.setData(QtCore.Qt.UserRole, slug)
+                it.setData(QtCore.Qt.UserRole+1, disp)
+                it.setData(QtCore.Qt.UserRole+2, str(path))
+                cat_list.addItem(it)
+                if select_slug and slug == select_slug:
+                    cat_list.setCurrentItem(it)
+
+        def selected_row():
+            it = cat_list.currentItem()
+            return it.data(QtCore.Qt.UserRole) if it else None
+
+        def add_category():
+            name, ok = QtWidgets.QInputDialog.getText(dlg, "Create category", "Category name:")
+            if not ok: return
+            name = (name or "").strip()
+            if len(name) < 2:
+                cmds.warning("Invalid category name."); return
+            slug = _slugify(name)
+            meta = _sync_category_meta_from_fs()
+            existing_names = {(v or '').strip().casefold() for v in (meta.get('names') or {}).values()}
+            if name.casefold() in existing_names:
+                cmds.warning("Category already exists."); return
+            slug = slug if slug not in (meta.get('names') or {}) else _unique_fs_path(SCRIPTS_ROOT / slug).name
+            (SCRIPTS_ROOT / slug).mkdir(parents=True, exist_ok=True)
+            meta['names'][slug] = name
+            if slug not in meta['order']: meta['order'].append(slug)
+            _save_category_meta(meta)
+            reload_list(select_slug=slug); self._refresh_ui_data()
+
+        def rename_category():
+            slug = selected_row();
+            if not slug: return
+            meta = _sync_category_meta_from_fs(); old = meta['names'].get(slug, slug)
+            name, ok = QtWidgets.QInputDialog.getText(dlg, "Rename category", "New name:", text=old)
+            if not ok: return
+            name=(name or '').strip();
+            if not name: return
+            existing = {(v or '').strip().casefold(): k for k,v in meta['names'].items()}
+            if name.casefold() in existing and existing[name.casefold()] != slug:
+                cmds.warning("Category name conflict."); return
+            new_slug = _slugify(name)
+            if new_slug != slug:
+                dst = SCRIPTS_ROOT / new_slug
+                if dst.exists():
+                    dst = _unique_fs_path(dst)
+                (SCRIPTS_ROOT / slug).rename(dst)
+                final_slug = dst.name
+                meta['names'].pop(slug, None)
+                meta['names'][final_slug] = name
+                meta['order'] = [final_slug if x == slug else x for x in meta['order']]
+            else:
+                final_slug = slug; meta['names'][slug] = name
+            _save_category_meta(meta); reload_list(select_slug=final_slug); self._refresh_ui_data()
+
+        def delete_category():
+            slug = selected_row();
+            if not slug: return
+            path = SCRIPTS_ROOT / slug
+            files = [x for x in path.iterdir() if x.suffix.lower() in ('.py','.mel')] if path.exists() else []
+            if files:
+                items = [d for d in self._category_rows() if d[0] != slug]
+                names = [d[1] for d in items]
+                choice, ok = QtWidgets.QInputDialog.getItem(dlg, "Category not empty", "Move scripts to:", names, 0, False)
+                if not ok: return
+                target_slug = items[names.index(choice)][0]
+                for f in files: f.rename((SCRIPTS_ROOT / target_slug / f.name))
+            else:
+                res = QtWidgets.QMessageBox.question(dlg, "Delete category", "Confirm delete this category?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+                if res != QtWidgets.QMessageBox.Yes: return
+            if path.exists(): path.rmdir()
+            meta = _sync_category_meta_from_fs(); meta['names'].pop(slug, None); meta['order'] = [x for x in meta['order'] if x != slug]; _save_category_meta(meta)
+            reload_list(); self._refresh_ui_data()
+
+        def move(offset):
+            slug = selected_row();
+            if not slug: return
+            meta = _sync_category_meta_from_fs(); order = meta['order']; i = order.index(slug); j=i+offset
+            if j<0 or j>=len(order): return
+            order[i], order[j] = order[j], order[i]; meta['order']=order; _save_category_meta(meta); reload_list(select_slug=slug); self._refresh_ui_data()
+
+        reload_list()
+        self._cat_btn_add.clicked.connect(add_category); self._cat_btn_ren.clicked.connect(rename_category); self._cat_btn_del.clicked.connect(delete_category)
+        self._cat_btn_up.clicked.connect(lambda: move(-1)); self._cat_btn_down.clicked.connect(lambda: move(1))
+
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        lay.addWidget(btns)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
+        root.addWidget(btns); btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
         if dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec():
-            self.max_height_px = int(spin.value())
-            cmds.optionVar(iv=(OPTIONVAR_MAX_HEIGHT, self.max_height_px))
-            self._apply_max_height_limit()
-            self.reflow()
+            self.max_height_px = int(spin.value()); cmds.optionVar(iv=(OPTIONVAR_MAX_HEIGHT, self.max_height_px)); self._apply_max_height_limit(); self.reflow()
 
     def open_add_script_dialog(self):
         dlg = QtWidgets.QDialog(self)
