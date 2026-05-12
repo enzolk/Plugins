@@ -1980,19 +1980,9 @@ QLabel#PageHeaderSubtitle {
         cmds.button(label="Clear Selection", height=UI_BUTTON_HEIGHT, command=lambda *_: self.clear_integration_catalog_selection())
         cmds.setParent("..")
         cmds.text(label="Main Assets", align="left")
-        self.ui["integration_catalog_list"] = cmds.textScrollList(
-            allowMultiSelection=True,
-            height=160,
-            doubleClickCommand=lambda *_: self.rename_selected_integration_catalog_asset("main"),
-        )
-        cmds.button(label="Remove Selected (Main Assets)", height=UI_BUTTON_HEIGHT, command=lambda *_: self.remove_selected_integration_catalog_assets("main"))
+        self.ui["integration_catalog_list"] = cmds.textScrollList(allowMultiSelection=True, height=160)
         cmds.text(label="Annexe", align="left")
-        self.ui["integration_annexe_catalog_list"] = cmds.textScrollList(
-            allowMultiSelection=True,
-            height=120,
-            doubleClickCommand=lambda *_: self.rename_selected_integration_catalog_asset("annexe"),
-        )
-        cmds.button(label="Remove Selected (Annexe)", height=UI_BUTTON_HEIGHT, command=lambda *_: self.remove_selected_integration_catalog_assets("annexe"))
+        self.ui["integration_annexe_catalog_list"] = cmds.textScrollList(allowMultiSelection=True, height=120)
         cmds.separator(style="in")
 
         cmds.text(label="Step 02 — Load Selected Asset(s) from P4", align="left")
@@ -2287,19 +2277,6 @@ QLabel#PageHeaderSubtitle {
             return None
         return cleaned_upper
 
-    def _normalize_integration_asset_name(self, name: str) -> str:
-        short_name = self._short_name(name or "")
-        cleaned = self._strip_namespaces_from_name(short_name).strip()
-        cleaned = cleaned.replace(" ", "_").upper()
-        cleaned = re.sub(r"_+", "_", cleaned).strip("_")
-        return cleaned
-
-    def _integration_base_catalog_name(self, name: str) -> str:
-        normalized = self._normalize_integration_asset_name(name)
-        if not normalized:
-            return ""
-        return re.sub(r"_(\d+)$", "", normalized)
-
     def _refresh_integration_catalog_list_ui(self) -> None:
         self._clear_list_control("integration_catalog_list")
         self._clear_list_control("integration_annexe_catalog_list")
@@ -2368,7 +2345,6 @@ QLabel#PageHeaderSubtitle {
 
     def detect_catalog_assets_for_integration(self) -> List[str]:
         detected: Dict[str, Set[str]] = {}
-        grouped_occurrences: Dict[str, Set[str]] = {}
         annexe_sources: Dict[str, Set[str]] = {}
         self._clear_list_control("integration_logs")
         main_assets_groups = self._integration_find_main_assets_groups()
@@ -2384,12 +2360,8 @@ QLabel#PageHeaderSubtitle {
                 if self._integration_is_under_main_assets(node, main_assets_groups):
                     p4_main_assets.add(self._strip_namespaces_from_name(self._short_name(node)))
                     continue
-                base_catalog = self._integration_base_catalog_name(catalog_name)
-                if not base_catalog:
-                    continue
-                source_assets.add(base_catalog)
-                detected.setdefault(base_catalog, set()).add(node)
-                grouped_occurrences.setdefault(base_catalog, set()).add(self._normalize_integration_asset_name(node))
+                source_assets.add(catalog_name)
+                detected.setdefault(catalog_name, set()).add(node)
 
         annexe_assets: Set[str] = set()
         for catalog_name, source_nodes in detected.items():
@@ -2398,30 +2370,25 @@ QLabel#PageHeaderSubtitle {
                 while pending_children:
                     child = pending_children.pop()
                     child_catalog = self._extract_catalog_asset_from_name(child)
-                    if not child_catalog:
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
-                        continue
-                    child_base_catalog = self._integration_base_catalog_name(child_catalog)
-                    if not child_base_catalog or child_base_catalog == catalog_name:
+                    if not child_catalog or child_catalog == catalog_name:
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
                     if child_catalog.startswith("LOCATOR"):
                         self._append_integration_log(f"[CLASSIFY SKIP] Locator ignored: {child_catalog}")
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    if self._integration_is_child_variant_of_asset(child_base_catalog, catalog_name):
+                    if self._integration_is_child_variant_of_asset(child_catalog, catalog_name):
                         self._append_integration_log(
-                            f"[CLASSIFY SKIP] Child variant ignored: {child_base_catalog} under {catalog_name}"
+                            f"[CLASSIFY SKIP] Child variant ignored: {child_catalog} under {catalog_name}"
                         )
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    if child_base_catalog not in detected:
+                    if child_catalog not in detected:
                         pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    annexe_assets.add(child_base_catalog)
-                    annexe_sources.setdefault(child_base_catalog, set()).add(catalog_name)
-                    occurrences = ", ".join(sorted(grouped_occurrences.get(child_base_catalog, [])))
-                    self._append_integration_log(f"[CLASSIFY] Annexe Asset: {child_base_catalog} from occurrences: {occurrences or child_base_catalog}")
+                    annexe_assets.add(child_catalog)
+                    annexe_sources.setdefault(child_catalog, set()).add(catalog_name)
+                    self._append_integration_log(f"[CLASSIFY] Annexe Asset: {child_catalog} linked to {catalog_name}")
                     pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
 
         self.integration_catalog_assets = sorted(detected.keys())
@@ -2440,8 +2407,6 @@ QLabel#PageHeaderSubtitle {
             self._append_integration_log(
                 f"[CLASSIFY] Source Asset (outside Main_Assets): {source_asset}"
             )
-        for main_asset in sorted(self.integration_main_catalog_assets):
-            self._append_integration_log(f"[CLASSIFY] Main Asset: {main_asset}")
         for annexe_asset in sorted(annexe_assets):
             source_list = ", ".join(sorted(annexe_sources.get(annexe_asset, [])))
             source_text = f" (linked to: {source_list})" if source_list else ""
@@ -2461,57 +2426,6 @@ QLabel#PageHeaderSubtitle {
         for catalog_name in self.integration_annexe_catalog_assets:
             self._append_integration_log(f"- {catalog_name}")
         return self.integration_catalog_assets[:]
-
-    def _integration_rebuild_catalog_assets(self) -> None:
-        self.integration_catalog_assets = sorted(set(self.integration_main_catalog_assets) | set(self.integration_annexe_catalog_assets))
-
-    def rename_selected_integration_catalog_asset(self, asset_type: str) -> None:
-        is_main = asset_type == "main"
-        list_key = "integration_catalog_list" if is_main else "integration_annexe_catalog_list"
-        selected = self._selected_list_control_items(list_key)
-        if not selected:
-            return
-        old_name = selected[0]
-        result = cmds.promptDialog(title="Rename Asset", message="New asset name:", button=["OK", "Cancel"], defaultButton="OK", cancelButton="Cancel", dismissString="Cancel", text=old_name)
-        if result != "OK":
-            return
-        new_name = self._normalize_integration_asset_name(cmds.promptDialog(query=True, text=True))
-        if not new_name:
-            return
-        target_list = self.integration_main_catalog_assets if is_main else self.integration_annexe_catalog_assets
-        if old_name not in target_list:
-            return
-        target_list[target_list.index(old_name)] = new_name
-        deduped = sorted(set(target_list))
-        if is_main:
-            self.integration_main_catalog_assets = deduped
-        else:
-            self.integration_annexe_catalog_assets = deduped
-        if old_name in self.integration_detection_sources:
-            self.integration_detection_sources[new_name] = self.integration_detection_sources.pop(old_name)
-        if old_name in self.integration_annexe_sources:
-            self.integration_annexe_sources[new_name] = self.integration_annexe_sources.pop(old_name)
-        self._integration_rebuild_catalog_assets()
-        self._refresh_integration_catalog_list_ui()
-        self._set_selected_list_control_items(list_key, [new_name])
-        self._append_integration_log(f"[USER EDIT] Renamed {'main' if is_main else 'annexe'} asset: {old_name} -> {new_name}")
-
-    def remove_selected_integration_catalog_assets(self, asset_type: str) -> None:
-        is_main = asset_type == "main"
-        list_key = "integration_catalog_list" if is_main else "integration_annexe_catalog_list"
-        selected = set(self._selected_list_control_items(list_key))
-        if not selected:
-            return
-        if is_main:
-            self.integration_main_catalog_assets = [name for name in self.integration_main_catalog_assets if name not in selected]
-        else:
-            self.integration_annexe_catalog_assets = [name for name in self.integration_annexe_catalog_assets if name not in selected]
-        for removed in sorted(selected):
-            self.integration_detection_sources.pop(removed, None)
-            self.integration_annexe_sources.pop(removed, None)
-            self._append_integration_log(f"[USER EDIT] Removed {'main' if is_main else 'annexe'} asset: {removed}")
-        self._integration_rebuild_catalog_assets()
-        self._refresh_integration_catalog_list_ui()
 
     def _integration_catalog_candidates(self, scene_asset: str) -> List[str]:
         cleaned = self._strip_namespaces_from_name(scene_asset).strip("_ ").upper()
