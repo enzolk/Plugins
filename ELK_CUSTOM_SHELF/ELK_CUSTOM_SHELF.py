@@ -40,6 +40,18 @@ else:
         BASE_DIR = Path.cwd()
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
+ITEMS_META_FILE = BASE_DIR / "items_order.json"
+
+ANIMATION_DURATION = 280
+REORDER_COOLDOWN_MS = 300
+REORDER_CONFIRM_FRAMES = 20
+HYSTERESIS_RATIO = 0.7
+
+
+def event_global_pos(event):
+    if hasattr(event, "globalPosition"):
+        return event.globalPosition().toPoint()
+    return event.globalPos()
 
 
 def _unique_fs_path(base_path):
@@ -162,20 +174,46 @@ def migrate_script_extensions():
                     py_file.unlink()
         except Exception:
             continue
+def _load_items_meta():
+    data = {"order": [], "category_by_file": {}}
+    if ITEMS_META_FILE.exists():
+        try:
+            parsed = json.loads(ITEMS_META_FILE.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data["order"] = [str(x) for x in parsed.get("order", []) if str(x).strip()]
+                cbf = parsed.get("category_by_file", {})
+                if isinstance(cbf, dict):
+                    data["category_by_file"] = {str(k): str(v) for k, v in cbf.items()}
+        except Exception:
+            pass
+    return data
+
+
+def _save_items_meta(meta):
+    ITEMS_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def load_shelf_items():
     bootstrap_scripts_from_legacy()
     migrate_script_extensions()
-    meta = _sync_category_meta_from_fs()
+    cat_meta = _sync_category_meta_from_fs()
+    item_meta = _load_items_meta()
     items=[]
     dirs = [d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
-    rank = {slug: i for i, slug in enumerate(meta.get('order') or [])}
+    rank = {slug: i for i, slug in enumerate(cat_meta.get('order') or [])}
     for cat_dir in sorted(dirs, key=lambda p: (rank.get(p.name, 9999), p.name)):
-        cat = (meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
-        for sp in sorted([x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]):
+        cat = (cat_meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
+        for sp in [x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]:
             try:
-                items.append(_read_script_file(sp, cat))
+                rel = str(sp.relative_to(BASE_DIR)).replace('\\', '/')
+                cat = item_meta.get("category_by_file", {}).get(rel, cat)
+                item = _read_script_file(sp, cat)
+                item["file_key"] = rel
+                items.append(item)
             except Exception:
                 continue
+    order_rank = {k: i for i, k in enumerate(item_meta.get("order") or [])}
+    items.sort(key=lambda it: (rank.get(_display_to_slug(it.get('category', 'Tools')), 9999), order_rank.get(it.get('file_key',''), 99999), it.get('label','').lower()))
     return items
 
 def save_item_to_disk(item):
@@ -304,6 +342,7 @@ class VectorIcon(QtWidgets.QWidget):
 
 class ToolButton(QtWidgets.QFrame):
     clicked=QtCore.Signal(dict)
+    dragStarted=QtCore.Signal(object, object)
     def __init__(self,item,color="#36d6ff",compact=False,tight=False,parent_ui=None,parent=None):
         super(ToolButton,self).__init__(parent)
         self.item=item
@@ -313,6 +352,8 @@ class ToolButton(QtWidgets.QFrame):
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setToolTip(_clean_tooltip((item.get("label", "Tool") + "\n\n" + item.get("tooltip", "")).strip()))
         self.setObjectName("ToolButton")
+        self._press_pos = None
+        self._drag_started = False
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
 
         lay=QtWidgets.QHBoxLayout(self)
@@ -347,6 +388,29 @@ class ToolButton(QtWidgets.QFrame):
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._press_pos = event_global_pos(event)
+            self._drag_started = False
+        super(ToolButton, self).mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press_pos and not self._drag_started:
+            gp = event_global_pos(event)
+            if (gp - self._press_pos).manhattanLength() > 6:
+                self._drag_started = True
+                self.dragStarted.emit(self, gp)
+                return
+        super(ToolButton, self).mouseMoveEvent(event)
+
+    def clone_preview(self):
+        clone = ToolButton(self.item, compact=self.compact, tight=self.tight, parent_ui=self.parent_ui)
+        clone.setObjectName("dragPreview")
+        clone.setStyleSheet("QFrame#dragPreview{background:#4f4f4f;border:1px solid #777777;border-radius:7px;}")
+        clone.resize(self.size())
+        clone.setFixedSize(self.size())
+        return clone
+
     def mouseReleaseEvent(self,e):
         if e.button()==QtCore.Qt.LeftButton:
             self.clicked.emit(self.item)
@@ -354,7 +418,16 @@ class ToolButton(QtWidgets.QFrame):
             self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(e.pos()))
             e.accept()
             return
+        self._press_pos = None
+        self._drag_started = False
         super(ToolButton,self).mouseReleaseEvent(e)
+
+
+class Placeholder(QtWidgets.QFrame):
+    def __init__(self, parent=None):
+        super(Placeholder, self).__init__(parent)
+        self.setObjectName("placeholder")
+        self.setMinimumHeight(30)
 
 class VerticalTextLabel(QtWidgets.QLabel):
     """Auto-sized rotated text label used only for closed horizontal categories.
@@ -416,6 +489,7 @@ class Category(QtWidgets.QFrame):
         self.expanded = name not in getattr(parent_ui, "collapsed_categories", set())
         self.color=CATEGORY_COLORS.get(name,"#ffad3b")
         self.setObjectName("Category")
+        self.setProperty("dragOver", False)
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.build()
 
@@ -447,7 +521,7 @@ class Category(QtWidgets.QFrame):
         self.grid = QtWidgets.QGridLayout(self.body); self.grid.setContentsMargins(10,0,10,10); self.grid.setSpacing(7)
         self.body_scroll.setWidget(self.body)
         self.outer.addWidget(self.body_scroll, 1)
-        self.setStyleSheet("QFrame#Category{background:#373737;border:1px solid #565656;border-radius:9px;} QFrame#CategoryHeader{background:transparent;border:0px;} QFrame#CollapsedCategoryHeader{background:transparent;border:0px;} QLabel{background:transparent;}")
+        self.setStyleSheet("QFrame#Category{background:#373737;border:1px solid #565656;border-radius:9px;} QFrame#Category[dragOver=\"true\"]{border:1px solid #ff9f2e;} QFrame#placeholder{background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.16);border-radius:6px;} QFrame#CategoryHeader{background:transparent;border:0px;} QFrame#CollapsedCategoryHeader{background:transparent;border:0px;} QLabel{background:transparent;}")
         self.reflow()
 
     def toggle_event(self,event):
@@ -523,7 +597,29 @@ class Category(QtWidgets.QFrame):
             return
 
         for i,item in enumerate(self.items):
-            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
+            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag); self.grid.addWidget(btn,i//cols,i%cols)
+
+    def layout_items(self):
+        result=[]
+        for i in range(self.grid.count()):
+            w=self.grid.itemAt(i).widget()
+            if w: result.append(w)
+        return result
+
+    def remove_widget_from_layout(self, widget):
+        self.grid.removeWidget(widget)
+
+    def insert_widget_at(self, index, widget):
+        items=[w for w in self.layout_items() if w is not widget]
+        index=max(0,min(index,len(items)))
+        items.insert(index,widget)
+        cols=max(1,len(items)) if self.parent_ui.is_horizontal_mode() else (1 if self.parent_ui.view_mode=="list" or self.parent_ui.available_width()<430 else max(2,min(6,int(self.parent_ui.available_width()/205))))
+        for i,w in enumerate(items):
+            self.grid.addWidget(w,i//cols,i%cols)
+
+    def set_drag_over(self, state):
+        self.setProperty("dragOver", bool(state))
+        self.style().unpolish(self); self.style().polish(self); self.update()
 
 class ELKMinimalUI(QtWidgets.QWidget):
     def __init__(self,parent=None):
@@ -534,12 +630,111 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.category_widgets=[]
         self.search=""
         self.max_height_px = self._load_max_height_px()
+        self.drag_state = None
+        self.last_reorder_time = 0
+        self.candidate_key = None
+        self.candidate_frames = 0
         self.setObjectName(WINDOW_NAME)
         self.setMinimumSize(0, 0)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.build()
         self._apply_max_height_limit()
         self.refresh()
+
+
+    def categories(self):
+        return list(getattr(self, "category_widgets", []))
+
+    def find_category_for_widget(self, widget):
+        for c in self.categories():
+            if widget in c.layout_items():
+                return c
+        return None
+
+    def category_under_global_pos(self, global_pos):
+        for c in self.categories():
+            rect = QtCore.QRect(c.mapToGlobal(QtCore.QPoint(0, 0)), c.size())
+            if rect.contains(global_pos):
+                return c
+        return None
+
+    def start_drag(self, source_button, global_pos):
+        if self.drag_state or self.is_horizontal_mode():
+            return
+        source_category = self.find_category_for_widget(source_button)
+        if not source_category:
+            return
+        source_index = source_category.layout_items().index(source_button)
+        source_rect_global = QtCore.QRect(source_button.mapToGlobal(QtCore.QPoint(0,0)), source_button.size())
+        placeholder = Placeholder(); placeholder.setFixedHeight(source_button.height())
+        source_category.remove_widget_from_layout(source_button); source_button.hide(); source_button.setParent(None)
+        source_category.insert_widget_at(source_index, placeholder); placeholder.show()
+        preview = source_button.clone_preview(); preview.setWindowFlags(QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint); preview.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True); preview.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        preview.move(source_rect_global.topLeft()); preview.show(); preview.raise_()
+        self.drag_state={"source":source_button,"placeholder":placeholder,"preview":preview,"offset":global_pos-source_rect_global.topLeft()}
+        self.grabMouse(); self.setMouseTracking(True)
+
+    def mouseMoveEvent(self, event):
+        if self.drag_state:
+            self.update_drag(event_global_pos(event)); return
+        super(ELKMinimalUI, self).mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.drag_state and event.button()==QtCore.Qt.LeftButton:
+            self.end_drag(); return
+        super(ELKMinimalUI, self).mouseReleaseEvent(event)
+
+    def update_drag(self, global_pos):
+        st=self.drag_state; st["preview"].move(global_pos-st["offset"])
+        for c in self.categories(): c.set_drag_over(False)
+        target=self.category_under_global_pos(global_pos)
+        if not target: return
+        target.set_drag_over(True)
+        items=[w for w in target.layout_items() if isinstance(w, ToolButton)]
+        idx=len(items)
+        for i,w in enumerate(items):
+            r=QtCore.QRect(w.mapToGlobal(QtCore.QPoint(0,0)), w.size())
+            if global_pos.y()<r.center().y() or (abs(global_pos.y()-r.center().y())<r.height() and global_pos.x()<r.left()+r.width()*HYSTERESIS_RATIO):
+                idx=i; break
+        key=f"{self.categories().index(target)}:{idx}"
+        if self.candidate_key!=key: self.candidate_key=key; self.candidate_frames=1; return
+        self.candidate_frames += 1
+        if self.candidate_frames < REORDER_CONFIRM_FRAMES: return
+        now=QtCore.QDateTime.currentMSecsSinceEpoch()
+        if now-self.last_reorder_time < REORDER_COOLDOWN_MS: return
+        self.last_reorder_time=now
+        self.move_placeholder(target, idx)
+
+    def move_placeholder(self, target_category, target_index):
+        ph=self.drag_state["placeholder"]; cur=self.find_category_for_widget(ph)
+        if cur: cur.remove_widget_from_layout(ph)
+        target_category.insert_widget_at(target_index, ph); ph.show()
+
+    def end_drag(self):
+        st=self.drag_state; source=st["source"]; preview=st["preview"]; placeholder=st["placeholder"]
+        target=self.find_category_for_widget(placeholder)
+        if not target:
+            preview.close(); source.show(); self.drag_state=None; self.releaseMouse(); return
+        idx=target.layout_items().index(placeholder)
+        target.remove_widget_from_layout(placeholder); placeholder.deleteLater()
+        target.insert_widget_at(idx, source); source.show(); source.raise_()
+        source.item["category"]=target.name
+        preview.close(); preview.deleteLater()
+        for c in self.categories(): c.set_drag_over(False)
+        self.drag_state=None
+        try: self.releaseMouse()
+        except Exception: pass
+        self.save_current_order()
+
+    def save_current_order(self):
+        order=[]; category_by_file={}
+        for c in self.categories():
+            for w in c.layout_items():
+                if isinstance(w, ToolButton):
+                    key=w.item.get("file_key")
+                    if key: order.append(key); category_by_file[key]=c.name
+        _save_items_meta({"order":order, "category_by_file":category_by_file})
+        self.shelf_items = load_shelf_items()
 
     def _load_max_height_px(self):
         if cmds.optionVar(exists=OPTIONVAR_MAX_HEIGHT):
