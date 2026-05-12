@@ -1,4 +1,4 @@
-# ELK_META {"label": "Unfreeze", "short_name": "", "tooltip": "Unfreeze Selected components", "source": "python"}
+# ELK_META {"label": "Unfreeze", "short_name": "", "tooltip": "Unfreeze Selected components", "source": "python", "icon_svg": "temperature-snow.svg", "icon_color": "#b277ff"}
 import maya.cmds as mc
 
 def unfreeze_selected_components():

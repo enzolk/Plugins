@@ -1,4 +1,4 @@
-# ELK_META {"label": "EqualSpace", "short_name": "", "tooltip": "Ce script cre une interface permettant d'espacer uniformment les objets slectionns. L'utilisateur peut spcifier la distance d'espacement, choisir l'axe (X, Y ou Z) et dterminer si l'espacement doit tre appliqu selon l'axe du monde ou l'axe local de l'objet. Cette flexibilit facilite l'organisation prcise des objets dans la scne 3D.", "source": "python"}
+# ELK_META {"label": "EqualSpace", "short_name": "", "tooltip": "Ce script cre une interface permettant d'espacer uniformment les objets slectionns. L'utilisateur peut spcifier la distance d'espacement, choisir l'axe (X, Y ou Z) et dterminer si l'espacement doit tre appliqu selon l'axe du monde ou l'axe local de l'objet. Cette flexibilit facilite l'organisation prcise des objets dans la scne 3D.", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
 import maya.cmds as cmds
 
 def espacer_objets():

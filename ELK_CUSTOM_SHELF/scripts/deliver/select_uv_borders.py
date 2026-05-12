@@ -1,4 +1,4 @@
-# ELK_META {"label": "Select UV Borders", "short_name": "", "tooltip": "Select UV Borders", "source": "python"}
+# ELK_META {"label": "Select UV Borders", "short_name": "", "tooltip": "Select UV Borders", "source": "python", "icon_svg": "table-import.svg", "icon_color": "#4bc8ff"}
 # -*- coding: utf-8 -*-
 """
 select_uv_shell_perimeters.py

@@ -1,4 +1,4 @@
-# ELK_META {"label": "PtoVert", "short_name": "", "tooltip": "Snap the pivot to the nearest Vertex", "source": "python"}
+# ELK_META {"label": "PtoVert", "short_name": "", "tooltip": "Snap the pivot to the nearest Vertex", "source": "python", "icon_svg": "click.svg", "icon_color": "#ff9f2e"}
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 

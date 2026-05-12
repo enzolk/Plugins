@@ -1,4 +1,4 @@
-# ELK_META {"label": "UV Orient", "short_name": "", "tooltip": "Orient UV shells In the same direction", "source": "python"}
+# ELK_META {"label": "UV Orient", "short_name": "", "tooltip": "Orient UV shells In the same direction", "source": "python", "icon_svg": "table-import.svg", "icon_color": "#4bc8ff"}
 import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om

@@ -1,4 +1,4 @@
-# ELK_META {"label": "Share Face Select", "short_name": "", "tooltip": "Select faces that share the same space", "source": "python"}
+# ELK_META {"label": "Share Face Select", "short_name": "", "tooltip": "Select faces that share the same space", "source": "python", "icon_svg": "lasso-polygon.svg", "icon_color": "#4bc8ff"}
 import maya.cmds as cmds
 import math
 

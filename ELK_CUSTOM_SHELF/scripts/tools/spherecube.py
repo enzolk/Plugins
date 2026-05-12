@@ -1,4 +1,4 @@
-# ELK_META {"label": "SphereCube", "short_name": "", "tooltip": "Create a sphere from a cube", "source": "python"}
+# ELK_META {"label": "SphereCube", "short_name": "", "tooltip": "Create a sphere from a cube", "source": "python", "icon_svg": "circle-square.svg", "icon_color": "#36d6ff"}
 import maya.cmds as cmds
 
 def create_quad_sphere_ui():

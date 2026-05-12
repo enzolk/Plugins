@@ -1,4 +1,4 @@
-# ELK_META {"label": "Smooth_Crease", "short_name": "", "tooltip": "Set mesh options to receive creasing correctly", "source": "python"}
+# ELK_META {"label": "Smooth_Crease", "short_name": "", "tooltip": "Set mesh options to receive creasing correctly", "source": "python", "icon_svg": "blur.svg", "icon_color": "#b277ff"}
 import maya.cmds as cmds
 
 def set_subdiv_display_on_selection():
