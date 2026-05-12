@@ -1,4 +1,0 @@
-//insert edgeloop relative distance 
-SplitEdgeRingTool; 
-polySelectEditCtx -e -splitType 1 -insertWithEdgeFlow 0 
-polySelectEditContext; 
