@@ -569,6 +569,38 @@ class VerticalTextLabel(QtWidgets.QLabel):
         painter.drawText(rect, QtCore.Qt.AlignCenter, self.text())
         painter.end()
 
+def _elk_debug_rect(widget):
+    if widget is None:
+        return "None"
+    try:
+        g = widget.geometry()
+        return "{}x{}@{},{}".format(g.width(), g.height(), g.x(), g.y())
+    except Exception:
+        return "<unavailable>"
+
+
+def _elk_policy_name(policy):
+    names = {
+        QtWidgets.QSizePolicy.Fixed: "Fixed",
+        QtWidgets.QSizePolicy.Minimum: "Minimum",
+        QtWidgets.QSizePolicy.Maximum: "Maximum",
+        QtWidgets.QSizePolicy.Preferred: "Preferred",
+        QtWidgets.QSizePolicy.Expanding: "Expanding",
+        QtWidgets.QSizePolicy.MinimumExpanding: "MinimumExpanding",
+        QtWidgets.QSizePolicy.Ignored: "Ignored",
+    }
+    return names.get(policy, str(int(policy)))
+
+
+def _elk_scroll_policy_name(policy):
+    names = {
+        QtCore.Qt.ScrollBarAsNeeded: "AsNeeded",
+        QtCore.Qt.ScrollBarAlwaysOff: "AlwaysOff",
+        QtCore.Qt.ScrollBarAlwaysOn: "AlwaysOn",
+    }
+    return names.get(policy, str(int(policy)))
+
+
 class Category(QtWidgets.QFrame):
     def __init__(self,name,items,parent_ui,parent=None):
         super(Category,self).__init__(parent)
@@ -741,11 +773,16 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.candidate_key = None
         self.candidate_frames = 0
         self.setObjectName(WINDOW_NAME)
+        self._layout_debug_resize_timer = QtCore.QTimer(self)
+        self._layout_debug_resize_timer.setSingleShot(True)
+        self._layout_debug_resize_timer.timeout.connect(lambda: self.log_layout_state("resize_debounced"))
         self.setMinimumSize(0, 0)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.build()
         self._apply_max_height_limit()
         self.refresh()
+        QtCore.QTimer.singleShot(0, lambda: self.log_layout_state("ui_open"))
+        QtCore.QTimer.singleShot(60, lambda: self.log_layout_state("first_build_complete"))
 
 
     def categories(self):
@@ -1086,6 +1123,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         if new_mode == self.layout_mode:
             return False
         self.layout_mode = new_mode
+        self.log_layout_state("layout_mode_change:{}".format(new_mode))
         if new_mode == "horizontal":
             self.content_lay.setDirection(QtWidgets.QBoxLayout.LeftToRight)
             self.content_lay.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
@@ -1732,9 +1770,79 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
 
+    def log_layout_state(self, reason=""):
+        prefix = "[ELK_LAYOUT_DEBUG]"
+        warn = "[ELK_LAYOUT_WARNING]"
+        try:
+            mode = "Horizontal" if self.is_horizontal_mode() else "Vertical"
+            print("{} ===== layout snapshot: {} =====".format(prefix, reason or "n/a"))
+            print("{} mode={} window={} main_viewport={} content_widget={}".format(
+                prefix,
+                mode,
+                _elk_debug_rect(self),
+                _elk_debug_rect(self.scroll.viewport() if hasattr(self, "scroll") else None),
+                _elk_debug_rect(self.content if hasattr(self, "content") else None),
+            ))
+
+            gscroll = self.scroll.verticalScrollBar() if hasattr(self, "scroll") else None
+            g_visible = bool(gscroll and gscroll.isVisible())
+            print("{} global_scroll present={} visible={} min={} max={} value={}".format(
+                prefix,
+                bool(gscroll),
+                g_visible,
+                gscroll.minimum() if gscroll else "n/a",
+                gscroll.maximum() if gscroll else "n/a",
+                gscroll.value() if gscroll else "n/a",
+            ))
+
+            if self.scroll is not None and self.content is not None:
+                vp_h = self.scroll.viewport().height()
+                content_h = self.content.sizeHint().height()
+                if content_h > vp_h and (not gscroll or gscroll.maximum() <= 0):
+                    print("{} Vertical overflow in main content but global scroll is not active (content_h={} viewport_h={})".format(warn, content_h, vp_h))
+
+            for cat in self.categories():
+                body_scroll = getattr(cat, "body_scroll", None)
+                body_viewport = body_scroll.viewport() if body_scroll else None
+                body_bar = body_scroll.verticalScrollBar() if body_scroll else None
+                body_content = body_scroll.widget() if body_scroll else None
+                overflow = False
+                if body_content is not None and body_viewport is not None:
+                    overflow = body_content.sizeHint().height() > body_viewport.height()
+                cat_policy = cat.sizePolicy()
+                sh = cat.sizeHint()
+                print("{} cat='{}' cat_rect={} body_rect={} body_viewport={} body_content={}".format(
+                    prefix, cat.name, _elk_debug_rect(cat), _elk_debug_rect(body_scroll), _elk_debug_rect(body_viewport), _elk_debug_rect(body_content)
+                ))
+                print("{}   internal_scroll visible={} min={} max={} value={} vPolicy={} hPolicy={} sizePolicy=({}, {}) minH={} maxH={} sizeHint={} overflow={}".format(
+                    prefix,
+                    bool(body_bar and body_bar.isVisible()),
+                    body_bar.minimum() if body_bar else "n/a",
+                    body_bar.maximum() if body_bar else "n/a",
+                    body_bar.value() if body_bar else "n/a",
+                    _elk_scroll_policy_name(body_scroll.verticalScrollBarPolicy()) if body_scroll else "n/a",
+                    _elk_scroll_policy_name(body_scroll.horizontalScrollBarPolicy()) if body_scroll else "n/a",
+                    _elk_policy_name(cat_policy.horizontalPolicy()) if cat_policy else "n/a",
+                    _elk_policy_name(cat_policy.verticalPolicy()) if cat_policy else "n/a",
+                    cat.minimumHeight(),
+                    cat.maximumHeight(),
+                    "{}x{}".format(sh.width(), sh.height()) if sh else "n/a",
+                    overflow,
+                ))
+                if mode == "Vertical" and body_bar and (body_bar.isVisible() or body_bar.maximum() > 0):
+                    print("{} Vertical mode has active internal category scroll: '{}'".format(warn, cat.name))
+                if mode == "Vertical" and overflow:
+                    print("{} Category content exceeds viewport in Vertical mode: '{}'".format(warn, cat.name))
+                if cat.maximumHeight() < cat.minimumHeight() or (cat.maximumHeight() not in (0, 16777215) and cat.maximumHeight() <= 1):
+                    print("{} Suspicious category height constraints on '{}': minH={} maxH={}".format(warn, cat.name, cat.minimumHeight(), cat.maximumHeight()))
+            print("{} ===== end snapshot =====".format(prefix))
+        except Exception as ex:
+            print("{} layout log failed: {}".format(warn, ex))
+
     def resizeEvent(self,e):
         super(ELKMinimalUI,self).resizeEvent(e)
         QtCore.QTimer.singleShot(0,self.reflow)
+        self._layout_debug_resize_timer.start(250)
 
     def reflow(self):
         changed = self.apply_layout_mode()
@@ -1753,6 +1861,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.content_lay.setSpacing(8)
         self.update_horizontal_search_geometry()
         for c in self.category_widgets: c.reflow()
+        self.log_layout_state("reflow")
 
 
 def close_existing():
