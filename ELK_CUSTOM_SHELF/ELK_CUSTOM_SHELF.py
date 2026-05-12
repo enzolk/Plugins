@@ -16,9 +16,11 @@ from maya import OpenMayaUI as omui
 try:
     from PySide2 import QtWidgets, QtCore, QtGui
     from shiboken2 import wrapInstance
+    import shiboken2 as shiboken
 except Exception:
     from PySide6 import QtWidgets, QtCore, QtGui
     from shiboken6 import wrapInstance
+    import shiboken6 as shiboken
 
 WINDOW_NAME = "ELK_UI_Minimal_Adaptive"
 WORKSPACE_NAME = WINDOW_NAME + "WorkspaceControl"
@@ -40,6 +42,7 @@ else:
         BASE_DIR = Path.cwd()
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
+ITEM_ORDER_FILE = BASE_DIR / "item_order.json"
 
 
 def _unique_fs_path(base_path):
@@ -167,11 +170,16 @@ def load_shelf_items():
     migrate_script_extensions()
     meta = _sync_category_meta_from_fs()
     items=[]
+    order_meta = _load_item_order_meta()
     dirs = [d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
     rank = {slug: i for i, slug in enumerate(meta.get('order') or [])}
     for cat_dir in sorted(dirs, key=lambda p: (rank.get(p.name, 9999), p.name)):
         cat = (meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
-        for sp in sorted([x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]):
+        scripts = [x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]
+        pref = order_meta.get(cat_dir.name, [])
+        pos = {k: i for i, k in enumerate(pref)}
+        scripts = sorted(scripts, key=lambda p: (pos.get(p.name, 99999), p.name))
+        for sp in scripts:
             try:
                 items.append(_read_script_file(sp, cat))
             except Exception:
@@ -195,6 +203,28 @@ def save_item_to_disk(item):
         payload = _script_payload(item)
     out.write_text(payload, encoding='utf-8')
     return str(out)
+
+
+def _load_item_order_meta():
+    if ITEM_ORDER_FILE.exists():
+        try:
+            data = json.loads(ITEM_ORDER_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): [str(x) for x in v] for k, v in data.items() if isinstance(v, list)}
+        except Exception:
+            pass
+    return {}
+
+def _save_item_order_meta(meta):
+    ITEM_ORDER_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+
+def _script_key(path):
+    p = Path(path)
+    try:
+        return f"{p.parent.name}/{p.name}"
+    except Exception:
+        return p.name
+
 BG="#2a2a2a"; PANEL="#373737"; BUTTON_BG="#444444"; BUTTON_HOVER="#505050"; BORDER="#565656"; TEXT="#f0f0f0"; MUTED="#b7b7b7"
 CATEGORY_COLORS={"Tools":"#36d6ff","Object":"#5ee06c","Sculpting":"#b277ff","Action":"#ff9f2e","Nurbs":"#ffd34d","Deliver":"#4bc8ff","Vertex":"#56e3c4","Face":"#ff6b45"}
 
@@ -346,9 +376,47 @@ class ToolButton(QtWidgets.QFrame):
             lay.addWidget(lab,1)
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
+        self._base_style = self.styleSheet()
+
+    def set_drag_visual(self, active):
+        if active:
+            self.setStyleSheet(self._base_style + " QFrame#ToolButton{border:2px solid #8bd7ff;background:#4f5b66;}")
+            self.setWindowOpacity(0.72)
+        else:
+            self.setStyleSheet(self._base_style)
+            self.setWindowOpacity(1.0)
+
+    def mousePressEvent(self,e):
+        if e.button()==QtCore.Qt.LeftButton:
+            self._press_pos = e.pos()
+            self._dragging = False
+        super(ToolButton,self).mousePressEvent(e)
+
+    def mouseMoveEvent(self,e):
+        if e.buttons() & QtCore.Qt.LeftButton and hasattr(self, "_press_pos"):
+            if (e.pos() - self._press_pos).manhattanLength() >= QtWidgets.QApplication.startDragDistance():
+                if not self._dragging:
+                    self._dragging = True
+                    if getattr(self.parent_ui, "begin_button_drag", None):
+                        self.parent_ui.begin_button_drag(self.item, self)
+                    try:
+                        self.grabMouse()
+                    except Exception:
+                        pass
+            if self._dragging and getattr(self.parent_ui, "update_button_drag", None):
+                self.parent_ui.update_button_drag(QtGui.QCursor.pos())
+        super(ToolButton,self).mouseMoveEvent(e)
 
     def mouseReleaseEvent(self,e):
         if e.button()==QtCore.Qt.LeftButton:
+            if getattr(self, "_dragging", False) and getattr(self.parent_ui, "finish_button_drag", None):
+                self.parent_ui.finish_button_drag(QtGui.QCursor.pos())
+                try:
+                    self.releaseMouse()
+                except Exception:
+                    pass
+                self._dragging = False
+                e.accept(); return
             self.clicked.emit(self.item)
         elif e.button()==QtCore.Qt.RightButton and getattr(self.parent_ui, "open_script_context_menu", None):
             self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(e.pos()))
@@ -408,6 +476,27 @@ class VerticalTextLabel(QtWidgets.QLabel):
         rect = QtCore.QRect(0, 0, self.height(), self.width())
         painter.drawText(rect, QtCore.Qt.AlignCenter, self.text())
         painter.end()
+
+class DragGhost(QtWidgets.QFrame):
+    def __init__(self, text, compact=False, tight=False, parent=None):
+        super(DragGhost, self).__init__(None, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setWindowOpacity(0.9)
+        lay = QtWidgets.QHBoxLayout(self)
+        if compact:
+            lay.setContentsMargins(8, 8, 8, 8)
+            self.setFixedSize(62 if not tight else 54, 54 if not tight else 48)
+            lab = QtWidgets.QLabel("◉")
+            lab.setAlignment(QtCore.Qt.AlignCenter)
+            lay.addWidget(lab)
+        else:
+            lay.setContentsMargins(10, 6, 10, 6)
+            lay.setSpacing(8)
+            lay.addWidget(VectorIcon(text, item_color({"label": text}), 16 if tight else 18))
+            lab = QtWidgets.QLabel(text)
+            lab.setStyleSheet("color:#f0f0f0;font-weight:700;")
+            lay.addWidget(lab)
+        self.setStyleSheet("QFrame{background:#5a6773;border:2px solid #8bd7ff;border-radius:8px;}")
 
 class Category(QtWidgets.QFrame):
     def __init__(self,name,items,parent_ui,parent=None):
@@ -522,8 +611,24 @@ class Category(QtWidgets.QFrame):
         if horizontal and not self.expanded:
             return
 
-        for i,item in enumerate(self.items):
-            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
+        drag_info = getattr(self.parent_ui, "_drag_state", None) or {}
+        ph_cat = drag_info.get("placeholder_category")
+        ph_idx = drag_info.get("placeholder_index", -1)
+        dragged_item = drag_info.get("item")
+        visible_items = [it for it in self.items if it is not dragged_item]
+        for i, item in enumerate(visible_items):
+            grid_i = i
+            if self.name == ph_cat and ph_idx >= 0 and i >= ph_idx:
+                grid_i += 1
+            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); self.grid.addWidget(btn,grid_i//cols,grid_i%cols)
+        if self.name == ph_cat and ph_idx >= 0:
+            ph = QtWidgets.QFrame()
+            ph.setObjectName("DragPlaceholder")
+            ph.setStyleSheet("QFrame#DragPlaceholder{background:rgba(140,215,255,0.10);border:2px dashed #8bd7ff;border-radius:7px;}")
+            ph.setMinimumHeight(30 if is_tight else 34)
+            if horizontal:
+                ph.setFixedSize(48,42) if is_tight else ph.setFixedSize(56,48)
+            self.grid.addWidget(ph, ph_idx//cols, ph_idx%cols)
 
 class ELKMinimalUI(QtWidgets.QWidget):
     def __init__(self,parent=None):
@@ -700,6 +805,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.h_search_line = None
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
+        self._drag_state = None
+        self._drag_app_filter_installed = False
+        self._drag_finishing = False
 
         try:
             ShortcutClass = getattr(QtWidgets, "QShortcut", None) or getattr(QtGui, "QShortcut", None)
@@ -798,6 +906,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
     def _refresh_ui_data(self):
         self.shelf_items = load_shelf_items()
+        self._drag_state = None
         self.refresh()
 
     def open_options_dialog(self):
@@ -1200,6 +1309,169 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.reflow()
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
+        self._drag_state = None
+
+    def begin_button_drag(self, item, source_widget):
+        self._drag_state = {
+            "item": item,
+            "source": source_widget,
+            "origin_category": item.get("category"),
+            "placeholder_category": item.get("category"),
+            "placeholder_index": 0,
+        }
+        cat = next((c for c in self.category_widgets if c.name == item.get("category")), None)
+        if cat:
+            try:
+                self._drag_state["placeholder_index"] = max(0, cat.items.index(item))
+            except Exception:
+                self._drag_state["placeholder_index"] = len(cat.items)
+        source_widget.set_drag_visual(True)
+        tight = self.available_width() < 540
+        self._drag_ghost = DragGhost(item.get("label", "Tool"), compact=self.is_horizontal_mode(), tight=tight, parent=self)
+        self._drag_ghost.hide()
+        if not self._drag_app_filter_installed:
+            QtWidgets.QApplication.instance().installEventFilter(self)
+            self._drag_app_filter_installed = True
+
+    def eventFilter(self, obj, event):
+        if self._drag_state and not self._drag_finishing:
+            et = event.type()
+            if et == QtCore.QEvent.MouseMove:
+                self.update_button_drag(QtGui.QCursor.pos())
+                return False
+            if et == QtCore.QEvent.MouseButtonRelease:
+                if getattr(event, "button", lambda: None)() == QtCore.Qt.LeftButton:
+                    self.finish_button_drag(QtGui.QCursor.pos())
+                    return True
+        return super(ELKMinimalUI, self).eventFilter(obj, event)
+
+    def _category_at_global(self, global_pos):
+        for cat in self.category_widgets:
+            if cat.geometry().contains(cat.parentWidget().mapFromGlobal(global_pos)):
+                return cat
+        return None
+
+    def update_button_drag(self, global_pos):
+        st = self._drag_state
+        if not st:
+            return
+        if getattr(self, "_drag_ghost", None) is not None:
+            self._drag_ghost.show()
+            self._drag_ghost.move(global_pos.x() + 14, global_pos.y() + 14)
+            self._drag_ghost.raise_()
+        cat_w = self._category_at_global(global_pos)
+        if cat_w is None:
+            return
+        item = st["item"]
+        local = cat_w.body.mapFromGlobal(global_pos)
+        cols = 1 if self.view_mode=="list" or self.available_width()<430 or self.is_horizontal_mode() else max(2,min(6,int(self.available_width()/205)))
+        idx = len([it for it in cat_w.items if it is not item])
+        for i in range(cat_w.grid.count()):
+            w = cat_w.grid.itemAt(i).widget()
+            if not w or w.objectName() == "DragPlaceholder":
+                continue
+            rect = w.geometry()
+            if local.y() < rect.center().y() or (rect.top() <= local.y() <= rect.bottom() and local.x() < rect.center().x()):
+                idx = i
+                break
+        st["placeholder_category"] = cat_w.name
+        st["placeholder_index"] = max(0, idx)
+        for c in self.category_widgets:
+            c.count_label.setText(str(len([it for it in c.items if it is not item]) + (1 if c.name == cat_w.name else 0)))
+            c.reflow()
+
+    def finish_button_drag(self, global_pos):
+        if not self._drag_state:
+            return
+        self._drag_finishing = True
+        try:
+            item = self._drag_state["item"]
+            ph_cat = self._drag_state.get("placeholder_category")
+            ph_idx = max(0, int(self._drag_state.get("placeholder_index", 0)))
+            origin_name = self._drag_state.get("origin_category")
+            inserted = False
+            for c in self.category_widgets:
+                c.items = [it for it in c.items if it is not item]
+            dest = next((c for c in self.category_widgets if c.name == ph_cat), None)
+            if dest is not None:
+                dest.items.insert(min(ph_idx, len(dest.items)), item)
+                item["category"] = ph_cat
+                inserted = True
+            else:
+                origin = next((c for c in self.category_widgets if c.name == origin_name), None)
+                if origin is not None:
+                    origin.items.insert(min(ph_idx, len(origin.items)), item)
+                    item["category"] = origin.name
+                    inserted = True
+            # Hard safety net: never lose the dragged item.
+            if not inserted:
+                fallback = next((c for c in self.category_widgets if c.name == origin_name), None)
+                if fallback is None and self.category_widgets:
+                    fallback = self.category_widgets[0]
+                if fallback is not None:
+                    fallback.items.append(item)
+                    item["category"] = fallback.name
+                    inserted = True
+            if not inserted:
+                # Last-resort, keep it in memory even if UI category list is temporarily unavailable.
+                if item not in self.shelf_items:
+                    self.shelf_items.append(item)
+            self._persist_current_order()
+        finally:
+            self._cleanup_drag_state()
+            self._drag_finishing = False
+
+    def _cleanup_drag_state(self):
+        st = self._drag_state or {}
+        src = st.get("source")
+        if src:
+            try:
+                if shiboken.isValid(src):
+                    src.set_drag_visual(False)
+                    try:
+                        src.releaseMouse()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if getattr(self, "_drag_ghost", None) is not None:
+            self._drag_ghost.hide()
+            self._drag_ghost.deleteLater()
+            self._drag_ghost = None
+        for c in self.category_widgets:
+            c.count_label.setText(str(len(c.items)))
+            c.reflow()
+        self._drag_state = None
+        if self._drag_app_filter_installed:
+            try:
+                QtWidgets.QApplication.instance().removeEventFilter(self)
+            except Exception:
+                pass
+            self._drag_app_filter_installed = False
+
+    def _persist_current_order(self):
+        new_items = []
+        order_meta = {}
+        for c in self.category_widgets:
+            slug = _display_to_slug(c.name)
+            order_meta[slug] = []
+            for it in c.items:
+                new_items.append(it)
+                fp = it.get("file_path")
+                if fp:
+                    p = Path(fp)
+                    target = SCRIPTS_ROOT / slug / p.name
+                    if p.resolve() != target.resolve() and p.exists():
+                        try:
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            p.rename(target)
+                            it["file_path"] = str(target)
+                        except Exception:
+                            pass
+                    order_meta[slug].append(Path(it.get("file_path","")).name)
+                    save_item_to_disk(it)
+        self.shelf_items = new_items
+        _save_item_order_meta(order_meta)
 
     def resizeEvent(self,e):
         super(ELKMinimalUI,self).resizeEvent(e)
