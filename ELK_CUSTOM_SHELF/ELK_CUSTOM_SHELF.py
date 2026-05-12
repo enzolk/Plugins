@@ -29,6 +29,8 @@ OPTIONVAR_UI_SCALE_BTN_TEXT_H = "ELK_UI_ScaleBtnTextH"
 OPTIONVAR_UI_SCALE_BTN_TEXT_V = "ELK_UI_ScaleBtnTextV"
 OPTIONVAR_UI_SCALE_BTN_ICON_H = "ELK_UI_ScaleBtnIconH"
 OPTIONVAR_UI_SCALE_BTN_ICON_V = "ELK_UI_ScaleBtnIconV"
+OPTIONVAR_UI_SCALE_BTN_SHORT_H = "ELK_UI_ScaleBtnShortH"
+OPTIONVAR_UI_SCALE_BTN_SHORT_V = "ELK_UI_ScaleBtnShortV"
 OPTIONVAR_UI_SCALE_CAT_TEXT_H = "ELK_UI_ScaleCatTextH"
 OPTIONVAR_UI_SCALE_CAT_TEXT_V = "ELK_UI_ScaleCatTextV"
 OPTIONVAR_UI_SCALE_CAT_ICON_H = "ELK_UI_ScaleCatIconH"
@@ -436,11 +438,13 @@ class ToolButton(QtWidgets.QFrame):
         self.setObjectName("ToolButton")
         self._press_pos = None
         self._drag_started = False
+        self._overlay_label = None
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
 
         ui_scale = self.parent_ui.ui_scale_value if self.parent_ui else (lambda *_: 1.0)
         text_scale = ui_scale("btn_text")
         icon_scale = ui_scale("btn_icon")
+        short_text_scale = ui_scale("btn_short")
         lay=QtWidgets.QHBoxLayout(self)
         if compact:
             lay.setContentsMargins(0,0,0,0)
@@ -452,6 +456,25 @@ class ToolButton(QtWidgets.QFrame):
             lay.addStretch(1)
             self.setFixedSize(48,42) if tight else self.setFixedSize(56,48)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QLabel{background:transparent;border:0px;}")
+            short_name = (item.get("short_name") or "").strip()
+            if short_name:
+                short_px = max(8, int(round(9 * short_text_scale)))
+                self._overlay_label = QtWidgets.QLabel(short_name, self)
+                self._overlay_label.setObjectName("ToolShortNameOverlay")
+                self._overlay_label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
+                self._overlay_label.setWordWrap(False)
+                self._overlay_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+                self._overlay_label.setStyleSheet(
+                    "QLabel#ToolShortNameOverlay{"
+                    "color:#ffffff;"
+                    "font-weight:700;"
+                    "font-size:%dpx;"
+                    "padding:0px 1px;"
+                    "background-color:rgba(0, 0, 0, 90);"
+                    "border-radius:4px;"
+                    "}" % short_px
+                )
+                self._overlay_label.raise_()
         else:
             if self.tight:
                 lay.setContentsMargins(7,5,7,5)
@@ -473,6 +496,19 @@ class ToolButton(QtWidgets.QFrame):
             lay.addWidget(lab,1)
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
+
+    def resizeEvent(self, event):
+        super(ToolButton, self).resizeEvent(event)
+        if self._overlay_label is not None:
+            inset = 3
+            bottom_inset = 3
+            label_h = max(10, self._overlay_label.sizeHint().height())
+            self._overlay_label.setGeometry(
+                inset,
+                max(inset, self.height() - label_h - bottom_inset),
+                max(0, self.width() - (inset * 2)),
+                label_h
+            )
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
@@ -915,13 +951,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 return 0
         return 0
 
-    def _load_percent_option(self, key):
+    def _load_percent_option(self, key, default=100):
         if cmds.optionVar(exists=key):
             try:
                 return max(10, min(300, int(cmds.optionVar(q=key))))
             except Exception:
                 pass
-        return 100
+        return default
 
     def _load_ui_scale_settings(self):
         return {
@@ -929,6 +965,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
             "btn_text_v": self._load_percent_option(OPTIONVAR_UI_SCALE_BTN_TEXT_V),
             "btn_icon_h": self._load_percent_option(OPTIONVAR_UI_SCALE_BTN_ICON_H),
             "btn_icon_v": self._load_percent_option(OPTIONVAR_UI_SCALE_BTN_ICON_V),
+            "btn_short_h": self._load_percent_option(OPTIONVAR_UI_SCALE_BTN_SHORT_H, 150),
+            "btn_short_v": self._load_percent_option(OPTIONVAR_UI_SCALE_BTN_SHORT_V, 100),
             "cat_text_h": self._load_percent_option(OPTIONVAR_UI_SCALE_CAT_TEXT_H),
             "cat_text_v": self._load_percent_option(OPTIONVAR_UI_SCALE_CAT_TEXT_V),
             "cat_icon_h": self._load_percent_option(OPTIONVAR_UI_SCALE_CAT_ICON_H),
@@ -1208,6 +1246,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
             ("btn_text_v", "Textes des boutons (Vertical)"),
             ("btn_icon_h", "Icônes des boutons (Horizontal)"),
             ("btn_icon_v", "Icônes des boutons (Vertical)"),
+            ("btn_short_h", "Short name boutons (Horizontal)"),
+            ("btn_short_v", "Short name boutons (Vertical)"),
             ("cat_text_h", "Textes des catégories (Horizontal)"),
             ("cat_text_v", "Textes des catégories (Vertical)"),
             ("cat_icon_h", "Icônes des catégories (Horizontal)"),
@@ -1386,6 +1426,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 "btn_text_v": OPTIONVAR_UI_SCALE_BTN_TEXT_V,
                 "btn_icon_h": OPTIONVAR_UI_SCALE_BTN_ICON_H,
                 "btn_icon_v": OPTIONVAR_UI_SCALE_BTN_ICON_V,
+                "btn_short_h": OPTIONVAR_UI_SCALE_BTN_SHORT_H,
+                "btn_short_v": OPTIONVAR_UI_SCALE_BTN_SHORT_V,
                 "cat_text_h": OPTIONVAR_UI_SCALE_CAT_TEXT_H,
                 "cat_text_v": OPTIONVAR_UI_SCALE_CAT_TEXT_V,
                 "cat_icon_h": OPTIONVAR_UI_SCALE_CAT_ICON_H,
