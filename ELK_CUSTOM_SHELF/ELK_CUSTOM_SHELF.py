@@ -647,6 +647,9 @@ class Category(QtWidgets.QFrame):
         self.icon_svg = normalize_icon_name((cat_meta.get("icons") or {}).get(self.slug, ""))
         self.icon_color = (cat_meta.get("icon_colors") or {}).get(self.slug, "")
         self.color = self.icon_color or "#36d6ff"
+        self._vertical_min_valid_height = 20
+        self._last_valid_vertical_body_height = None
+        self._last_valid_vertical_category_height = None
         self.setObjectName("Category")
         self.setProperty("dragOver", False)
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -716,9 +719,38 @@ class Category(QtWidgets.QFrame):
         if body_layout:
             body_layout.activate()
         self.body.adjustSize()
-        body_h = max(self.grid.sizeHint().height(), self.body.sizeHint().height())
+
+        calc_body_h = max(self.grid.sizeHint().height(), self.body.sizeHint().height())
+        min_valid = self._vertical_min_valid_height
+        cached_body_h = self._last_valid_vertical_body_height
+
+        if calc_body_h > min_valid:
+            body_h = calc_body_h
+            self._last_valid_vertical_body_height = body_h
+        elif cached_body_h is not None:
+            body_h = cached_body_h
+            print("[ELK_LAYOUT_WARNING] ignored invalid vertical body height={}, using cached height={}".format(calc_body_h, cached_body_h))
+        else:
+            body_h = max(min_valid, calc_body_h)
+            self._last_valid_vertical_body_height = body_h
+
         self.body_scroll.setMinimumHeight(body_h)
         self.body_scroll.setFixedHeight(body_h)
+
+        header_h = self.header.sizeHint().height() if hasattr(self, "header") and self.header is not None else 0
+        margins = self.outer.contentsMargins() if hasattr(self, "outer") and self.outer is not None else QtCore.QMargins(0, 0, 0, 0)
+        spacing = self.outer.spacing() if hasattr(self, "outer") and self.outer is not None else 0
+        calc_category_h = body_h + header_h + margins.top() + margins.bottom() + max(0, spacing)
+        cached_cat_h = self._last_valid_vertical_category_height
+        if calc_category_h > min_valid:
+            cat_h = calc_category_h
+            self._last_valid_vertical_category_height = cat_h
+        elif cached_cat_h is not None:
+            cat_h = cached_cat_h
+        else:
+            cat_h = max(min_valid, calc_category_h)
+            self._last_valid_vertical_category_height = cat_h
+        self.setMinimumHeight(cat_h)
 
     def reflow(self):
         self._apply_header_scale()
@@ -769,7 +801,10 @@ class Category(QtWidgets.QFrame):
             self.collapsed_header.setVisible(False)
             self.setMinimumWidth(0)
             self.setMaximumWidth(16777215)
-            self.setMinimumHeight(0)
+            if self._last_valid_vertical_category_height is not None:
+                self.setMinimumHeight(self._last_valid_vertical_category_height)
+            else:
+                self.setMinimumHeight(0)
             self.setMaximumHeight(16777215)
             self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             hpad = 6 if width < 500 else 10
