@@ -950,6 +950,11 @@ class ELKMinimalUI(QtWidgets.QWidget):
         global_pos = self.mapToGlobal(QtCore.QPoint(x, y))
         self.h_search_popup.setGeometry(global_pos.x(), global_pos.y(), popup_w, popup_h)
 
+    def _force_view_layout_reset(self):
+        """Force a clean layout/scroll reset while preserving the user view mode."""
+        self.toggle_view()
+        self.toggle_view()
+
     def apply_layout_mode(self):
         new_mode = self.desired_layout_mode()
         if new_mode == self.layout_mode:
@@ -980,6 +985,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.view_btn.setVisible(True)
             self.options_btn.setVisible(True)
             self.add_btn.setVisible(True)
+        self._force_view_layout_reset()
         return True
 
     def _category_rows(self):
