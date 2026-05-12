@@ -40,6 +40,7 @@ else:
         BASE_DIR = Path.cwd()
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
+ORDER_META_FILE = BASE_DIR / "script_order.json"
 
 
 def _unique_fs_path(base_path):
@@ -69,6 +70,21 @@ def _load_category_meta():
 
 def _save_category_meta(meta):
     CATEGORY_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_order_meta():
+    data = {"categories": {}}
+    if ORDER_META_FILE.exists():
+        try:
+            parsed = json.loads(ORDER_META_FILE.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict) and isinstance(parsed.get("categories"), dict):
+                data["categories"] = {str(k): [str(x) for x in v if str(x).strip()] for k, v in parsed["categories"].items() if isinstance(v, list)}
+        except Exception:
+            pass
+    return data
+
+def _save_order_meta(meta):
+    ORDER_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _sync_category_meta_from_fs():
     meta = _load_category_meta()
@@ -169,9 +185,14 @@ def load_shelf_items():
     items=[]
     dirs = [d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
     rank = {slug: i for i, slug in enumerate(meta.get('order') or [])}
+    order_meta = _load_order_meta()
+    cat_orders = order_meta.get("categories", {})
     for cat_dir in sorted(dirs, key=lambda p: (rank.get(p.name, 9999), p.name)):
         cat = (meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
-        for sp in sorted([x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]):
+        scripts = [x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]
+        idx = {n:i for i,n in enumerate(cat_orders.get(cat_dir.name, []))}
+        scripts = sorted(scripts, key=lambda p: (idx.get(p.name, 9999), p.name.lower()))
+        for sp in scripts:
             try:
                 items.append(_read_script_file(sp, cat))
             except Exception:
@@ -314,6 +335,7 @@ class ToolButton(QtWidgets.QFrame):
         self.setToolTip(_clean_tooltip((item.get("label", "Tool") + "\n\n" + item.get("tooltip", "")).strip()))
         self.setObjectName("ToolButton")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._press_pos = None
 
         lay=QtWidgets.QHBoxLayout(self)
         if compact:
@@ -347,8 +369,23 @@ class ToolButton(QtWidgets.QFrame):
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
+    def mousePressEvent(self,e):
+        if e.button()==QtCore.Qt.LeftButton:
+            self._press_pos = e.pos()
+            if getattr(self.parent_ui, "start_button_drag", None):
+                self.parent_ui.start_button_drag(self, e)
+        super(ToolButton,self).mousePressEvent(e)
+
+    def mouseMoveEvent(self,e):
+        if self._press_pos is not None and (e.buttons() & QtCore.Qt.LeftButton):
+            if getattr(self.parent_ui, "update_button_drag", None):
+                self.parent_ui.update_button_drag(self, e)
+        super(ToolButton,self).mouseMoveEvent(e)
+
     def mouseReleaseEvent(self,e):
         if e.button()==QtCore.Qt.LeftButton:
+            if getattr(self.parent_ui, "end_button_drag", None) and self.parent_ui.end_button_drag(self, e):
+                e.accept(); return
             self.clicked.emit(self.item)
         elif e.button()==QtCore.Qt.RightButton and getattr(self.parent_ui, "open_script_context_menu", None):
             self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(e.pos()))
@@ -417,6 +454,7 @@ class Category(QtWidgets.QFrame):
         self.color=CATEGORY_COLORS.get(name,"#ffad3b")
         self.setObjectName("Category")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._press_pos = None
         self.build()
 
     def build(self):
@@ -658,6 +696,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
     def build(self):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._press_pos = None
         self.setStyleSheet("""
             QWidget#%s{background:%s;font-family:Segoe UI,Arial;}
             QLabel{background:transparent;}
@@ -706,6 +745,38 @@ class ELKMinimalUI(QtWidgets.QWidget):
             if ShortcutClass:
                 sc=ShortcutClass(QtGui.QKeySequence("Ctrl+F"), self); sc.activated.connect(self.focus_search); self._shortcut=sc
         except Exception: pass
+
+    def start_button_drag(self, button, event):
+        self._drag_ctx = {"button": button, "start": button.mapToGlobal(event.pos()), "dragging": False}
+
+    def update_button_drag(self, button, event):
+        ctx = getattr(self, "_drag_ctx", None)
+        if not ctx or ctx.get("button") is not button:
+            return
+        current = button.mapToGlobal(event.pos())
+        if ctx.get("dragging"):
+            return
+        if (current - ctx["start"]).manhattanLength() < 10:
+            return
+        ctx["dragging"] = True
+        drag = QtGui.QDrag(button)
+        mime = QtCore.QMimeData()
+        mime.setText("elk-shelf-tool")
+        drag.setMimeData(mime)
+        pix = button.grab()
+        painter = QtGui.QPainter(pix)
+        painter.fillRect(pix.rect(), QtGui.QColor(255, 255, 255, 40))
+        painter.end()
+        drag.setPixmap(pix)
+        drag.setHotSpot(event.pos())
+        button.setWindowOpacity(0.35)
+        drag.exec_(QtCore.Qt.MoveAction)
+        button.setWindowOpacity(1.0)
+
+    def end_button_drag(self, button, event):
+        ctx = getattr(self, "_drag_ctx", None)
+        self._drag_ctx = None
+        return bool(ctx and ctx.get("dragging"))
 
     def focus_search(self):
         if self.is_horizontal_mode():
