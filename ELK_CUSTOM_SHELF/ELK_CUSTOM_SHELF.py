@@ -548,7 +548,6 @@ class Category(QtWidgets.QFrame):
         if horizontal:
             # Shelf mode: opened categories receive the available room.
             # Collapsed categories become a very narrow vertical tab.
-            self.body_scroll.setWidgetResizable(True)
             if not self.expanded:
                 cat_w = self.parent_ui.collapsed_category_width(self.name)
                 self.body_scroll.setVisible(False)
@@ -588,10 +587,7 @@ class Category(QtWidgets.QFrame):
             self.grid.setSpacing(5 if width < 500 else 7)
             cols=1 if self.parent_ui.view_mode=="list" or width<430 else max(2,min(6,int(width/205)))
             self.grid.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
-            # In vertical mode we want one global page scroll only.
-            # Reset the per-category scroll behavior that is used in horizontal mode.
-            self.body_scroll.setWidgetResizable(False)
-            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
         self.count_label.setVisible(not horizontal or self.expanded)
@@ -602,15 +598,6 @@ class Category(QtWidgets.QFrame):
 
         for i,item in enumerate(self.items):
             btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag); self.grid.addWidget(btn,i//cols,i%cols)
-
-        if not horizontal:
-            self.body.adjustSize()
-            target_h = self.body.sizeHint().height() + 2
-            self.body_scroll.setMinimumHeight(target_h)
-            self.body_scroll.setMaximumHeight(target_h)
-        else:
-            self.body_scroll.setMinimumHeight(0)
-            self.body_scroll.setMaximumHeight(16777215)
 
     def layout_items(self):
         result=[]
