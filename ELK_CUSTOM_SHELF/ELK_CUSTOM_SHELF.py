@@ -40,6 +40,7 @@ else:
         BASE_DIR = Path.cwd()
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
+ITEM_ORDER_FILE = BASE_DIR / "item_order.json"
 
 
 def _unique_fs_path(base_path):
@@ -167,11 +168,16 @@ def load_shelf_items():
     migrate_script_extensions()
     meta = _sync_category_meta_from_fs()
     items=[]
+    order_meta = _load_item_order_meta()
     dirs = [d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
     rank = {slug: i for i, slug in enumerate(meta.get('order') or [])}
     for cat_dir in sorted(dirs, key=lambda p: (rank.get(p.name, 9999), p.name)):
         cat = (meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
-        for sp in sorted([x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]):
+        scripts = [x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]
+        pref = order_meta.get(cat_dir.name, [])
+        pos = {k: i for i, k in enumerate(pref)}
+        scripts = sorted(scripts, key=lambda p: (pos.get(p.name, 99999), p.name))
+        for sp in scripts:
             try:
                 items.append(_read_script_file(sp, cat))
             except Exception:
@@ -195,6 +201,28 @@ def save_item_to_disk(item):
         payload = _script_payload(item)
     out.write_text(payload, encoding='utf-8')
     return str(out)
+
+
+def _load_item_order_meta():
+    if ITEM_ORDER_FILE.exists():
+        try:
+            data = json.loads(ITEM_ORDER_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): [str(x) for x in v] for k, v in data.items() if isinstance(v, list)}
+        except Exception:
+            pass
+    return {}
+
+def _save_item_order_meta(meta):
+    ITEM_ORDER_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+
+def _script_key(path):
+    p = Path(path)
+    try:
+        return f"{p.parent.name}/{p.name}"
+    except Exception:
+        return p.name
+
 BG="#2a2a2a"; PANEL="#373737"; BUTTON_BG="#444444"; BUTTON_HOVER="#505050"; BORDER="#565656"; TEXT="#f0f0f0"; MUTED="#b7b7b7"
 CATEGORY_COLORS={"Tools":"#36d6ff","Object":"#5ee06c","Sculpting":"#b277ff","Action":"#ff9f2e","Nurbs":"#ffd34d","Deliver":"#4bc8ff","Vertex":"#56e3c4","Face":"#ff6b45"}
 
@@ -347,8 +375,27 @@ class ToolButton(QtWidgets.QFrame):
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
+    def mousePressEvent(self,e):
+        if e.button()==QtCore.Qt.LeftButton:
+            self._press_pos = e.pos()
+            self._dragging = False
+            if getattr(self.parent_ui, "begin_button_drag", None):
+                self.parent_ui.begin_button_drag(self.item, self)
+        super(ToolButton,self).mousePressEvent(e)
+
+    def mouseMoveEvent(self,e):
+        if e.buttons() & QtCore.Qt.LeftButton and hasattr(self, "_press_pos"):
+            if (e.pos() - self._press_pos).manhattanLength() >= QtWidgets.QApplication.startDragDistance():
+                self._dragging = True
+            if self._dragging and getattr(self.parent_ui, "update_button_drag", None):
+                self.parent_ui.update_button_drag(self.mapToGlobal(e.pos()))
+        super(ToolButton,self).mouseMoveEvent(e)
+
     def mouseReleaseEvent(self,e):
         if e.button()==QtCore.Qt.LeftButton:
+            if getattr(self, "_dragging", False) and getattr(self.parent_ui, "finish_button_drag", None):
+                self.parent_ui.finish_button_drag(self.mapToGlobal(e.pos()))
+                e.accept(); return
             self.clicked.emit(self.item)
         elif e.button()==QtCore.Qt.RightButton and getattr(self.parent_ui, "open_script_context_menu", None):
             self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(e.pos()))
@@ -700,6 +747,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.h_search_line = None
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
+        self._drag_state = None
 
         try:
             ShortcutClass = getattr(QtWidgets, "QShortcut", None) or getattr(QtGui, "QShortcut", None)
@@ -798,6 +846,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
     def _refresh_ui_data(self):
         self.shelf_items = load_shelf_items()
+        self._drag_state = None
         self.refresh()
 
     def open_options_dialog(self):
@@ -1200,6 +1249,71 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.reflow()
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
+        self._drag_state = None
+
+    def begin_button_drag(self, item, source_widget):
+        self._drag_state = {"item": item, "source": source_widget, "last": None}
+
+    def _category_at_global(self, global_pos):
+        for cat in self.category_widgets:
+            if cat.geometry().contains(cat.parentWidget().mapFromGlobal(global_pos)):
+                return cat
+        return None
+
+    def update_button_drag(self, global_pos):
+        st = self._drag_state
+        if not st:
+            return
+        cat_w = self._category_at_global(global_pos)
+        if cat_w is None:
+            return
+        item = st["item"]
+        target_cat = cat_w.name
+        # remove from previous category
+        for c in self.category_widgets:
+            c.items = [it for it in c.items if it is not item]
+        # estimate insertion index in target
+        local = cat_w.grid.parentWidget().mapFromGlobal(global_pos)
+        idx = len(cat_w.items)
+        for i in range(cat_w.grid.count()):
+            w = cat_w.grid.itemAt(i).widget()
+            if w and local.y() < w.geometry().center().y():
+                idx = i; break
+        cat_w.items.insert(max(0, min(idx, len(cat_w.items))), item)
+        item["category"] = target_cat
+        for c in self.category_widgets:
+            c.count_label.setText(str(len(c.items)))
+            c.reflow()
+
+    def finish_button_drag(self, global_pos):
+        if not self._drag_state:
+            return
+        self._persist_current_order()
+        self._drag_state = None
+
+    def _persist_current_order(self):
+        new_items = []
+        order_meta = {}
+        for c in self.category_widgets:
+            slug = _display_to_slug(c.name)
+            order_meta[slug] = []
+            for it in c.items:
+                new_items.append(it)
+                fp = it.get("file_path")
+                if fp:
+                    p = Path(fp)
+                    target = SCRIPTS_ROOT / slug / p.name
+                    if p.resolve() != target.resolve() and p.exists():
+                        try:
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            p.rename(target)
+                            it["file_path"] = str(target)
+                        except Exception:
+                            pass
+                    order_meta[slug].append(Path(it.get("file_path","")).name)
+                    save_item_to_disk(it)
+        self.shelf_items = new_items
+        _save_item_order_meta(order_meta)
 
     def resizeEvent(self,e):
         super(ELKMinimalUI,self).resizeEvent(e)
