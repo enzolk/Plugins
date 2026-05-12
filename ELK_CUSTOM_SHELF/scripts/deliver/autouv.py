@@ -1,0 +1,22 @@
+# ELK_META {"label": "AutoUV", "short_name": "", "tooltip": "Unfold 3D - Preserve Edges - Layout 45", "source": "mel"}
+polyMapCut;
+getFaces;
+if(!`exists MTselAll`) source MTprocs.mel; select -cl; MTselAll;
+u3dUnfold -ite 1 -p 0 -bi 1 -tf 1 -ms 1024 -rs 0;
+u3dOptimize -ite 500 -pow 1 -sa 1 -bi 0 -tf 1 -ms 1024 -rs 0;
+evalEcho("texOrientShells");
+u3dLayout -res 256 -rot 2 -scl 1 -spc 0.00244140625 -mar 0.00244140625 -box 0 1 0 1 pSphere1.e[0:459];
+{
+//Lists the transform nodes of all selected objects
+string $nodes[] = `ls -selection`;
+
+for ($node in $nodes)
+{
+//Loop through each object and obtain its shape node
+string $shapes[] = `listRelatives -shapes $node`;
+
+//Set the visibility attribute of each shape node to 0
+//The shape node is saved to the 1st (or 0th) element of the $shape array
+setAttr ($shapes[0] + ".osdFvarBoundary") (1);
+}
+}

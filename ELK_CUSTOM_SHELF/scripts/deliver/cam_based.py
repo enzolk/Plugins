@@ -1,0 +1,2 @@
+# ELK_META {"label": "Cam_Based", "short_name": "", "tooltip": "Create UV texture coordinates for the selected object, using the current camera view as the plane of projection", "source": "mel"}
+UVCameraBasedProjection;
