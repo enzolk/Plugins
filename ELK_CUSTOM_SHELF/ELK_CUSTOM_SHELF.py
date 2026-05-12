@@ -238,15 +238,12 @@ class VectorIcon(QtWidgets.QWidget):
 
 class ToolButton(QtWidgets.QFrame):
     clicked=QtCore.Signal(dict)
-    requestEdit=QtCore.Signal(dict)
-    requestDelete=QtCore.Signal(dict)
     def __init__(self,item,color="#36d6ff",compact=False,tight=False,parent=None):
         super(ToolButton,self).__init__(parent)
         self.item=item
         self.compact=compact
         self.tight=tight
-        self.setCursor(QtCore.Qt.OpenHandCursor)
-        self._drag_start_pos = None
+        self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setToolTip(_clean_tooltip((item.get("label", "Tool") + "\n\n" + item.get("tooltip", "")).strip()))
         self.setObjectName("ToolButton")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -283,42 +280,8 @@ class ToolButton(QtWidgets.QFrame):
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
-    def mousePressEvent(self,e):
-        if e.button() == QtCore.Qt.RightButton:
-            menu = QtWidgets.QMenu(self)
-            act_edit = menu.addAction("Modifier")
-            act_delete = menu.addAction("Supprimer")
-            picked = menu.exec_(e.globalPos()) if hasattr(menu, "exec_") else menu.exec(e.globalPos())
-            if picked == act_edit:
-                self.requestEdit.emit(self.item)
-            elif picked == act_delete:
-                self.requestDelete.emit(self.item)
-            return
-        if e.button() == QtCore.Qt.LeftButton:
-            self._drag_start_pos = e.pos()
-            self.setCursor(QtCore.Qt.ClosedHandCursor)
-        super(ToolButton,self).mousePressEvent(e)
-
-    def mouseMoveEvent(self,e):
-        if not (e.buttons() & QtCore.Qt.LeftButton) or self._drag_start_pos is None:
-            return super(ToolButton,self).mouseMoveEvent(e)
-        if (e.pos() - self._drag_start_pos).manhattanLength() < QtWidgets.QApplication.startDragDistance():
-            return
-        drag = QtGui.QDrag(self)
-        mime = QtCore.QMimeData()
-        mime.setData("application/x-elk-item", json.dumps({
-            "file_path": self.item.get("file_path", ""),
-            "category": self.item.get("category", "Tools"),
-            "label": self.item.get("label", "")
-        }).encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.exec_(QtCore.Qt.MoveAction) if hasattr(drag, "exec_") else drag.exec(QtCore.Qt.MoveAction)
-
     def mouseReleaseEvent(self,e):
-        self.setCursor(QtCore.Qt.OpenHandCursor)
-        if e.button() == QtCore.Qt.LeftButton and self._drag_start_pos is not None and (e.pos() - self._drag_start_pos).manhattanLength() < QtWidgets.QApplication.startDragDistance():
-            self.clicked.emit(self.item)
-        self._drag_start_pos = None
+        if e.button()==QtCore.Qt.LeftButton: self.clicked.emit(self.item)
         super(ToolButton,self).mouseReleaseEvent(e)
 
 class VerticalTextLabel(QtWidgets.QLabel):
@@ -378,7 +341,6 @@ class Category(QtWidgets.QFrame):
     def __init__(self,name,items,parent_ui,parent=None):
         super(Category,self).__init__(parent)
         self.name=name; self.items=items; self.parent_ui=parent_ui
-        self.setAcceptDrops(True)
         self.expanded = name not in getattr(parent_ui, "collapsed_categories", set())
         self.color=CATEGORY_COLORS.get(name,"#ffad3b")
         self.setObjectName("Category")
@@ -489,20 +451,7 @@ class Category(QtWidgets.QFrame):
             return
 
         for i,item in enumerate(self.items):
-            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight); btn.clicked.connect(run_item); btn.requestEdit.connect(self.parent_ui.edit_item); btn.requestDelete.connect(self.parent_ui.delete_item); self.grid.addWidget(btn,i//cols,i%cols)
-
-    def dragEnterEvent(self,e):
-        if e.mimeData().hasFormat("application/x-elk-item"):
-            e.acceptProposedAction()
-
-    def dragMoveEvent(self,e):
-        if e.mimeData().hasFormat("application/x-elk-item"):
-            e.acceptProposedAction()
-
-    def dropEvent(self,e):
-        if e.mimeData().hasFormat("application/x-elk-item"):
-            self.parent_ui.move_item_to_category(bytes(e.mimeData().data("application/x-elk-item")).decode("utf-8"), self.name)
-            e.acceptProposedAction()
+            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
 
 class ELKMinimalUI(QtWidgets.QWidget):
     def __init__(self,parent=None):
@@ -777,9 +726,6 @@ class ELKMinimalUI(QtWidgets.QWidget):
         spin.setSpecialValueText("No limit")
         spin.setValue(self.max_height_px)
         form.addRow("Max UI height:", spin)
-        new_cat = QtWidgets.QLineEdit()
-        new_cat.setPlaceholderText("Créer une nouvelle catégorie")
-        form.addRow("Nouvelle catégorie:", new_cat)
         lay.addLayout(form)
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         lay.addWidget(btns)
@@ -787,16 +733,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
         btns.rejected.connect(dlg.reject)
         if dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec():
             self.max_height_px = int(spin.value())
-            cat_name = (new_cat.text() or "").strip()
-            if cat_name:
-                (SCRIPTS_ROOT / _slugify(cat_name)).mkdir(parents=True, exist_ok=True)
             cmds.optionVar(iv=(OPTIONVAR_MAX_HEIGHT, self.max_height_px))
             self._apply_max_height_limit()
             self.reflow()
 
-    def open_add_script_dialog(self, existing=None):
+    def open_add_script_dialog(self):
         dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("Modifier le script" if existing else "Add ELK Script")
+        dlg.setWindowTitle("Add ELK Script")
         lay = QtWidgets.QFormLayout(dlg)
         full_name = QtWidgets.QLineEdit()
         short_name = QtWidgets.QLineEdit()
@@ -835,58 +778,11 @@ class ELKMinimalUI(QtWidgets.QWidget):
         btns=QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok|QtWidgets.QDialogButtonBox.Cancel)
         lay.addRow(btns)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
-        if existing:
-            full_name.setText(existing.get("label", ""))
-            short_name.setText(existing.get("short_name", ""))
-            category.setCurrentText(existing.get("category", "Tools"))
-            desc.setText(existing.get("tooltip", ""))
-            source.setCurrentText(existing.get("source", "python"))
-            code.setPlainText(existing.get("command", ""))
         if (dlg.exec_() if hasattr(dlg,'exec_') else dlg.exec()):
             item={"label":full_name.text().strip() or "New Script","short_name":short_name.text().strip(),"category":category.currentText().strip() or "Tools","tooltip":desc.text().strip(),"source":source.currentText(),"command":code.toPlainText()}
-            if existing and existing.get("file_path"):
-                item["file_path"] = existing.get("file_path")
             item['file_path']=save_item_to_disk(item)
             self.shelf_items = load_shelf_items()
             self.refresh()
-
-    def edit_item(self, item):
-        self.open_add_script_dialog(existing=item)
-
-    def delete_item(self, item):
-        if QtWidgets.QMessageBox.question(self, "Supprimer", "Supprimer ce script et son fichier ?") != QtWidgets.QMessageBox.Yes:
-            return
-        fp = item.get("file_path")
-        try:
-            if fp and Path(fp).exists():
-                Path(fp).unlink()
-        except Exception:
-            pass
-        self.shelf_items = load_shelf_items()
-        self.refresh()
-
-    def move_item_to_category(self, payload, target_category):
-        try:
-            data = json.loads(payload)
-        except Exception:
-            return
-        src = data.get("file_path")
-        if not src:
-            return
-        src_p = Path(src)
-        if not src_p.exists():
-            return
-        dest_dir = SCRIPTS_ROOT / _slugify(target_category)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / src_p.name
-        if dest != src_p:
-            i = 1
-            while dest.exists():
-                dest = dest_dir / f"{src_p.stem}_{i}{src_p.suffix}"
-                i += 1
-            src_p.replace(dest)
-        self.shelf_items = load_shelf_items()
-        self.refresh()
 
     def on_search(self,t):
         text = t or ''
