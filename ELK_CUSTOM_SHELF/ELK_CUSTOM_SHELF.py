@@ -254,7 +254,6 @@ def save_item_to_disk(item):
     out.write_text(payload, encoding='utf-8')
     return str(out)
 BG="#2a2a2a"; PANEL="#373737"; BUTTON_BG="#444444"; BUTTON_HOVER="#505050"; BORDER="#565656"; TEXT="#f0f0f0"; MUTED="#b7b7b7"
-CATEGORY_COLORS={"Tools":"#36d6ff","Object":"#5ee06c","Sculpting":"#b277ff","Action":"#ff9f2e","Nurbs":"#ffd34d","Deliver":"#4bc8ff","Vertex":"#56e3c4","Face":"#ff6b45"}
 
 def run_item(item):
     cmd=item.get("command","") or ""
@@ -566,7 +565,7 @@ class Category(QtWidgets.QFrame):
         cat_meta = _load_category_meta()
         self.icon_svg = normalize_icon_name((cat_meta.get("icons") or {}).get(self.slug, ""))
         self.icon_color = (cat_meta.get("icon_colors") or {}).get(self.slug, "")
-        self.color=CATEGORY_COLORS.get(name,"#ffad3b")
+        self.color = self.icon_color or "#36d6ff"
         self.setObjectName("Category")
         self.setProperty("dragOver", False)
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -575,7 +574,7 @@ class Category(QtWidgets.QFrame):
     def build(self):
         self.outer=QtWidgets.QVBoxLayout(self); self.outer.setContentsMargins(0,0,0,0); self.outer.setSpacing(5)
         self.header=QtWidgets.QFrame(); self.header.setObjectName("CategoryHeader"); self.header.setCursor(QtCore.Qt.PointingHandCursor)
-        h=QtWidgets.QHBoxLayout(self.header); h.setContentsMargins(10,8,10,8); h.setSpacing(8); h.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 16) if self.icon_svg else VectorIcon(self.name,self.color,16))
+        h=QtWidgets.QHBoxLayout(self.header); h.setContentsMargins(10,8,10,8); h.setSpacing(8); h.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 16))
         self.title=QtWidgets.QLabel(self.name.upper()); self.title.setStyleSheet("background:transparent;color:%s;font-weight:800;font-size:12px;border:0px;"%TEXT); h.addWidget(self.title,1)
         self.count_label=QtWidgets.QLabel(str(len(self.items))); self.count_label.setStyleSheet("background:transparent;color:%s;font-size:11px;border:0px;"%MUTED); h.addWidget(self.count_label)
         self.arrow=QtWidgets.QLabel("⌄"); self.arrow.setStyleSheet("background:transparent;color:%s;font-size:13px;border:0px;"%MUTED); h.addWidget(self.arrow)
@@ -585,7 +584,7 @@ class Category(QtWidgets.QFrame):
         # It takes the full available height, but only a very small width.
         self.collapsed_header=QtWidgets.QFrame(); self.collapsed_header.setObjectName("CollapsedCategoryHeader"); self.collapsed_header.setCursor(QtCore.Qt.PointingHandCursor)
         ch=QtWidgets.QVBoxLayout(self.collapsed_header); ch.setContentsMargins(5,5,5,5); ch.setSpacing(3)
-        ch.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 17) if self.icon_svg else VectorIcon(self.name,self.color,17),0,QtCore.Qt.AlignHCenter)
+        ch.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 17),0,QtCore.Qt.AlignHCenter)
         self.collapsed_title=VerticalTextLabel(self.name.upper(), TEXT)
         ch.addWidget(self.collapsed_title,1,QtCore.Qt.AlignHCenter)
         self.collapsed_arrow=QtWidgets.QLabel("⌄"); self.collapsed_arrow.setAlignment(QtCore.Qt.AlignCenter); self.collapsed_arrow.setStyleSheet("background:transparent;color:%s;font-size:12px;border:0px;"%MUTED)
@@ -1110,10 +1109,56 @@ class ELKMinimalUI(QtWidgets.QWidget):
             it = cat_list.currentItem()
             return it.data(QtCore.Qt.UserRole) if it else None
 
+        def _category_editor(initial_name="", initial_icon="", initial_color="#36d6ff"):
+            cat_dlg = QtWidgets.QDialog(dlg)
+            cat_dlg.setWindowTitle("Configurer la catégorie")
+            cat_form = QtWidgets.QFormLayout(cat_dlg)
+            name_edit = QtWidgets.QLineEdit(initial_name)
+            icon_name = QtWidgets.QLineEdit(normalize_icon_name(initial_icon))
+            icon_name.setReadOnly(True)
+            icon_color = QtWidgets.QComboBox()
+            icon_color.addItems(ICON_COLORS)
+            icon_color.setCurrentText(initial_color if initial_color in ICON_COLORS else "#36d6ff")
+            icon_preview = QtWidgets.QLabel("")
+            icon_preview.setMinimumHeight(24)
+            icon_preview.setStyleSheet("color:#b7b7b7;")
+            icon_btn = QtWidgets.QPushButton("Choisir icône SVG…")
+
+            def _refresh_preview():
+                if icon_name.text().strip():
+                    icon_preview.setText("{} ({})".format(icon_name.text().strip(), icon_color.currentText()))
+                else:
+                    icon_preview.setText("Aucune icône sélectionnée")
+
+            def _pick():
+                picked = self._pick_svg_icon(icon_name.text().strip(), icon_color.currentText())
+                if picked:
+                    icon_name.setText(picked[0])
+                    icon_color.setCurrentText(picked[1])
+                    _refresh_preview()
+
+            icon_btn.clicked.connect(_pick)
+            icon_color.currentTextChanged.connect(lambda _v: _refresh_preview())
+            _refresh_preview()
+            cat_form.addRow("Nom", name_edit)
+            cat_form.addRow("Icône SVG", icon_btn)
+            cat_form.addRow("Sélection", icon_preview)
+            cat_form.addRow("Couleur", icon_color)
+            cat_btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+            cat_form.addRow(cat_btns)
+            cat_btns.accepted.connect(cat_dlg.accept); cat_btns.rejected.connect(cat_dlg.reject)
+            if (cat_dlg.exec_() if hasattr(cat_dlg, "exec_") else cat_dlg.exec()):
+                return {
+                    "name": (name_edit.text() or "").strip(),
+                    "icon_svg": normalize_icon_name(icon_name.text().strip()),
+                    "icon_color": icon_color.currentText()
+                }
+            return None
+
         def add_category():
-            name, ok = QtWidgets.QInputDialog.getText(dlg, "Create category", "Category name:")
-            if not ok: return
-            name = (name or "").strip()
+            edited = _category_editor()
+            if not edited: return
+            name = edited["name"]
             if len(name) < 2:
                 cmds.warning("Invalid category name."); return
             slug = _slugify(name)
@@ -1125,10 +1170,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
             (SCRIPTS_ROOT / slug).mkdir(parents=True, exist_ok=True)
             meta['names'][slug] = name
             if slug not in meta['order']: meta['order'].append(slug)
-            picked = self._pick_svg_icon("", "#36d6ff")
-            if picked:
-                meta.setdefault('icons', {})[slug] = picked[0]
-                meta.setdefault('icon_colors', {})[slug] = picked[1]
+            meta.setdefault('icons', {})[slug] = edited["icon_svg"]
+            meta.setdefault('icon_colors', {})[slug] = edited["icon_color"]
             _save_category_meta(meta)
             reload_list(select_slug=slug); self._refresh_ui_data()
 
@@ -1136,9 +1179,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
             slug = selected_row();
             if not slug: return
             meta = _sync_category_meta_from_fs(); old = meta['names'].get(slug, slug)
-            name, ok = QtWidgets.QInputDialog.getText(dlg, "Rename category", "New name:", text=old)
-            if not ok: return
-            name=(name or '').strip();
+            edited = _category_editor(
+                initial_name=old,
+                initial_icon=(meta.get('icons') or {}).get(slug, ""),
+                initial_color=(meta.get('icon_colors') or {}).get(slug, "#36d6ff")
+            )
+            if not edited: return
+            name = edited["name"]
             if not name: return
             existing = {(v or '').strip().casefold(): k for k,v in meta['names'].items()}
             if name.casefold() in existing and existing[name.casefold()] != slug:
@@ -1159,10 +1206,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 meta['order'] = [final_slug if x == slug else x for x in meta['order']]
             else:
                 final_slug = slug; meta['names'][slug] = name
-            picked = self._pick_svg_icon((meta.get('icons') or {}).get(final_slug, ""), (meta.get('icon_colors') or {}).get(final_slug, "#36d6ff"))
-            if picked:
-                meta.setdefault('icons', {})[final_slug] = picked[0]
-                meta.setdefault('icon_colors', {})[final_slug] = picked[1]
+            meta.setdefault('icons', {})[final_slug] = edited["icon_svg"]
+            meta.setdefault('icon_colors', {})[final_slug] = edited["icon_color"]
             _save_category_meta(meta); reload_list(select_slug=final_slug); self._refresh_ui_data()
 
         def delete_category():

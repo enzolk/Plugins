@@ -1,0 +1,34 @@
+{
+  "order": [
+    "tools",
+    "object",
+    "sculpting",
+    "action",
+    "nurbs",
+    "deliver"
+  ],
+  "names": {
+    "tools": "Tools",
+    "object": "Object",
+    "sculpting": "Sculpting",
+    "action": "Action",
+    "nurbs": "Nurbs",
+    "deliver": "Deliver"
+  },
+  "icons": {
+    "tools": "category-2.svg",
+    "object": "carousel-horizontal.svg",
+    "sculpting": "pyramid-off.svg",
+    "action": "repeat-once.svg",
+    "nurbs": "corner-down-right-double.svg",
+    "deliver": "brand-filezilla.svg"
+  },
+  "icon_colors": {
+    "tools": "#36d6ff",
+    "object": "#5ee06c",
+    "sculpting": "#b277ff",
+    "action": "#ff9f2e",
+    "nurbs": "#ffd34d",
+    "deliver": "#4bc8ff"
+  }
+}
