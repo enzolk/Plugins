@@ -1308,6 +1308,21 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def toggle_view(self):
         self.view_mode="list" if self.view_mode=="grid" else "grid"; self.view_btn.setText("List" if self.view_mode=="list" else "Grid"); self.refresh()
 
+    def _run_layout_mode_switch_workaround(self):
+        """Force a clean scroll/layout reset after vertical<->horizontal switch.
+
+        Reuses the exact Grid/List button logic by calling the same toggle
+        method twice so the final visual mode remains unchanged.
+        """
+        if getattr(self, "_running_layout_mode_switch_workaround", False):
+            return
+        self._running_layout_mode_switch_workaround = True
+        try:
+            self.toggle_view()
+            self.toggle_view()
+        finally:
+            self._running_layout_mode_switch_workaround = False
+
     def grouped_items(self):
         order=[]; d={}
         for item in self.shelf_items:
@@ -1404,6 +1419,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         changed = self.apply_layout_mode()
         if changed:
             self.refresh()
+            self._run_layout_mode_switch_workaround()
             return
         if self.is_horizontal_mode():
             self.compute_horizontal_widths()
