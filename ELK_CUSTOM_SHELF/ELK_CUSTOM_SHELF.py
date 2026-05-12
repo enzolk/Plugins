@@ -98,6 +98,15 @@ def _slugify(text):
     t = re.sub(r"[^a-zA-Z0-9_]+", "_", (text or "item").strip().lower()).strip("_")
     return t or "item"
 
+
+def _is_valid_script_name(name):
+    value = (name or "").strip()
+    if not value:
+        return False
+    if value in {'.', '..'}:
+        return False
+    return re.match(r'^[^\\/:*?"<>|]+$', value, re.UNICODE) is not None
+
 def _script_payload(item):
     meta = {
         "label": item.get("label", ""),
@@ -295,9 +304,10 @@ class VectorIcon(QtWidgets.QWidget):
 
 class ToolButton(QtWidgets.QFrame):
     clicked=QtCore.Signal(dict)
-    def __init__(self,item,color="#36d6ff",compact=False,tight=False,parent=None):
+    def __init__(self,item,color="#36d6ff",compact=False,tight=False,parent_ui=None,parent=None):
         super(ToolButton,self).__init__(parent)
         self.item=item
+        self.parent_ui=parent_ui
         self.compact=compact
         self.tight=tight
         self.setCursor(QtCore.Qt.PointingHandCursor)
@@ -338,7 +348,12 @@ class ToolButton(QtWidgets.QFrame):
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
     def mouseReleaseEvent(self,e):
-        if e.button()==QtCore.Qt.LeftButton: self.clicked.emit(self.item)
+        if e.button()==QtCore.Qt.LeftButton:
+            self.clicked.emit(self.item)
+        elif e.button()==QtCore.Qt.RightButton and getattr(self.parent_ui, "open_script_context_menu", None):
+            self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(e.pos()))
+            e.accept()
+            return
         super(ToolButton,self).mouseReleaseEvent(e)
 
 class VerticalTextLabel(QtWidgets.QLabel):
@@ -508,7 +523,7 @@ class Category(QtWidgets.QFrame):
             return
 
         for i,item in enumerate(self.items):
-            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
+            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
 
 class ELKMinimalUI(QtWidgets.QWidget):
     def __init__(self,parent=None):
@@ -945,6 +960,101 @@ class ELKMinimalUI(QtWidgets.QWidget):
             item['file_path']=save_item_to_disk(item)
             self.shelf_items = load_shelf_items()
             self.refresh()
+
+    def open_script_context_menu(self, item, global_pos):
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet("QMenu{background:#373737;color:#f0f0f0;border:1px solid #565656;} QMenu::item{padding:6px 16px;} QMenu::item:selected{background:#505050;}")
+        edit_action = menu.addAction("Modifier")
+        chosen = menu.exec_(global_pos) if hasattr(menu, "exec_") else menu.exec(global_pos)
+        if chosen == edit_action:
+            self.open_edit_script_dialog(item)
+
+    def open_edit_script_dialog(self, item):
+        current_path = Path(item.get("file_path", ""))
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Modifier le script ELK")
+        dlg.setMinimumSize(840, 620)
+        dlg.resize(980, 700)
+        dlg.setSizeGripEnabled(True)
+        root = QtWidgets.QVBoxLayout(dlg)
+
+        err = QtWidgets.QLabel("")
+        err.setWordWrap(True)
+        err.setStyleSheet("color:#ff8f8f;font-weight:600;")
+        err.hide()
+
+        form = QtWidgets.QFormLayout()
+        full_name = QtWidgets.QLineEdit(item.get("label", ""))
+        short_name = QtWidgets.QLineEdit(item.get("short_name", ""))
+        desc = QtWidgets.QLineEdit(item.get("tooltip", ""))
+        category = QtWidgets.QComboBox(); category.setEditable(True)
+        categories = sorted({(it.get("category") or "Tools") for it in self.shelf_items})
+        if item.get("category") not in categories:
+            categories.append(item.get("category") or "Tools")
+        category.addItems(categories)
+        category.setCurrentText(item.get("category") or "Tools")
+        source = QtWidgets.QComboBox(); source.addItems(["python", "mel"])
+        source.setCurrentText((item.get("source") or "python").lower())
+
+        form.addRow("Nom du script", full_name)
+        form.addRow("Nom abrégé", short_name)
+        form.addRow("Description", desc)
+        form.addRow("Catégorie", category)
+        form.addRow("Type", source)
+        root.addLayout(form)
+        root.addWidget(err)
+
+        code = QtWidgets.QPlainTextEdit(item.get("command", ""))
+        code.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        code.setMinimumHeight(360)
+        root.addWidget(code, 1)
+
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+        root.addWidget(btns)
+        btns.rejected.connect(dlg.reject)
+
+        def show_error(msg):
+            err.setText(msg)
+            err.setVisible(bool(msg))
+
+        def do_save():
+            name = full_name.text().strip()
+            short = short_name.text().strip()
+            cat = category.currentText().strip() or "Tools"
+            tip = desc.text().strip()
+            src = source.currentText().strip().lower()
+            cmd = code.toPlainText()
+            if not _is_valid_script_name(name):
+                show_error("Nom de script invalide. Caractères interdits: \\ / : * ? \" < > |")
+                return
+            if not _is_valid_script_name(short) and short:
+                show_error("Nom abrégé invalide. Caractères interdits: \\ / : * ? \" < > |")
+                return
+            if not cat:
+                show_error("La catégorie est obligatoire.")
+                return
+            new_slug = _slugify(name)
+            cat_slug = _display_to_slug(cat)
+            ext = '.mel' if src == 'mel' else '.py'
+            target_dir = SCRIPTS_ROOT / cat_slug
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_path = target_dir / f"{new_slug}{ext}"
+            if current_path and target_path.resolve() != current_path.resolve() and target_path.exists():
+                show_error("Un script avec le même nom existe déjà dans cette catégorie.")
+                return
+            updated = {"label": name, "short_name": short, "tooltip": tip, "category": cat, "source": src, "command": cmd, "file_path": str(target_path)}
+            try:
+                if current_path and current_path.exists() and current_path.resolve() != target_path.resolve():
+                    current_path.unlink()
+                updated["file_path"] = save_item_to_disk(updated)
+            except Exception as ex:
+                show_error("Erreur lors de la sauvegarde: {}".format(ex))
+                return
+            self._refresh_ui_data()
+            dlg.accept()
+
+        btns.accepted.connect(do_save)
+        dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec()
 
     def on_search(self,t):
         text = t or ''
