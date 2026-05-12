@@ -2276,16 +2276,14 @@ QLabel#PageHeaderSubtitle {
     def _extract_catalog_asset_from_name(self, name: str) -> Optional[str]:
         if not name:
             return None
-        short_name = self._short_name(name)
-        cleaned = self._strip_namespaces_from_name(short_name).strip("_ ")
-        if not cleaned or "_" not in cleaned:
+        cleaned_upper = self._normalize_integration_asset_name(name)
+        if not cleaned_upper or "_" not in cleaned_upper:
             return None
-        cleaned_upper = cleaned.upper()
         if cleaned_upper.startswith("LOCATOR"):
             return None
         if cleaned_upper.endswith(("_HIGH", "_LOW", "_PLACEHOLDER")):
             return None
-        if not re.fullmatch(r"[A-Z0-9_]+_[A-Z]", cleaned_upper):
+        if not re.fullmatch(r"[A-Z0-9_]+_(?:[A-Z]|\d+)", cleaned_upper):
             return None
         return cleaned_upper
 
@@ -2297,6 +2295,12 @@ QLabel#PageHeaderSubtitle {
         return cleaned
 
     def _integration_base_catalog_name(self, name: str) -> str:
+        normalized = self._extract_catalog_asset_base_from_scene_node(name)
+        if not normalized:
+            return ""
+        return normalized
+
+    def _extract_catalog_asset_base_from_scene_node(self, name: str) -> str:
         normalized = self._normalize_integration_asset_name(name)
         if not normalized:
             return ""
@@ -2393,38 +2397,49 @@ QLabel#PageHeaderSubtitle {
                 detected.setdefault(base_catalog, set()).add(node)
                 grouped_occurrences.setdefault(base_catalog, set()).add(self._normalize_integration_asset_name(node))
 
+        def _is_internal_part(base_name: str, main_catalog: str) -> bool:
+            if not base_name:
+                return True
+            if base_name.startswith("LOCATOR"):
+                return True
+            if re.match(r"ARM_.*_PART_.*", base_name):
+                return True
+            if base_name.startswith("SCREEN_"):
+                return True
+            if base_name.startswith("DROID_TOTEM_B_METAL_"):
+                return True
+            if base_name == "DROID_TOTEM_B_GLASS":
+                return True
+            if base_name == main_catalog or base_name.startswith(f"{main_catalog}_"):
+                return True
+            return False
+
         annexe_assets: Set[str] = set()
         for catalog_name, source_nodes in detected.items():
+            child_candidates: Dict[str, Set[str]] = {}
             for source_node in source_nodes:
-                pending_children = cmds.listRelatives(source_node, children=True, fullPath=True, type="transform") or []
-                while pending_children:
-                    child = pending_children.pop()
-                    child_catalog = self._extract_catalog_asset_from_name(child)
-                    if not child_catalog:
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                descendants = cmds.listRelatives(source_node, allDescendents=True, fullPath=True, type="transform") or []
+                for child in descendants:
+                    raw_name = self._normalize_integration_asset_name(child)
+                    child_base_catalog = self._extract_catalog_asset_base_from_scene_node(child)
+                    if not raw_name or not child_base_catalog:
                         continue
-                    child_base_catalog = self._integration_base_catalog_name(child_catalog)
-                    if not child_base_catalog or child_base_catalog == catalog_name:
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
-                        continue
-                    if child_catalog.startswith("LOCATOR"):
-                        self._append_integration_log(f"[CLASSIFY SKIP] Locator ignored: {child_catalog}")
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                    self._append_integration_log(f"[CLASSIFY DEBUG] Candidate child: {raw_name} -> {child_base_catalog}")
+                    if _is_internal_part(child_base_catalog, catalog_name):
+                        self._append_integration_log(f"[CLASSIFY SKIP] Internal part ignored: {raw_name} -> {child_base_catalog}")
                         continue
                     if self._integration_is_child_variant_of_asset(child_base_catalog, catalog_name):
                         self._append_integration_log(
                             f"[CLASSIFY SKIP] Child variant ignored: {child_base_catalog} under {catalog_name}"
                         )
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
                         continue
-                    if child_base_catalog not in detected:
-                        pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
-                        continue
-                    annexe_assets.add(child_base_catalog)
-                    annexe_sources.setdefault(child_base_catalog, set()).add(catalog_name)
-                    occurrences = ", ".join(sorted(grouped_occurrences.get(child_base_catalog, [])))
-                    self._append_integration_log(f"[CLASSIFY] Annexe Asset: {child_base_catalog} from occurrences: {occurrences or child_base_catalog}")
-                    pending_children.extend(cmds.listRelatives(child, children=True, fullPath=True, type="transform") or [])
+                    child_candidates.setdefault(child_base_catalog, set()).add(raw_name)
+            for child_base_catalog, occurrences_set in child_candidates.items():
+                annexe_assets.add(child_base_catalog)
+                annexe_sources.setdefault(child_base_catalog, set()).add(catalog_name)
+                grouped_occurrences.setdefault(child_base_catalog, set()).update(occurrences_set)
+                occurrences = ", ".join(sorted(grouped_occurrences.get(child_base_catalog, [])))
+                self._append_integration_log(f"[CLASSIFY] Annexe Asset: {child_base_catalog} from occurrences: {occurrences or child_base_catalog}")
 
         self.integration_catalog_assets = sorted(detected.keys())
         self.integration_annexe_catalog_assets = sorted(annexe_assets)
