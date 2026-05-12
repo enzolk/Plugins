@@ -436,6 +436,7 @@ class ToolButton(QtWidgets.QFrame):
         self.setObjectName("ToolButton")
         self._press_pos = None
         self._drag_started = False
+        self._overlay_label = None
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
 
         ui_scale = self.parent_ui.ui_scale_value if self.parent_ui else (lambda *_: 1.0)
@@ -452,6 +453,25 @@ class ToolButton(QtWidgets.QFrame):
             lay.addStretch(1)
             self.setFixedSize(48,42) if tight else self.setFixedSize(56,48)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QLabel{background:transparent;border:0px;}")
+            short_name = (item.get("short_name") or "").strip()
+            if short_name:
+                short_px = max(7, int(round(9 * text_scale)))
+                self._overlay_label = QtWidgets.QLabel(short_name, self)
+                self._overlay_label.setObjectName("ToolShortNameOverlay")
+                self._overlay_label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
+                self._overlay_label.setWordWrap(False)
+                self._overlay_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+                self._overlay_label.setStyleSheet(
+                    "QLabel#ToolShortNameOverlay{"
+                    "color:#ffffff;"
+                    "font-weight:700;"
+                    "font-size:%dpx;"
+                    "padding:0px 2px;"
+                    "background-color:rgba(0, 0, 0, 120);"
+                    "border-radius:2px;"
+                    "}" % short_px
+                )
+                self._overlay_label.raise_()
         else:
             if self.tight:
                 lay.setContentsMargins(7,5,7,5)
@@ -473,6 +493,19 @@ class ToolButton(QtWidgets.QFrame):
             lay.addWidget(lab,1)
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
+
+    def resizeEvent(self, event):
+        super(ToolButton, self).resizeEvent(event)
+        if self._overlay_label is not None:
+            inset = 3
+            bottom_inset = 3
+            label_h = max(10, self._overlay_label.sizeHint().height())
+            self._overlay_label.setGeometry(
+                inset,
+                max(inset, self.height() - label_h - bottom_inset),
+                max(0, self.width() - (inset * 2)),
+                label_h
+            )
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
