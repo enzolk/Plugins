@@ -40,6 +40,7 @@ else:
         BASE_DIR = Path.cwd()
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
+ITEM_ORDER_FILE = BASE_DIR / "item_order.json"
 
 
 def _unique_fs_path(base_path):
@@ -169,14 +170,39 @@ def load_shelf_items():
     items=[]
     dirs = [d for d in SCRIPTS_ROOT.iterdir() if d.is_dir()] if SCRIPTS_ROOT.exists() else []
     rank = {slug: i for i, slug in enumerate(meta.get('order') or [])}
+    order_data = {}
+    if ITEM_ORDER_FILE.exists():
+        try:
+            parsed = json.loads(ITEM_ORDER_FILE.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                order_data = {str(k): [str(x) for x in v] for k, v in parsed.items() if isinstance(v, list)}
+        except Exception:
+            order_data = {}
     for cat_dir in sorted(dirs, key=lambda p: (rank.get(p.name, 9999), p.name)):
         cat = (meta.get('names') or {}).get(cat_dir.name, cat_dir.name.replace('_', ' ').title())
-        for sp in sorted([x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]):
+        scripts = [x for x in cat_dir.iterdir() if x.suffix.lower() in ('.py', '.mel')]
+        wanted = order_data.get(cat_dir.name, [])
+        by_name = {x.name: x for x in scripts}
+        ordered = [by_name[n] for n in wanted if n in by_name]
+        for x in sorted(scripts, key=lambda y: y.name):
+            if x not in ordered:
+                ordered.append(x)
+        for sp in ordered:
             try:
                 items.append(_read_script_file(sp, cat))
             except Exception:
                 continue
     return items
+
+def save_item_order(items):
+    cat_to_files = {}
+    for it in items:
+        fp = Path(it.get("file_path", ""))
+        if not fp.exists():
+            continue
+        slug = fp.parent.name
+        cat_to_files.setdefault(slug, []).append(fp.name)
+    ITEM_ORDER_FILE.write_text(json.dumps(cat_to_files, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def save_item_to_disk(item):
     cat_dir = SCRIPTS_ROOT / _display_to_slug(item.get('category','tools'))
@@ -314,6 +340,7 @@ class ToolButton(QtWidgets.QFrame):
         self.setToolTip(_clean_tooltip((item.get("label", "Tool") + "\n\n" + item.get("tooltip", "")).strip()))
         self.setObjectName("ToolButton")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._drag_start_pos = None
 
         lay=QtWidgets.QHBoxLayout(self)
         if compact:
@@ -355,6 +382,34 @@ class ToolButton(QtWidgets.QFrame):
             e.accept()
             return
         super(ToolButton,self).mouseReleaseEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == QtCore.Qt.LeftButton:
+            self._drag_start_pos = e.pos()
+        super(ToolButton, self).mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if not (e.buttons() & QtCore.Qt.LeftButton) or self._drag_start_pos is None:
+            return super(ToolButton, self).mouseMoveEvent(e)
+        if (e.pos() - self._drag_start_pos).manhattanLength() < QtWidgets.QApplication.startDragDistance():
+            return super(ToolButton, self).mouseMoveEvent(e)
+        if not self.item.get("file_path"):
+            return
+        drag = QtGui.QDrag(self)
+        mime = QtCore.QMimeData()
+        payload = {
+            "file_path": self.item.get("file_path", ""),
+            "category": self.item.get("category", ""),
+            "label": self.item.get("label", "")
+        }
+        mime.setData("application/x-elk-shelf-item", json.dumps(payload).encode("utf-8"))
+        drag.setMimeData(mime)
+        pix = self.grab()
+        drag.setPixmap(pix)
+        drag.setHotSpot(e.pos())
+        self.setWindowOpacity(0.55)
+        drag.exec_(QtCore.Qt.MoveAction)
+        self.setWindowOpacity(1.0)
 
 class VerticalTextLabel(QtWidgets.QLabel):
     """Auto-sized rotated text label used only for closed horizontal categories.
@@ -417,6 +472,8 @@ class Category(QtWidgets.QFrame):
         self.color=CATEGORY_COLORS.get(name,"#ffad3b")
         self.setObjectName("Category")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setAcceptDrops(True)
+        self._drop_insert_idx = -1
         self.build()
 
     def build(self):
@@ -523,7 +580,69 @@ class Category(QtWidgets.QFrame):
             return
 
         for i,item in enumerate(self.items):
+            if self._drop_insert_idx == i:
+                gap = QtWidgets.QFrame()
+                gap.setFixedHeight(6 if not horizontal else 36)
+                gap.setStyleSheet("background:#36d6ff;border:1px solid #71e6ff;border-radius:3px;")
+                self.grid.addWidget(gap,i//cols,i%cols)
+                i += 1
             btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); self.grid.addWidget(btn,i//cols,i%cols)
+        if self._drop_insert_idx >= len(self.items):
+            gap = QtWidgets.QFrame()
+            gap.setFixedHeight(6 if not horizontal else 36)
+            gap.setStyleSheet("background:#36d6ff;border:1px solid #71e6ff;border-radius:3px;")
+            pos = len(self.items)
+            self.grid.addWidget(gap, pos//cols, pos%cols)
+
+    def _drop_index_from_pos(self, pos):
+        idx = len(self.items)
+        best = None
+        for i in range(self.grid.count()):
+            w = self.grid.itemAt(i).widget()
+            if not isinstance(w, ToolButton):
+                continue
+            c = w.geometry().center()
+            d = abs(pos.y() - c.y()) + abs(pos.x() - c.x())
+            if best is None or d < best[0]:
+                best = (d, w)
+        if best:
+            w = best[1]
+            idx = self.items.index(w.item)
+            if pos.y() > w.geometry().center().y() or pos.x() > w.geometry().center().x():
+                idx += 1
+        return max(0, min(len(self.items), idx))
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasFormat("application/x-elk-shelf-item"):
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        if not e.mimeData().hasFormat("application/x-elk-shelf-item"):
+            return e.ignore()
+        p = self.body.mapFrom(self, e.pos())
+        idx = self._drop_index_from_pos(p)
+        if idx != self._drop_insert_idx:
+            self._drop_insert_idx = idx
+            self.reflow()
+        e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):
+        self._drop_insert_idx = -1
+        self.reflow()
+        super(Category, self).dragLeaveEvent(e)
+
+    def dropEvent(self, e):
+        if not e.mimeData().hasFormat("application/x-elk-shelf-item"):
+            return e.ignore()
+        try:
+            payload = json.loads(bytes(e.mimeData().data("application/x-elk-shelf-item")).decode("utf-8"))
+        except Exception:
+            return e.ignore()
+        self.parent_ui.reorder_item(payload, self.name, self._drop_insert_idx)
+        self._drop_insert_idx = -1
+        e.acceptProposedAction()
 
 class ELKMinimalUI(QtWidgets.QWidget):
     def __init__(self,parent=None):
@@ -799,6 +918,46 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def _refresh_ui_data(self):
         self.shelf_items = load_shelf_items()
         self.refresh()
+
+    def reorder_item(self, payload, target_category_name, target_index):
+        src_path = str(payload.get("file_path", ""))
+        if not src_path:
+            return
+        src_idx = next((i for i, it in enumerate(self.shelf_items) if it.get("file_path") == src_path), None)
+        if src_idx is None:
+            return
+        moving = dict(self.shelf_items[src_idx])
+        moving["category"] = target_category_name
+        remaining = [it for i, it in enumerate(self.shelf_items) if i != src_idx]
+        grouped = {}
+        for it in remaining:
+            grouped.setdefault(it.get("category", "Tools"), []).append(it)
+        target_list = grouped.setdefault(target_category_name, [])
+        target_index = max(0, min(len(target_list), target_index if target_index is not None else len(target_list)))
+        target_list.insert(target_index, moving)
+        rebuilt = []
+        for cat, _ in self.grouped_items():
+            rebuilt.extend(grouped.pop(cat, []))
+        for cat in sorted(grouped.keys()):
+            rebuilt.extend(grouped[cat])
+        self.shelf_items = rebuilt
+        if src_path != moving.get("file_path"):
+            moving["file_path"] = src_path
+        if moving.get("file_path"):
+            try:
+                old = Path(moving["file_path"])
+                target_dir = SCRIPTS_ROOT / _display_to_slug(target_category_name)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                dest = target_dir / old.name
+                if old.exists() and old.parent != target_dir:
+                    if dest.exists():
+                        dest = _unique_fs_path(dest)
+                    old.rename(dest)
+                    moving["file_path"] = str(dest)
+            except Exception:
+                pass
+        save_item_order(self.shelf_items)
+        self._refresh_ui_data()
 
     def open_options_dialog(self):
         dlg = QtWidgets.QDialog(self)
