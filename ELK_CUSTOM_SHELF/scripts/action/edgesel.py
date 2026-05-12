@@ -1,4 +1,4 @@
-# ELK_META {"label": "edgeSel", "short_name": "", "tooltip": "This script selects edges in a Maya mesh based on the area of their adjacent faces and their length. Users can define min/max thresholds for both criteria via a UI.", "source": "python"}
+# ELK_META {"label": "edgeSel", "short_name": "", "tooltip": "This script selects edges in a Maya mesh based on the area of their adjacent faces and their length. Users can define min/max thresholds for both criteria via a UI.", "source": "python", "icon_svg": "border-top.svg", "icon_color": "#ff9f2e"}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 

@@ -1,4 +1,4 @@
-# ELK_META {"label": "RizomUV", "short_name": "", "tooltip": "Send UV to RizomUV", "source": "python"}
+# ELK_META {"label": "RizomUV", "short_name": "", "tooltip": "Send UV to RizomUV", "source": "python", "icon_svg": "table-import.svg", "icon_color": "#4bc8ff"}
 import maya.cmds as cmds
 import subprocess, tempfile, os, platform
 import maya.mel as mel

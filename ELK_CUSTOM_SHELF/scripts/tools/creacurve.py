@@ -1,4 +1,4 @@
-# ELK_META {"label": "CreaCurve", "short_name": "", "tooltip": "Create A curve Between Two selected vertices", "source": "python"}
+# ELK_META {"label": "CreaCurve", "short_name": "", "tooltip": "Create A curve Between Two selected vertices", "source": "python", "icon_svg": "tools-kitchen-2.svg", "icon_color": "#36d6ff"}
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 

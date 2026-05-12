@@ -1,4 +1,4 @@
-# ELK_META {"label": "Center Edge", "short_name": "", "tooltip": "Select the center edge of the selected obect", "source": "python"}
+# ELK_META {"label": "Center Edge", "short_name": "", "tooltip": "Select the center edge of the selected obect", "source": "python", "icon_svg": "border-top.svg", "icon_color": "#b277ff"}
 import maya.cmds as cmds
 import maya.OpenMaya as om
 

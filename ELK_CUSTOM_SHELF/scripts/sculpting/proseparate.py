@@ -1,4 +1,4 @@
-# ELK_META {"label": "ProSeparate", "short_name": "", "tooltip": "Separate", "source": "python"}
+# ELK_META {"label": "ProSeparate", "short_name": "", "tooltip": "Separate", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
 import maya.cmds as cmds
 
 def separate_and_rename_simple():

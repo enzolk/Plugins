@@ -1,3 +1,4 @@
+// ELK_META {"label": "Edge Loop", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "border-top.svg", "icon_color": "#36d6ff"}
 //insert edgeloop relative distance 
 SplitEdgeRingTool; 
 polySelectEditCtx -e -splitType 1 -insertWithEdgeFlow 0 

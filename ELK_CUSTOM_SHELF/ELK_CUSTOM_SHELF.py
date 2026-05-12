@@ -145,9 +145,9 @@ def _read_script_file(path, category):
     lines = txt.splitlines()
     meta = {}
     command = txt
-    if path.suffix.lower() == '.py' and lines and lines[0].startswith("# ELK_META "):
+    if lines and (lines[0].startswith("# ELK_META ") or lines[0].startswith("// ELK_META ")):
         try:
-            meta = json.loads(lines[0][11:].strip())
+            meta = json.loads(lines[0].split("ELK_META ", 1)[1].strip())
         except Exception:
             meta = {}
         command = "\n".join(lines[1:])
@@ -205,7 +205,6 @@ def _save_items_meta(meta):
 
 
 def load_shelf_items():
-    bootstrap_scripts_from_legacy()
     migrate_script_extensions()
     cat_meta = _sync_category_meta_from_fs()
     item_meta = _load_items_meta()
@@ -242,6 +241,16 @@ def save_item_to_disk(item):
     payload = item.get('command','') or ''
     if source == 'python':
         payload = _script_payload(item)
+    else:
+        meta = {
+            "label": item.get("label", ""),
+            "short_name": item.get("short_name", ""),
+            "tooltip": item.get("tooltip", ""),
+            "source": "mel",
+            "icon_svg": item.get("icon_svg", ""),
+            "icon_color": item.get("icon_color", ""),
+        }
+        payload = "// ELK_META " + json.dumps(meta, ensure_ascii=False) + "\n" + payload
     out.write_text(payload, encoding='utf-8')
     return str(out)
 BG="#2a2a2a"; PANEL="#373737"; BUTTON_BG="#444444"; BUTTON_HOVER="#505050"; BORDER="#565656"; TEXT="#f0f0f0"; MUTED="#b7b7b7"
@@ -272,10 +281,7 @@ def stable_hash(text):
     return h
 
 def item_color(item):
-    picked = (item or {}).get("icon_color")
-    if picked:
-        return picked
-    return ICON_COLORS[stable_hash(item.get("label", "tool")) % len(ICON_COLORS)]
+    return (item or {}).get("icon_color") or "#36d6ff"
 
 
 def icon_catalog():

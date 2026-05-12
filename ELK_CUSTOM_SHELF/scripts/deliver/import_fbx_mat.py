@@ -1,4 +1,4 @@
-# ELK_META {"label": "Import FBX Mat", "short_name": "", "tooltip": "Import an FBX, but check if already same materials exists in the scene", "source": "python"}
+# ELK_META {"label": "Import FBX Mat", "short_name": "", "tooltip": "Import an FBX, but check if already same materials exists in the scene", "source": "python", "icon_svg": "table-import.svg", "icon_color": "#4bc8ff"}
 import maya.cmds as cmds
 import maya.mel as mel
 import os

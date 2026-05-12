@@ -1,4 +1,4 @@
-# ELK_META {"label": "Comp_A", "short_name": "", "tooltip": "import maya.cmds as cmds\n \nctx = cmds.currentCtx()\n \nif ctx == '...", "source": "python"}
+# ELK_META {"label": "Comp_A", "short_name": "", "tooltip": "import maya.cmds as cmds\n \nctx = cmds.currentCtx()\n \nif ctx == '...", "source": "python", "icon_svg": "cube.svg", "icon_color": "#5ee06c"}
 import maya.cmds as cmds
  
 ctx = cmds.currentCtx()

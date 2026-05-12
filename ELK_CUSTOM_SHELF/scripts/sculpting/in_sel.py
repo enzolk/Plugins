@@ -1,4 +1,4 @@
-# ELK_META {"label": "In_Sel", "short_name": "", "tooltip": "Select Inner faces", "source": "python"}
+# ELK_META {"label": "In_Sel", "short_name": "", "tooltip": "Select Inner faces", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
 import maya.cmds as cmds
 import maya.mel as mel
 
