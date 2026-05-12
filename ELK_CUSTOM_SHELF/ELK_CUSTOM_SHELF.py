@@ -676,6 +676,9 @@ class Category(QtWidgets.QFrame):
             self.grid.setSpacing(4 if is_tight else 6)
             cols = max(1, len(self.items))
             self.grid.setSizeConstraint(QtWidgets.QLayout.SetMinimumSize)
+            self.body_scroll.setWidgetResizable(True)
+            self.body_scroll.setMinimumHeight(0)
+            self.body_scroll.setMaximumHeight(16777215)
             self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         else:
@@ -691,8 +694,9 @@ class Category(QtWidgets.QFrame):
             self.grid.setContentsMargins(hpad, 0, hpad, bpad)
             self.grid.setSpacing(5 if width < 500 else 7)
             cols=1 if self.parent_ui.view_mode=="list" or width<430 else max(2,min(6,int(width/205)))
-            self.grid.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
-            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            self.grid.setSizeConstraint(QtWidgets.QLayout.SetMinimumSize)
+            self.body_scroll.setWidgetResizable(False)
+            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
         self.count_label.setVisible(not horizontal or self.expanded)
@@ -703,6 +707,11 @@ class Category(QtWidgets.QFrame):
 
         for i,item in enumerate(self.items):
             btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag); self.grid.addWidget(btn,i//cols,i%cols)
+
+        if not horizontal and self.expanded:
+            self.body.adjustSize()
+            content_h = self.body.sizeHint().height()
+            self.body_scroll.setFixedHeight(max(0, content_h))
 
     def layout_items(self):
         result=[]
