@@ -15,9 +15,11 @@ import maya.mel as mel
 from maya import OpenMayaUI as omui
 try:
     from PySide2 import QtWidgets, QtCore, QtGui
+    from PySide2 import QtSvg
     from shiboken2 import wrapInstance
 except Exception:
     from PySide6 import QtWidgets, QtCore, QtGui
+    from PySide6 import QtSvg
     from shiboken6 import wrapInstance
 
 WINDOW_NAME = "ELK_UI_Minimal_Adaptive"
@@ -41,6 +43,7 @@ else:
 SCRIPTS_ROOT = BASE_DIR / "scripts"
 CATEGORY_META_FILE = BASE_DIR / "categories.json"
 ITEMS_META_FILE = BASE_DIR / "items_order.json"
+ICONS_DIR = BASE_DIR / "Icons"
 
 ANIMATION_DURATION = 160
 REORDER_COOLDOWN_MS = 30
@@ -66,7 +69,7 @@ def _unique_fs_path(base_path):
         i += 1
 
 def _load_category_meta():
-    data = {"order": [], "names": {}}
+    data = {"order": [], "names": {}, "icons": {}, "icon_colors": {}}
     if CATEGORY_META_FILE.exists():
         try:
             parsed = json.loads(CATEGORY_META_FILE.read_text(encoding="utf-8"))
@@ -75,6 +78,12 @@ def _load_category_meta():
                 names = parsed.get("names", {})
                 if isinstance(names, dict):
                     data["names"] = {str(k): str(v) for k, v in names.items() if str(k).strip()}
+                icons = parsed.get("icons", {})
+                if isinstance(icons, dict):
+                    data["icons"] = {str(k): str(v) for k, v in icons.items() if str(k).strip() and str(v).strip()}
+                icon_colors = parsed.get("icon_colors", {})
+                if isinstance(icon_colors, dict):
+                    data["icon_colors"] = {str(k): str(v) for k, v in icon_colors.items() if str(k).strip() and str(v).strip()}
         except Exception:
             pass
     return data
@@ -91,7 +100,7 @@ def _sync_category_meta_from_fs():
         names.setdefault(slug, slug.replace('_', ' ').title())
         if slug not in order:
             order.append(slug)
-    meta = {"order": order, "names": names}
+    meta = {"order": order, "names": names, "icons": dict(meta.get("icons") or {}), "icon_colors": dict(meta.get("icon_colors") or {})}
     _save_category_meta(meta)
     return meta
 
@@ -125,6 +134,8 @@ def _script_payload(item):
         "short_name": item.get("short_name", ""),
         "tooltip": item.get("tooltip", ""),
         "source": item.get("source", "python"),
+        "icon_svg": item.get("icon_svg", ""),
+        "icon_color": item.get("icon_color", ""),
     }
     return "# ELK_META " + json.dumps(meta, ensure_ascii=False) + "\n" + (item.get("command", "") or "")
 
@@ -141,7 +152,7 @@ def _read_script_file(path, category):
             meta = {}
         command = "\n".join(lines[1:])
     source = meta.get("source") or ('mel' if path.suffix.lower() == '.mel' else 'python')
-    return {"category": category, "label": meta.get("label") or path.stem, "short_name": meta.get("short_name", ""), "tooltip": meta.get("tooltip", ""), "source": source, "command": command, "file_path": str(path)}
+    return {"category": category, "label": meta.get("label") or path.stem, "short_name": meta.get("short_name", ""), "tooltip": meta.get("tooltip", ""), "source": source, "command": command, "icon_svg": normalize_icon_name(meta.get("icon_svg", "")), "icon_color": meta.get("icon_color", ""), "file_path": str(path)}
 
 def bootstrap_scripts_from_legacy():
     if SCRIPTS_ROOT.exists() and any(SCRIPTS_ROOT.rglob('*.*')):
@@ -261,7 +272,38 @@ def stable_hash(text):
     return h
 
 def item_color(item):
+    picked = (item or {}).get("icon_color")
+    if picked:
+        return picked
     return ICON_COLORS[stable_hash(item.get("label", "tool")) % len(ICON_COLORS)]
+
+
+def icon_catalog():
+    if not ICONS_DIR.exists() or not ICONS_DIR.is_dir():
+        return []
+    try:
+        return sorted([p for p in ICONS_DIR.iterdir() if p.suffix.lower() == ".svg"], key=lambda p: p.name.lower())
+    except Exception:
+        return []
+
+
+def normalize_icon_name(icon_name):
+    n = (icon_name or "").strip()
+    if not n:
+        return ""
+    return n if n.lower().endswith(".svg") else (n + ".svg")
+
+
+def resolve_icon_path(icon_name):
+    name = normalize_icon_name(icon_name)
+    if not name:
+        return None
+    p = ICONS_DIR / name
+    return p if p.exists() else None
+
+
+def tokenized(value):
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
 def _clean_tooltip(text, limit=240):
@@ -340,6 +382,33 @@ class VectorIcon(QtWidgets.QWidget):
                 p.drawLine(w*.18,h*.50,w*.82,h*.50); p.drawLine(w*.50,h*.18,w*.50,h*.82); p.drawEllipse(QtCore.QRectF(w*.38,h*.38,w*.24,h*.24))
         p.end()
 
+
+class SvgIconWidget(QtWidgets.QWidget):
+    def __init__(self, svg_name="", color="#36d6ff", size=18, parent=None):
+        super(SvgIconWidget, self).__init__(parent)
+        self.svg_name = normalize_icon_name(svg_name)
+        self.color = QtGui.QColor(color or "#36d6ff")
+        self.setFixedSize(size, size)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        path = resolve_icon_path(self.svg_name)
+        if not path:
+            return
+        renderer = QtSvg.QSvgRenderer(path.as_posix())
+        if not renderer.isValid():
+            return
+        pm = QtGui.QPixmap(self.width(), self.height())
+        pm.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(pm)
+        renderer.render(p, QtCore.QRectF(0, 0, self.width(), self.height()))
+        p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceIn)
+        p.fillRect(pm.rect(), self.color)
+        p.end()
+        painter = QtGui.QPainter(self)
+        painter.drawPixmap(0, 0, pm)
+        painter.end()
+
 class ToolButton(QtWidgets.QFrame):
     clicked=QtCore.Signal(dict)
     dragStarted=QtCore.Signal(object, object)
@@ -361,7 +430,7 @@ class ToolButton(QtWidgets.QFrame):
             lay.setContentsMargins(0,0,0,0)
             lay.setSpacing(0)
             icon_size = 20 if tight else 24
-            icon = VectorIcon(item.get("label","tool"), item_color(item), icon_size)
+            icon = SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size)
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
@@ -378,7 +447,7 @@ class ToolButton(QtWidgets.QFrame):
                 lay.setSpacing(8)
                 icon_size = 18
                 min_height = 34
-            lay.addWidget(VectorIcon(item.get("label","tool"), item_color(item), icon_size))
+            lay.addWidget(SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size))
             lab=QtWidgets.QLabel(item.get("label","Tool"))
             lab.setObjectName("ToolLabel")
             lab.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
@@ -487,6 +556,10 @@ class Category(QtWidgets.QFrame):
         super(Category,self).__init__(parent)
         self.name=name; self.items=items; self.parent_ui=parent_ui
         self.expanded = name not in getattr(parent_ui, "collapsed_categories", set())
+        self.slug = _display_to_slug(name)
+        cat_meta = _load_category_meta()
+        self.icon_svg = normalize_icon_name((cat_meta.get("icons") or {}).get(self.slug, ""))
+        self.icon_color = (cat_meta.get("icon_colors") or {}).get(self.slug, "")
         self.color=CATEGORY_COLORS.get(name,"#ffad3b")
         self.setObjectName("Category")
         self.setProperty("dragOver", False)
@@ -496,7 +569,7 @@ class Category(QtWidgets.QFrame):
     def build(self):
         self.outer=QtWidgets.QVBoxLayout(self); self.outer.setContentsMargins(0,0,0,0); self.outer.setSpacing(5)
         self.header=QtWidgets.QFrame(); self.header.setObjectName("CategoryHeader"); self.header.setCursor(QtCore.Qt.PointingHandCursor)
-        h=QtWidgets.QHBoxLayout(self.header); h.setContentsMargins(10,8,10,8); h.setSpacing(8); h.addWidget(VectorIcon(self.name,self.color,16))
+        h=QtWidgets.QHBoxLayout(self.header); h.setContentsMargins(10,8,10,8); h.setSpacing(8); h.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 16) if self.icon_svg else VectorIcon(self.name,self.color,16))
         self.title=QtWidgets.QLabel(self.name.upper()); self.title.setStyleSheet("background:transparent;color:%s;font-weight:800;font-size:12px;border:0px;"%TEXT); h.addWidget(self.title,1)
         self.count_label=QtWidgets.QLabel(str(len(self.items))); self.count_label.setStyleSheet("background:transparent;color:%s;font-size:11px;border:0px;"%MUTED); h.addWidget(self.count_label)
         self.arrow=QtWidgets.QLabel("⌄"); self.arrow.setStyleSheet("background:transparent;color:%s;font-size:13px;border:0px;"%MUTED); h.addWidget(self.arrow)
@@ -506,7 +579,7 @@ class Category(QtWidgets.QFrame):
         # It takes the full available height, but only a very small width.
         self.collapsed_header=QtWidgets.QFrame(); self.collapsed_header.setObjectName("CollapsedCategoryHeader"); self.collapsed_header.setCursor(QtCore.Qt.PointingHandCursor)
         ch=QtWidgets.QVBoxLayout(self.collapsed_header); ch.setContentsMargins(5,5,5,5); ch.setSpacing(3)
-        ch.addWidget(VectorIcon(self.name,self.color,17),0,QtCore.Qt.AlignHCenter)
+        ch.addWidget(SvgIconWidget(self.icon_svg, self.icon_color or self.color, 17) if self.icon_svg else VectorIcon(self.name,self.color,17),0,QtCore.Qt.AlignHCenter)
         self.collapsed_title=VerticalTextLabel(self.name.upper(), TEXT)
         ch.addWidget(self.collapsed_title,1,QtCore.Qt.AlignHCenter)
         self.collapsed_arrow=QtWidgets.QLabel("⌄"); self.collapsed_arrow.setAlignment(QtCore.Qt.AlignCenter); self.collapsed_arrow.setStyleSheet("background:transparent;color:%s;font-size:12px;border:0px;"%MUTED)
@@ -1046,6 +1119,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
             (SCRIPTS_ROOT / slug).mkdir(parents=True, exist_ok=True)
             meta['names'][slug] = name
             if slug not in meta['order']: meta['order'].append(slug)
+            picked = self._pick_svg_icon("", "#36d6ff")
+            if picked:
+                meta.setdefault('icons', {})[slug] = picked[0]
+                meta.setdefault('icon_colors', {})[slug] = picked[1]
             _save_category_meta(meta)
             reload_list(select_slug=slug); self._refresh_ui_data()
 
@@ -1069,9 +1146,17 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 final_slug = dst.name
                 meta['names'].pop(slug, None)
                 meta['names'][final_slug] = name
+                if slug in meta.get('icons', {}):
+                    meta.setdefault('icons', {})[final_slug] = meta['icons'].pop(slug)
+                if slug in meta.get('icon_colors', {}):
+                    meta.setdefault('icon_colors', {})[final_slug] = meta['icon_colors'].pop(slug)
                 meta['order'] = [final_slug if x == slug else x for x in meta['order']]
             else:
                 final_slug = slug; meta['names'][slug] = name
+            picked = self._pick_svg_icon((meta.get('icons') or {}).get(final_slug, ""), (meta.get('icon_colors') or {}).get(final_slug, "#36d6ff"))
+            if picked:
+                meta.setdefault('icons', {})[final_slug] = picked[0]
+                meta.setdefault('icon_colors', {})[final_slug] = picked[1]
             _save_category_meta(meta); reload_list(select_slug=final_slug); self._refresh_ui_data()
 
         def delete_category():
@@ -1090,7 +1175,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 res = QtWidgets.QMessageBox.question(dlg, "Delete category", "Confirm delete this category?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
                 if res != QtWidgets.QMessageBox.Yes: return
             if path.exists(): path.rmdir()
-            meta = _sync_category_meta_from_fs(); meta['names'].pop(slug, None); meta['order'] = [x for x in meta['order'] if x != slug]; _save_category_meta(meta)
+            meta = _sync_category_meta_from_fs(); meta['names'].pop(slug, None); meta.get('icons', {}).pop(slug, None); meta.get('icon_colors', {}).pop(slug, None); meta['order'] = [x for x in meta['order'] if x != slug]; _save_category_meta(meta)
             reload_list(); self._refresh_ui_data()
 
         def move(offset):
@@ -1139,6 +1224,21 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         desc = QtWidgets.QLineEdit()
         source = QtWidgets.QComboBox(); source.addItems(["python", "mel"])
+        icon_name = QtWidgets.QLineEdit()
+        icon_name.setReadOnly(True)
+        icon_preview = QtWidgets.QLabel("Aucune")
+        icon_preview.setMinimumHeight(22)
+        icon_color = QtWidgets.QComboBox(); icon_color.addItems(ICON_COLORS)
+        icon_color.setCurrentText("#36d6ff")
+        icon_btn = QtWidgets.QPushButton("Choisir icône…")
+
+        def pick_icon():
+            picked = self._pick_svg_icon(icon_name.text().strip(), icon_color.currentText())
+            if not picked:
+                return
+            icon_name.setText(picked[0]); icon_color.setCurrentText(picked[1]); icon_preview.setText("{} ({})".format(picked[0], picked[1]))
+
+        icon_btn.clicked.connect(pick_icon)
         code = QtWidgets.QPlainTextEdit()
         code.setMinimumHeight(220)
         lay.addRow("Nom complet", full_name)
@@ -1146,15 +1246,64 @@ class ELKMinimalUI(QtWidgets.QWidget):
         lay.addRow("Catégorie", category)
         lay.addRow("Description", desc)
         lay.addRow("Source", source)
+        lay.addRow("Icône SVG", icon_btn)
+        lay.addRow("Sélection", icon_preview)
+        lay.addRow("Couleur", icon_color)
         lay.addRow("Script", code)
         btns=QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok|QtWidgets.QDialogButtonBox.Cancel)
         lay.addRow(btns)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
         if (dlg.exec_() if hasattr(dlg,'exec_') else dlg.exec()):
-            item={"label":full_name.text().strip() or "New Script","short_name":short_name.text().strip(),"category":category.currentText().strip() or "Tools","tooltip":desc.text().strip(),"source":source.currentText(),"command":code.toPlainText()}
+            item={"label":full_name.text().strip() or "New Script","short_name":short_name.text().strip(),"category":category.currentText().strip() or "Tools","tooltip":desc.text().strip(),"source":source.currentText(),"icon_svg": normalize_icon_name(icon_name.text().strip()), "icon_color": icon_color.currentText(), "command":code.toPlainText()}
             item['file_path']=save_item_to_disk(item)
             self.shelf_items = load_shelf_items()
             self.refresh()
+
+    def _pick_svg_icon(self, current_name="", current_color="#36d6ff"):
+        icons = icon_catalog()
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Choisir une icône SVG")
+        lay = QtWidgets.QVBoxLayout(dlg)
+        search = QtWidgets.QLineEdit()
+        search.setPlaceholderText("Rechercher une icône…")
+        lay.addWidget(search)
+        lst = QtWidgets.QListWidget()
+        lay.addWidget(lst, 1)
+        color = QtWidgets.QComboBox(); color.addItems(ICON_COLORS); color.setCurrentText(current_color if current_color in ICON_COLORS else ICON_COLORS[0])
+        lay.addWidget(color)
+        selection = {"name": normalize_icon_name(current_name)}
+        token_query = tokenized(current_name)
+
+        def refill():
+            lst.clear()
+            q = tokenized(search.text())
+            for p in icons:
+                stem = p.stem
+                key = tokenized(p.name)
+                if q and q not in key:
+                    continue
+                it = QtWidgets.QListWidgetItem(stem)
+                it.setData(QtCore.Qt.UserRole, p.name)
+                it.setToolTip(p.name)
+                it.setIcon(QtGui.QIcon(p.as_posix()))
+                lst.addItem(it)
+                if (selection["name"] and p.name == selection["name"]) or (not selection["name"] and token_query and token_query in key):
+                    lst.setCurrentItem(it)
+
+        search.textChanged.connect(refill)
+        refill()
+        lst.itemClicked.connect(lambda it: selection.update({"name": it.data(QtCore.Qt.UserRole)}))
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        lay.addWidget(btns)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        if not icons:
+            return None
+        if (dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec()):
+            cur = lst.currentItem()
+            if cur:
+                selection["name"] = cur.data(QtCore.Qt.UserRole)
+            return (normalize_icon_name(selection["name"]), color.currentText()) if selection["name"] else None
+        return None
 
     def open_script_context_menu(self, item, global_pos):
         menu = QtWidgets.QMenu(self)
@@ -1234,12 +1383,20 @@ class ELKMinimalUI(QtWidgets.QWidget):
         category.setCurrentText(item.get("category") or "Tools")
         source = QtWidgets.QComboBox(); source.addItems(["python", "mel"])
         source.setCurrentText((item.get("source") or "python").lower())
+        icon_name = QtWidgets.QLineEdit(normalize_icon_name(item.get("icon_svg", ""))); icon_name.setReadOnly(True)
+        icon_color = QtWidgets.QComboBox(); icon_color.addItems(ICON_COLORS); icon_color.setCurrentText(item.get("icon_color") or "#36d6ff")
+        icon_btn = QtWidgets.QPushButton("Choisir icône…")
+        icon_preview = QtWidgets.QLabel("{} ({})".format(icon_name.text() or "Aucune", icon_color.currentText()))
+        icon_btn.clicked.connect(lambda: (lambda picked: (icon_name.setText(picked[0]), icon_color.setCurrentText(picked[1]), icon_preview.setText("{} ({})".format(picked[0], picked[1]))) if picked else None)(self._pick_svg_icon(icon_name.text(), icon_color.currentText())))
 
         form.addRow("Nom du script", full_name)
         form.addRow("Nom abrégé", short_name)
         form.addRow("Description", desc)
         form.addRow("Catégorie", category)
         form.addRow("Type", source)
+        form.addRow("Icône SVG", icon_btn)
+        form.addRow("Sélection", icon_preview)
+        form.addRow("Couleur", icon_color)
         root.addLayout(form)
         root.addWidget(err)
 
@@ -1281,7 +1438,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             if current_path and target_path.resolve() != current_path.resolve() and target_path.exists():
                 show_error("Un script avec le même nom existe déjà dans cette catégorie.")
                 return
-            updated = {"label": name, "short_name": short, "tooltip": tip, "category": cat, "source": src, "command": cmd, "file_path": str(target_path)}
+            updated = {"label": name, "short_name": short, "tooltip": tip, "category": cat, "source": src, "icon_svg": normalize_icon_name(icon_name.text().strip()), "icon_color": icon_color.currentText(), "command": cmd, "file_path": str(target_path)}
             try:
                 if current_path and current_path.exists() and current_path.resolve() != target_path.resolve():
                     current_path.unlink()
