@@ -965,9 +965,53 @@ class ELKMinimalUI(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet("QMenu{background:#373737;color:#f0f0f0;border:1px solid #565656;} QMenu::item{padding:6px 16px;} QMenu::item:selected{background:#505050;}")
         edit_action = menu.addAction("Modifier")
+        delete_action = menu.addAction("Supprimer")
         chosen = menu.exec_(global_pos) if hasattr(menu, "exec_") else menu.exec(global_pos)
         if chosen == edit_action:
             self.open_edit_script_dialog(item)
+        elif chosen == delete_action:
+            self.delete_script_item(item)
+
+    def delete_script_item(self, item):
+        label = (item or {}).get("label") or "Script"
+        file_path = Path((item or {}).get("file_path", ""))
+        if not str(file_path):
+            QtWidgets.QMessageBox.warning(self, "Suppression impossible", "Le chemin du script est introuvable.")
+            return
+
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Confirmer la suppression",
+            "Supprimer définitivement le script « {} » ?\n\nCette action est irréversible.".format(label),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            if file_path.exists():
+                file_path.unlink()
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Fichier manquant",
+                    "Le bouton sera retiré de l'interface, mais le fichier n'existe déjà plus :\n{}".format(file_path.as_posix())
+                )
+            self._refresh_ui_data()
+            cmds.inViewMessage(amg="Script <hl>{}</hl> supprimé.".format(label), pos='midCenter', fade=True)
+        except PermissionError:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Erreur de permissions",
+                "Permissions insuffisantes pour supprimer ce fichier :\n{}".format(file_path.as_posix())
+            )
+        except OSError as ex:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Erreur de suppression",
+                "Impossible de supprimer le script « {} ».\n\nDétail : {}".format(label, ex)
+            )
 
     def open_edit_script_dialog(self, item):
         current_path = Path(item.get("file_path", ""))
