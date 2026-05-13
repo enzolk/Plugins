@@ -1331,17 +1331,16 @@ class ELKMinimalUI(QtWidgets.QWidget):
             icon_color = QtWidgets.QComboBox()
             icon_color.addItems(ICON_COLORS)
             icon_color.setCurrentText(initial_color if initial_color in ICON_COLORS else "#36d6ff")
-            color_picker_row = self._build_color_picker_row(icon_color, initial_color)
             icon_preview = QtWidgets.QLabel("")
             icon_preview.setMinimumHeight(24)
             icon_preview.setStyleSheet("color:#b7b7b7;")
-            icon_visual = SvgIconWidget(icon_name.text().strip(), icon_color.currentText(), 20)
             icon_btn = QtWidgets.QPushButton("Choisir icône SVG…")
 
             def _refresh_preview():
-                self._set_icon_preview(icon_preview, icon_name.text().strip(), icon_color.currentText())
-                icon_visual.setVisible(bool(icon_name.text().strip()))
-                icon_visual.set_svg(icon_name.text().strip(), icon_color.currentText())
+                if icon_name.text().strip():
+                    icon_preview.setText("{} ({})".format(icon_name.text().strip(), icon_color.currentText()))
+                else:
+                    icon_preview.setText("Aucune icône sélectionnée")
 
             def _pick():
                 picked = self._pick_svg_icon(icon_name.text().strip(), icon_color.currentText())
@@ -1355,9 +1354,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
             _refresh_preview()
             cat_form.addRow("Nom", name_edit)
             cat_form.addRow("Icône SVG", icon_btn)
-            cat_form.addRow("Aperçu icône", icon_visual)
             cat_form.addRow("Sélection", icon_preview)
-            cat_form.addRow("Couleur", color_picker_row)
+            cat_form.addRow("Couleur", icon_color)
             cat_btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
             cat_form.addRow(cat_btns)
             cat_btns.accepted.connect(cat_dlg.accept); cat_btns.rejected.connect(cat_dlg.reject)
@@ -1512,20 +1510,15 @@ class ELKMinimalUI(QtWidgets.QWidget):
         icon_preview.setMinimumHeight(22)
         icon_color = QtWidgets.QComboBox(); icon_color.addItems(ICON_COLORS)
         icon_color.setCurrentText("#36d6ff")
-        icon_visual = SvgIconWidget("", icon_color.currentText(), 20)
-        icon_visual.setVisible(False)
-        color_picker_row = self._build_color_picker_row(icon_color, "#36d6ff")
         icon_btn = QtWidgets.QPushButton("Choisir icône…")
 
         def pick_icon():
             picked = self._pick_svg_icon(icon_name.text().strip(), icon_color.currentText())
             if not picked:
                 return
-            icon_name.setText(picked[0]); icon_color.setCurrentText(picked[1]); self._set_icon_preview(icon_preview, icon_name.text(), icon_color.currentText())
-            icon_visual.setVisible(True); icon_visual.set_svg(icon_name.text(), icon_color.currentText())
+            icon_name.setText(picked[0]); icon_color.setCurrentText(picked[1]); icon_preview.setText("{} ({})".format(picked[0], picked[1]))
 
         icon_btn.clicked.connect(pick_icon)
-        icon_color.currentTextChanged.connect(lambda _v: (self._set_icon_preview(icon_preview, icon_name.text(), icon_color.currentText()), icon_visual.set_svg(icon_name.text(), icon_color.currentText())))
         code = QtWidgets.QPlainTextEdit()
         code.setMinimumHeight(220)
         lay.addRow("Nom complet", full_name)
@@ -1534,9 +1527,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         lay.addRow("Description", desc)
         lay.addRow("Source", source)
         lay.addRow("Icône SVG", icon_btn)
-        lay.addRow("Aperçu icône", icon_visual)
         lay.addRow("Sélection", icon_preview)
-        lay.addRow("Couleur", color_picker_row)
+        lay.addRow("Couleur", icon_color)
         lay.addRow("Script", code)
         btns=QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok|QtWidgets.QDialogButtonBox.Cancel)
         lay.addRow(btns)
@@ -1546,56 +1538,6 @@ class ELKMinimalUI(QtWidgets.QWidget):
             item['file_path']=save_item_to_disk(item)
             self.shelf_items = load_shelf_items()
             self.refresh()
-
-    def _set_icon_preview(self, label, icon_name, color_hex):
-        icon_text = (icon_name or "").strip()
-        if icon_text:
-            label.setText("{} ({})".format(icon_text, color_hex))
-        else:
-            label.setText("Aucune icône sélectionnée")
-
-    def _build_color_picker_row(self, color_combo, initial_color="#36d6ff"):
-        row = QtWidgets.QWidget()
-        lay = QtWidgets.QHBoxLayout(row)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-
-        swatch = QtWidgets.QLabel()
-        swatch.setFixedSize(22, 22)
-        swatch.setFrameShape(QtWidgets.QFrame.Box)
-        swatch.setLineWidth(1)
-
-        choose_btn = QtWidgets.QPushButton("Choose Color")
-
-        def _valid_color_hex(text):
-            c = QtGui.QColor(text or "")
-            return c.name(QtGui.QColor.HexRgb) if c.isValid() else "#36d6ff"
-
-        def _apply_color(color_hex):
-            safe = _valid_color_hex(color_hex)
-            swatch.setStyleSheet("background:{};border:1px solid #565656;border-radius:4px;".format(safe))
-            idx = color_combo.findText(safe)
-            if idx >= 0 and color_combo.currentIndex() != idx:
-                color_combo.setCurrentIndex(idx)
-            elif idx < 0 and color_combo.currentText() != safe:
-                color_combo.setCurrentText(safe)
-
-        def _choose_color():
-            start = QtGui.QColor(color_combo.currentText() or initial_color)
-            if not start.isValid():
-                start = QtGui.QColor("#36d6ff")
-            chosen = QtWidgets.QColorDialog.getColor(start, self, "Choose Color")
-            if chosen.isValid():
-                _apply_color(chosen.name(QtGui.QColor.HexRgb))
-
-        choose_btn.clicked.connect(_choose_color)
-        color_combo.currentTextChanged.connect(_apply_color)
-        _apply_color(color_combo.currentText() or initial_color)
-
-        lay.addWidget(swatch)
-        lay.addWidget(color_combo, 1)
-        lay.addWidget(choose_btn)
-        return row
 
     def _pick_svg_icon(self, current_name="", current_color="#36d6ff"):
         icons = icon_catalog()
@@ -1765,13 +1707,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
         source.setCurrentText((item.get("source") or "python").lower())
         icon_name = QtWidgets.QLineEdit(normalize_icon_name(item.get("icon_svg", ""))); icon_name.setReadOnly(True)
         icon_color = QtWidgets.QComboBox(); icon_color.addItems(ICON_COLORS); icon_color.setCurrentText(item.get("icon_color") or "#36d6ff")
-        color_picker_row = self._build_color_picker_row(icon_color, item.get("icon_color") or "#36d6ff")
         icon_btn = QtWidgets.QPushButton("Choisir icône…")
         icon_preview = QtWidgets.QLabel("{} ({})".format(icon_name.text() or "Aucune", icon_color.currentText()))
-        icon_visual = SvgIconWidget(icon_name.text().strip(), icon_color.currentText(), 20)
-        icon_visual.setVisible(bool(icon_name.text().strip()))
-        icon_btn.clicked.connect(lambda: (lambda picked: (icon_name.setText(picked[0]), icon_color.setCurrentText(picked[1]), self._set_icon_preview(icon_preview, picked[0], picked[1])) if picked else None)(self._pick_svg_icon(icon_name.text(), icon_color.currentText())))
-        icon_color.currentTextChanged.connect(lambda _v: (self._set_icon_preview(icon_preview, icon_name.text(), icon_color.currentText()), icon_visual.set_svg(icon_name.text(), icon_color.currentText())))
+        icon_btn.clicked.connect(lambda: (lambda picked: (icon_name.setText(picked[0]), icon_color.setCurrentText(picked[1]), icon_preview.setText("{} ({})".format(picked[0], picked[1]))) if picked else None)(self._pick_svg_icon(icon_name.text(), icon_color.currentText())))
 
         form.addRow("Nom du script", full_name)
         form.addRow("Nom abrégé", short_name)
@@ -1779,9 +1717,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         form.addRow("Catégorie", category)
         form.addRow("Type", source)
         form.addRow("Icône SVG", icon_btn)
-        form.addRow("Aperçu icône", icon_visual)
         form.addRow("Sélection", icon_preview)
-        form.addRow("Couleur", color_picker_row)
+        form.addRow("Couleur", icon_color)
         root.addLayout(form)
         root.addWidget(err)
 
