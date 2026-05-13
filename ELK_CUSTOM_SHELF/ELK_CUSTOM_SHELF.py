@@ -62,6 +62,37 @@ REORDER_COOLDOWN_MS = 30
 REORDER_CONFIRM_FRAMES = 10
 HYSTERESIS_RATIO = 1
 
+MIN_SUPPORTED_MAYA_VERSION = 2022
+
+
+def _maya_version_int():
+    """Return Maya major version as int when available (e.g. 2022, 2027)."""
+    try:
+        return int(cmds.about(version=True))
+    except Exception:
+        return None
+
+
+def _is_maya_2022_compat_mode():
+    return _maya_version_int() == 2022
+
+
+def _warn_if_unsupported_maya():
+    version = _maya_version_int()
+    if version is not None and version < MIN_SUPPORTED_MAYA_VERSION:
+        cmds.warning("[ELK UI] Unsupported Maya version {}. Minimum supported version is {}.".format(version, MIN_SUPPORTED_MAYA_VERSION))
+
+
+def _maya2022_log(step, error=None):
+    """Logs détaillés pour diagnostiquer les points de casse sur Maya 2022."""
+    if not _is_maya_2022_compat_mode():
+        return
+    if error is None:
+        print("[ELK UI][Maya2022][OK] {}".format(step))
+        return
+    cmds.warning("[ELK UI][Maya2022][ERROR] {} -> {}: {}".format(step, error.__class__.__name__, error))
+    traceback.print_exc()
+
 
 def event_global_pos(event):
     if hasattr(event, "globalPosition"):
@@ -2202,11 +2233,15 @@ def _build_unique_workspace_name(prefix):
 
 def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=False):
     """Launch ELK UI. Tries dockable workspaceControl first, then falls back to a normal Qt window."""
+    _warn_if_unsupported_maya()
+    if _is_maya_2022_compat_mode():
+        print("[ELK UI] Maya 2022 compatibility mode enabled.")
     if close_existing_first:
         close_existing()
 
     ui = None
     try:
+        _maya2022_log("Tentative d'ouverture en mode dock workspaceControl")
         control = cmds.workspaceControl(
             workspace_name,
             label="ELK UI",
@@ -2254,9 +2289,11 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
 
         cmds.workspaceControl(workspace_name, edit=True, visible=True, restore=True)
         cmds.workspaceControl(workspace_name, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
+        _maya2022_log("workspaceControl initialisé avec succès")
         return ui
 
     except Exception as dock_error:
+        _maya2022_log("Échec du mode dock, passage en fenêtre flottante", dock_error)
         cmds.warning("[ELK UI] Dock launch failed, opening floating fallback: {}".format(dock_error))
         traceback.print_exc()
 
@@ -2264,7 +2301,8 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
         try:
             main_ptr = omui.MQtUtil.mainWindow()
             parent = wrapInstance(int(main_ptr), QtWidgets.QWidget) if main_ptr else None
-        except Exception:
+        except Exception as parent_lookup_error:
+            _maya2022_log("Impossible de récupérer la fenêtre principale Maya", parent_lookup_error)
             parent = None
 
         win = QtWidgets.QDialog(parent)
@@ -2281,6 +2319,7 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
         globals()["ELK_UI_WINDOW"] = win
         globals()["ELK_UI_INSTANCE"] = ui
         globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
+        _maya2022_log("Fenêtre flottante initialisée avec succès")
         win.show()
         return ui
 
