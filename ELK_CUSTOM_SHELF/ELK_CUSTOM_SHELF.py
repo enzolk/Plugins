@@ -1161,43 +1161,83 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return widths.get(category_name, 180)
 
     def compute_horizontal_widths(self):
+        """Compute horizontal category widths that always fit the viewport.
+
+        - Small categories keep a compact natural width.
+        - Large categories can grow more and scroll internally if capped.
+        - The total (categories + spacing + right buttons area) always matches the
+          available shelf width so nothing overflows to the right.
+        """
         groups = self.grouped_items()
         n = max(1, len(groups))
         reserve = self.horizontal_options_space()
-        available = max(280, (self.scroll.viewport().width() - 4 if hasattr(self, "scroll") else self.width()) - reserve)
-        spacing = 8 * max(0, n - 1)
+        viewport_w = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        available = max(220, int(max(1, viewport_w) - reserve))
+        spacing_total = 8 * max(0, n - 1)
 
-        collapsed_w = 54
+        collapsed_w = self.collapsed_category_width("")
+        tight = self.available_width() < 540
+        hpad = 6 if tight else 10
+        spacing = 4 if tight else 6
+        button_w = 48 if tight else 56
 
         open_groups = [(cat, items) for cat, items in groups if cat not in self.collapsed_categories]
         closed_groups = [(cat, items) for cat, items in groups if cat in self.collapsed_categories]
 
-        closed_total = len(closed_groups) * collapsed_w
-        open_n = max(1, len(open_groups))
-        open_available = max(160 * open_n, available - spacing - closed_total)
-
-        naturals = []
-        for cat, items in open_groups:
-            visible = min(len(items), 6)
-            naturals.append(max(170, 112 + visible * 62))
-
         widths = {}
-        total_natural = sum(naturals)
-        if open_groups:
-            if total_natural <= open_available:
-                extra = open_available - total_natural
-                open_widths = [w + int(extra / open_n) for w in naturals]
-                open_widths[-1] += open_available - sum(open_widths)
-            else:
-                weights = [max(1.0, min(4.0, len(items) / 2.0)) for _, items in open_groups]
-                total_weight = sum(weights)
-                open_widths = [max(150, int(open_available * (w / total_weight))) for w in weights]
-
-            for i, (cat, _) in enumerate(open_groups):
-                widths[cat] = open_widths[i]
-
         for cat, _ in closed_groups:
             widths[cat] = collapsed_w
+
+        closed_total = len(closed_groups) * collapsed_w
+        open_n = len(open_groups)
+        open_target = max(0, available - spacing_total - closed_total)
+
+        if open_n <= 0:
+            self._horizontal_widths = widths
+            return
+
+        naturals = []
+        weights = []
+        min_open_w = 110
+        max_open_w = max(170, int(max(1, viewport_w) * 0.42))
+
+        for _, items in open_groups:
+            count = max(1, len(items))
+            natural_w = (hpad * 2) + (count * button_w) + (max(0, count - 1) * spacing)
+            naturals.append(max(min_open_w, min(max_open_w, natural_w)))
+            weights.append(max(1.0, float(count)))
+
+        total_natural = sum(naturals)
+        open_widths = list(naturals)
+
+        if total_natural > open_target and open_target > 0:
+            # Compress proportionally, but never below minimum.
+            factor = float(open_target) / float(total_natural)
+            open_widths = [max(min_open_w, int(round(w * factor))) for w in naturals]
+        elif total_natural < open_target:
+            # Fill remaining room mostly on categories that have many tools.
+            extra = open_target - total_natural
+            total_weight = sum(weights) or 1.0
+            open_widths = [w + int(round(extra * (wt / total_weight))) for w, wt in zip(naturals, weights)]
+
+        # Clamp and force exact fit to avoid right overflow.
+        open_widths = [max(min_open_w, min(max_open_w, w)) for w in open_widths]
+        delta = open_target - sum(open_widths)
+        if open_widths and delta != 0:
+            step = 1 if delta > 0 else -1
+            i = 0
+            guard = 0
+            while delta != 0 and guard < 20000:
+                idx = i % len(open_widths)
+                cand = open_widths[idx] + step
+                if min_open_w <= cand <= max_open_w:
+                    open_widths[idx] = cand
+                    delta -= step
+                i += 1
+                guard += 1
+
+        for (cat, _), w in zip(open_groups, open_widths):
+            widths[cat] = int(w)
 
         self._horizontal_widths = widths
 
