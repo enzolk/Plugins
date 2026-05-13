@@ -5,7 +5,8 @@
     "sculpting",
     "action",
     "nurbs",
-    "deliver"
+    "deliver",
+    "misc"
   ],
   "names": {
     "tools": "Tools",
@@ -13,7 +14,8 @@
     "sculpting": "Sculpting",
     "action": "Action",
     "nurbs": "Nurbs",
-    "deliver": "Deliver"
+    "deliver": "Deliver",
+    "misc": "Misc"
   },
   "icons": {
     "tools": "tools.svg",
@@ -21,7 +23,8 @@
     "sculpting": "brush.svg",
     "action": "bolt.svg",
     "nurbs": "vector-bezier.svg",
-    "deliver": "upload.svg"
+    "deliver": "upload.svg",
+    "misc": "medical-cross-circle.svg"
   },
   "icon_colors": {
     "tools": "#36d6ff",
@@ -29,6 +32,7 @@
     "sculpting": "#ff5c8a",
     "action": "#c678ff",
     "nurbs": "#55dd88",
-    "deliver": "#f2c94c"
+    "deliver": "#f2c94c",
+    "misc": "#ff5d3b"
   }
 }
