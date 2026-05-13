@@ -1991,11 +1991,30 @@ class ELKMinimalUI(QtWidgets.QWidget):
         short_name = QtWidgets.QLineEdit(item.get("short_name", ""))
         desc = QtWidgets.QLineEdit(item.get("tooltip", ""))
         category = QtWidgets.QComboBox(); category.setEditable(True)
-        categories = sorted({(it.get("category") or "Tools") for it in self.shelf_items})
-        if item.get("category") not in categories:
-            categories.append(item.get("category") or "Tools")
+        categories = [disp for _, disp, _ in self._category_rows()]
+        categories = sorted({c for c in categories if c})
+        if "Tools" not in categories:
+            categories.insert(0, "Tools")
+        current_category = item.get("category") or "Tools"
+        if current_category not in categories:
+            categories.append(current_category)
         category.addItems(categories)
-        category.setCurrentText(item.get("category") or "Tools")
+        category.setCurrentText(current_category)
+        comp_model = QtCore.QStringListModel(categories, category)
+        completer = QtWidgets.QCompleter(comp_model, category)
+        completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        completer.setFilterMode(QtCore.Qt.MatchContains)
+        completer.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
+        category.setCompleter(completer)
+
+        def _filter_category_options(text):
+            txt = (text or "").strip().lower()
+            filtered = [c for c in categories if txt in c.lower()] if txt else categories
+            comp_model.setStringList(filtered if filtered else categories)
+            if hasattr(category, "showPopup"):
+                category.showPopup()
+
+        category.lineEdit().textEdited.connect(_filter_category_options)
         source = QtWidgets.QComboBox(); source.addItems(["python", "mel"])
         source.setCurrentText((item.get("source") or "python").lower())
         icon_name = QtWidgets.QLineEdit(normalize_icon_name(item.get("icon_svg", ""))); icon_name.setReadOnly(True)
