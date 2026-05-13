@@ -110,6 +110,86 @@ HYSTERESIS_RATIO = 1
 MIN_SUPPORTED_MAYA_VERSION = 2022
 
 
+ELK_TARGET_DOCK_HEIGHT = 134
+
+def _workspace_exists(name):
+    try:
+        return cmds.workspaceControl(name, q=True, exists=True)
+    except Exception:
+        return False
+
+def _workspace_widget(name):
+    try:
+        ptr = omui.MQtUtil.findControl(name)
+        if ptr:
+            return wrapInstance(int(ptr), QtWidgets.QWidget)
+    except Exception:
+        pass
+    return None
+
+def _force_workspace_widget_height(name, height):
+    widget = _workspace_widget(name)
+    if not widget:
+        return
+    try:
+        widget.setMinimumHeight(height)
+        widget.setMaximumHeight(height)
+        widget.resize(widget.width(), height)
+        widget.updateGeometry()
+    except Exception:
+        pass
+
+def _unlock_workspace_widget_height(name):
+    widget = _workspace_widget(name)
+    if not widget:
+        return
+    try:
+        widget.setMinimumHeight(0)
+        widget.setMaximumHeight(16777215)
+        widget.updateGeometry()
+    except Exception:
+        pass
+
+def _apply_shelf_tab_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
+    if not _workspace_exists(workspace_name) or not _workspace_exists("Shelf"):
+        return
+
+    try:
+        cmds.workspaceControl(workspace_name, e=True, visible=False)
+    except Exception:
+        pass
+
+    try:
+        cmds.workspaceControl(workspace_name, e=True, floating=False)
+    except Exception:
+        pass
+
+    try:
+        cmds.workspaceControl(workspace_name, e=True, tabToControl=("Shelf", -1))
+    except Exception as e:
+        cmds.warning("[ELK UI] tabToControl failed: {}".format(e))
+
+    try:
+        cmds.workspaceControl(workspace_name, e=True, visible=True)
+    except Exception:
+        pass
+
+    try:
+        cmds.workspaceControl(workspace_name, e=True, resizeHeight=target_height)
+    except Exception:
+        pass
+
+    _force_workspace_widget_height(workspace_name, target_height)
+
+def _schedule_final_shelf_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
+    if not _workspace_exists(workspace_name):
+        return
+
+    QtCore.QTimer.singleShot(0, lambda: _apply_shelf_tab_dock(workspace_name, target_height))
+    QtCore.QTimer.singleShot(200, lambda: _apply_shelf_tab_dock(workspace_name, target_height))
+    QtCore.QTimer.singleShot(500, lambda: _unlock_workspace_widget_height(workspace_name))
+
+
 def _maya_version_int():
     """Return Maya major version as int when available (e.g. 2022, 2027)."""
     try:
@@ -2422,7 +2502,6 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
             label="ELK UI",
             retain=False,
             floating=floating,
-            dockToMainWindow=("right", 1),
             initialWidth=420,
             minimumWidth=0,
             minimumHeight=0,
@@ -2464,6 +2543,8 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
 
         cmds.workspaceControl(workspace_name, edit=True, visible=True, restore=True)
         cmds.workspaceControl(workspace_name, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
+        QtCore.QTimer.singleShot(0, ui.reflow)
+        _schedule_final_shelf_dock(workspace_name, ELK_TARGET_DOCK_HEIGHT)
         _maya2022_log("workspaceControl initialisé avec succès")
         return ui
 
