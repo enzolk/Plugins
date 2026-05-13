@@ -108,11 +108,6 @@ REORDER_CONFIRM_FRAMES = 10
 HYSTERESIS_RATIO = 1
 
 MIN_SUPPORTED_MAYA_VERSION = 2022
-AUTO_HIDE_MAYA_SHELF = True
-AUTO_RESPONSIVE_DOCK_HEIGHT = True
-DOCK_HEIGHT_FALLBACK = 120
-DOCK_HEIGHT_MIN = 84
-DOCK_HEIGHT_MAX_RATIO = 0.26
 
 
 def _maya_version_int():
@@ -2375,10 +2370,6 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def resizeEvent(self,e):
         super(ELKMinimalUI,self).resizeEvent(e)
         QtCore.QTimer.singleShot(0,self.reflow)
-        if AUTO_RESPONSIVE_DOCK_HEIGHT:
-            workspace_name = getattr(self, "_elk_workspace_name", None)
-            if workspace_name and cmds.workspaceControl(workspace_name, exists=True):
-                QtCore.QTimer.singleShot(0, lambda: _apply_workspace_height(workspace_name, _calc_responsive_dock_height(self)))
         self._layout_debug_resize_timer.start(250)
 
     def reflow(self):
@@ -2405,122 +2396,6 @@ def close_existing():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True): cmds.deleteUI(WORKSPACE_NAME, control=True)
     if cmds.window(WINDOW_NAME, exists=True): cmds.deleteUI(WINDOW_NAME)
 
-
-def _cleanup_workspace_state(workspace_name):
-    print("[ELK UI][DOCK] Cleaning persisted workspace state for '{}'...".format(workspace_name))
-    try:
-        if cmds.workspaceControlState(workspace_name, exists=True):
-            cmds.workspaceControlState(workspace_name, remove=True)
-            print("[ELK UI][DOCK] workspaceControlState removed.")
-        else:
-            print("[ELK UI][DOCK] No workspaceControlState found.")
-    except Exception:
-        print("[ELK UI][DOCK] workspaceControlState cleanup failed (continuing).")
-        traceback.print_exc()
-
-
-def _force_workspace_dock_top(workspace_name, tag=""):
-    print("[ELK UI][DOCK] {}forcing dockToMainWindow(top)".format(tag))
-    cmds.workspaceControl(workspace_name, edit=True, visible=True, floating=False)
-    cmds.workspaceControl(workspace_name, edit=True, dockToMainWindow=("top", 1))
-
-
-def _set_maya_shelf_visibility(visible):
-    """Show/hide native Maya shelf tab layout when available."""
-    print("[ELK UI][DOCK] Native shelf visibility requested: {}".format(visible))
-    try:
-        top_shelf = mel.eval("global string $gShelfTopLevel; $tmp=$gShelfTopLevel;")
-        print("[ELK UI][DOCK] Maya gShelfTopLevel resolved to: {}".format(top_shelf))
-        if top_shelf and cmds.control(top_shelf, exists=True):
-            cmds.control(top_shelf, edit=True, visible=visible)
-            print("[ELK UI][DOCK] Native shelf visibility set to {} on '{}'.".format(visible, top_shelf))
-            return True
-        print("[ELK UI][DOCK] Native shelf control not found or not existing.")
-    except Exception:
-        print("[ELK UI][DOCK] Failed to update Maya shelf visibility.")
-        traceback.print_exc()
-        pass
-    return False
-
-
-def _calc_responsive_dock_height(ui):
-    """Compute a responsive dock height based on content and screen geometry."""
-    app = QtWidgets.QApplication.instance()
-    primary = app.primaryScreen() if app else None
-    available_h = primary.availableGeometry().height() if primary else 1080
-    hint_values = [DOCK_HEIGHT_FALLBACK]
-    try:
-        hint_values.append(ui.minimumSizeHint().height())
-    except Exception:
-        pass
-    try:
-        hint_values.append(ui.sizeHint().height())
-    except Exception:
-        pass
-    content = getattr(ui, "content", None)
-    if content is not None:
-        try:
-            hint_values.append(content.minimumSizeHint().height())
-        except Exception:
-            pass
-        try:
-            hint_values.append(content.sizeHint().height())
-        except Exception:
-            pass
-    target = max(DOCK_HEIGHT_MIN, max(int(v) for v in hint_values if v))
-    target = min(target, int(max(available_h * DOCK_HEIGHT_MAX_RATIO, DOCK_HEIGHT_FALLBACK)))
-    return target
-
-
-def _apply_workspace_height(workspace_name, height):
-    print("[ELK UI][DOCK] Applying workspace height={} on '{}'.".format(height, workspace_name))
-    try:
-        cmds.workspaceControl(
-            workspace_name,
-            edit=True,
-            minimumHeight=DOCK_HEIGHT_MIN,
-            initialHeight=max(DOCK_HEIGHT_MIN, int(height)),
-            resizeHeight=max(DOCK_HEIGHT_MIN, int(height)),
-            heightProperty="preferred",
-        )
-        print("[ELK UI][DOCK] Workspace height apply success for '{}'.".format(workspace_name))
-    except Exception:
-        print("[ELK UI][DOCK] Workspace height apply failed for '{}'.".format(workspace_name))
-        traceback.print_exc()
-        pass
-
-
-def create_docked_workspace_control(workspace_name, floating=False):
-    print("[ELK UI][DOCK] Creating workspaceControl... name='{}' floating={} fallbackHeight={} minHeight={}".format(
-        workspace_name, floating, DOCK_HEIGHT_FALLBACK, DOCK_HEIGHT_MIN
-    ))
-    try:
-        maya_version = cmds.about(version=True)
-    except Exception:
-        maya_version = "unknown"
-    print("[ELK UI][DOCK] Maya version detected: {}".format(maya_version))
-    if cmds.workspaceControl(workspace_name, exists=True):
-        cmds.deleteUI(workspace_name, control=True)
-        print("[ELK UI][DOCK] Existing workspaceControl removed.")
-    _cleanup_workspace_state(workspace_name)
-    control = cmds.workspaceControl(
-        workspace_name,
-        label="ELK Custom Shelf",
-        retain=False,
-        floating=False,
-        initialHeight=DOCK_HEIGHT_FALLBACK,
-        minimumWidth=0,
-        minimumHeight=DOCK_HEIGHT_MIN,
-        widthProperty="free",
-        heightProperty="preferred"
-    )
-    print("[ELK UI][DOCK] workspace created")
-    _force_workspace_dock_top(workspace_name)
-    floating_state = cmds.workspaceControl(workspace_name, query=True, floating=True)
-    visible_state = cmds.workspaceControl(workspace_name, query=True, visible=True)
-    print("[ELK UI][DOCK] Docked near Maya shelf area. visible={} floating={}".format(visible_state, floating_state))
-    return control
-
 def _build_unique_workspace_name(prefix):
     if not cmds.workspaceControl(prefix, exists=True):
         return prefix
@@ -2532,7 +2407,7 @@ def _build_unique_workspace_name(prefix):
         i += 1
 
 def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=False):
-    """Launch ELK UI strictly in docked workspaceControl mode."""
+    """Launch ELK UI. Tries dockable workspaceControl first, then falls back to a normal Qt window."""
     _warn_if_unsupported_maya()
     if _is_maya_2022_compat_mode():
         print("[ELK UI] Maya 2022 compatibility mode enabled.")
@@ -2541,17 +2416,23 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
 
     ui = None
     try:
-        print("[ELK UI][DOCK] show() start close_existing_first={} workspace='{}' floating={}".format(
-            close_existing_first, workspace_name, floating
-        ))
         _maya2022_log("Tentative d'ouverture en mode dock workspaceControl")
-        control = create_docked_workspace_control(workspace_name, floating=False)
-        print("[ELK UI][DOCK] workspaceControl created: '{}'".format(control))
+        control = cmds.workspaceControl(
+            workspace_name,
+            label="ELK UI",
+            retain=False,
+            floating=floating,
+            dockToMainWindow=("right", 1),
+            initialWidth=420,
+            minimumWidth=0,
+            minimumHeight=0,
+            widthProperty="free",
+            heightProperty="free"
+        )
 
         ptr = omui.MQtUtil.findControl(control)
         if not ptr:
             raise RuntimeError("MQtUtil.findControl returned None for workspaceControl")
-        print("[ELK UI][DOCK] MQtUtil.findControl pointer={}".format(ptr))
 
         control_widget = wrapInstance(int(ptr), QtWidgets.QWidget)
         control_widget.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -2574,56 +2455,52 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
         layout.setSpacing(0)
 
         ui = ELKMinimalUI(control_widget, instance_name=workspace_name + "_UI")
-        print("[ELK UI][DOCK] ELKMinimalUI instance created: {}".format(ui.objectName()))
         layout.addWidget(ui)
-        ui._elk_workspace_name = workspace_name
 
         # Keep Python reference alive on the Maya control.
         control_widget._elk_ui_instance = ui
         globals()["ELK_UI_INSTANCE"] = ui
         globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
 
-        print("[ELK UI][DOCK] restore attempted")
-        cmds.workspaceControl(workspace_name, edit=True, visible=True)
+        cmds.workspaceControl(workspace_name, edit=True, visible=True, restore=True)
         cmds.workspaceControl(workspace_name, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
-        post_restore_floating = cmds.workspaceControl(workspace_name, query=True, floating=True)
-        print("[ELK UI][DOCK] floating state after restore = {}".format(post_restore_floating))
-        if post_restore_floating:
-            print("[ELK UI][DOCK] floating detected -> forcing redock")
-            _force_workspace_dock_top(workspace_name, tag="redock: ")
-        final_floating = cmds.workspaceControl(workspace_name, query=True, floating=True)
-        print("[ELK UI][DOCK] final floating state = {}".format(final_floating))
-        if AUTO_HIDE_MAYA_SHELF and _set_maya_shelf_visibility(False):
-            print("[ELK UI][DOCK] Maya native shelf hidden.")
-        dock_height = DOCK_HEIGHT_FALLBACK
-        if AUTO_RESPONSIVE_DOCK_HEIGHT:
-            dock_height = _calc_responsive_dock_height(ui)
-        _apply_workspace_height(workspace_name, dock_height)
-        print("[ELK UI][DOCK] Responsive height calculated: {} px.".format(dock_height))
-        QtCore.QTimer.singleShot(0, ui.reflow)
-        QtCore.QTimer.singleShot(100, ui.reflow)
-        print("[ELK UI][DOCK] Reflow after dock complete.")
-        final_visible = cmds.workspaceControl(workspace_name, query=True, visible=True)
-        final_floating = cmds.workspaceControl(workspace_name, query=True, floating=True)
-        print("[ELK UI][DOCK] FINAL STATE -> visible={} floating={}".format(final_visible, final_floating))
         _maya2022_log("workspaceControl initialisé avec succès")
         return ui
 
     except Exception as dock_error:
-        _maya2022_log("Échec du mode dock strict", dock_error)
-        cmds.warning("[ELK UI][DOCK][WARNING] Dock failed in strict dock mode. {}: {}".format(
-            dock_error.__class__.__name__, dock_error
-        ))
-        print("[ELK UI][DOCK][WARNING] Dock exception type={} message={}".format(
-            dock_error.__class__.__name__, dock_error
-        ))
+        _maya2022_log("Échec du mode dock, passage en fenêtre flottante", dock_error)
+        cmds.warning("[ELK UI] Dock launch failed, opening floating fallback: {}".format(dock_error))
         traceback.print_exc()
 
-        raise
+        # Fallback: standard Qt window, useful if workspaceControl bugs out in a Maya session.
+        try:
+            main_ptr = omui.MQtUtil.mainWindow()
+            parent = wrapInstance(int(main_ptr), QtWidgets.QWidget) if main_ptr else None
+        except Exception as parent_lookup_error:
+            _maya2022_log("Impossible de récupérer la fenêtre principale Maya", parent_lookup_error)
+            parent = None
+
+        win = QtWidgets.QDialog(parent)
+        win.setObjectName(WINDOW_NAME + "FallbackWindow")
+        win.setWindowTitle("ELK UI")
+        win.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        win.setStyleSheet("background:%s;" % BG)
+        win.resize(520, 760)
+        lay = QtWidgets.QVBoxLayout(win)
+        lay.setContentsMargins(0, 0, 0, 0)
+        ui = ELKMinimalUI(win, instance_name=workspace_name + "_FallbackUI")
+        lay.addWidget(ui)
+        win._elk_ui_instance = ui
+        globals()["ELK_UI_WINDOW"] = win
+        globals()["ELK_UI_INSTANCE"] = ui
+        globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
+        _maya2022_log("Fenêtre flottante initialisée avec succès")
+        win.show()
+        return ui
 
 def show_second_instance():
     workspace_name = _build_unique_workspace_name(SECOND_INSTANCE_WORKSPACE_PREFIX)
-    return show(close_existing_first=False, workspace_name=workspace_name, floating=False)
+    return show(close_existing_first=False, workspace_name=workspace_name, floating=True)
 
 try:
     ELK_UI_INSTANCE=show()
