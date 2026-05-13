@@ -62,6 +62,26 @@ REORDER_COOLDOWN_MS = 30
 REORDER_CONFIRM_FRAMES = 10
 HYSTERESIS_RATIO = 1
 
+MIN_SUPPORTED_MAYA_VERSION = 2022
+
+
+def _maya_version_int():
+    """Return Maya major version as int when available (e.g. 2022, 2027)."""
+    try:
+        return int(cmds.about(version=True))
+    except Exception:
+        return None
+
+
+def _is_maya_2022_compat_mode():
+    return _maya_version_int() == 2022
+
+
+def _warn_if_unsupported_maya():
+    version = _maya_version_int()
+    if version is not None and version < MIN_SUPPORTED_MAYA_VERSION:
+        cmds.warning("[ELK UI] Unsupported Maya version {}. Minimum supported version is {}.".format(version, MIN_SUPPORTED_MAYA_VERSION))
+
 
 def event_global_pos(event):
     if hasattr(event, "globalPosition"):
@@ -2202,6 +2222,9 @@ def _build_unique_workspace_name(prefix):
 
 def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=False):
     """Launch ELK UI. Tries dockable workspaceControl first, then falls back to a normal Qt window."""
+    _warn_if_unsupported_maya()
+    if _is_maya_2022_compat_mode():
+        print("[ELK UI] Maya 2022 compatibility mode enabled.")
     if close_existing_first:
         close_existing()
 
