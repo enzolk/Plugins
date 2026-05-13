@@ -24,6 +24,7 @@ except Exception:
 
 WINDOW_NAME = "ELK_UI_Minimal_Adaptive"
 WORKSPACE_NAME = WINDOW_NAME + "WorkspaceControl"
+SECOND_INSTANCE_WORKSPACE_PREFIX = WINDOW_NAME + "WorkspaceControlSecond"
 OPTIONVAR_MAX_HEIGHT = "ELK_UI_MaxHeightPx"
 OPTIONVAR_UI_SCALE_BTN_TEXT_H = "ELK_UI_ScaleBtnTextH"
 OPTIONVAR_UI_SCALE_BTN_TEXT_V = "ELK_UI_ScaleBtnTextV"
@@ -78,6 +79,27 @@ def _unique_fs_path(base_path):
         if not cand.exists():
             return cand
         i += 1
+
+def _iter_live_ui_instances():
+    instances = globals().setdefault("ELK_UI_INSTANCES", [])
+    alive = []
+    for ui in list(instances):
+        try:
+            if ui is not None and hasattr(ui, "isVisible") and ui.parent() is not None:
+                alive.append(ui)
+        except Exception:
+            continue
+    globals()["ELK_UI_INSTANCES"] = alive
+    return alive
+
+def _broadcast_refresh(source_ui=None):
+    for ui in _iter_live_ui_instances():
+        if ui is source_ui:
+            continue
+        try:
+            ui._refresh_ui_data()
+        except Exception:
+            continue
 
 def _load_category_meta():
     data = {"order": [], "names": {}, "icons": {}, "icon_colors": {}}
@@ -866,7 +888,7 @@ class Category(QtWidgets.QFrame):
         self.style().unpolish(self); self.style().polish(self); self.update()
 
 class ELKMinimalUI(QtWidgets.QWidget):
-    def __init__(self,parent=None):
+    def __init__(self,parent=None, instance_name=None):
         super(ELKMinimalUI,self).__init__(parent)
         self.view_mode="grid"
         self.layout_mode=None
@@ -880,7 +902,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.last_reorder_time = 0
         self.candidate_key = None
         self.candidate_frames = 0
-        self.setObjectName(WINDOW_NAME)
+        self.instance_name = instance_name or WINDOW_NAME
+        self.setObjectName(self.instance_name)
         self._layout_debug_resize_timer = QtCore.QTimer(self)
         self._layout_debug_resize_timer.setSingleShot(True)
         self._layout_debug_resize_timer.timeout.connect(lambda: self.log_layout_state("resize_debounced"))
@@ -986,6 +1009,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                     if key: order.append(key); category_by_file[key]=c.name
         _save_items_meta({"order":order, "category_by_file":category_by_file})
         self.shelf_items = load_shelf_items()
+        _broadcast_refresh(self)
 
     def _load_max_height_px(self):
         if cmds.optionVar(exists=OPTIONVAR_MAX_HEIGHT):
@@ -1325,6 +1349,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
             setattr(self, f"_cat_btn_{fn}", b)
         gl.addLayout(row)
         root.addWidget(grp)
+        second_instance_btn = QtWidgets.QPushButton("Open Second Instance")
+        second_instance_btn.clicked.connect(lambda: show_second_instance())
+        root.addWidget(second_instance_btn)
 
         def reload_list(select_slug=None):
             cat_list.clear()
@@ -1407,7 +1434,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             meta.setdefault('icons', {})[slug] = edited["icon_svg"]
             meta.setdefault('icon_colors', {})[slug] = edited["icon_color"]
             _save_category_meta(meta)
-            reload_list(select_slug=slug); self._refresh_ui_data()
+            reload_list(select_slug=slug); self._refresh_ui_data(); _broadcast_refresh(self)
 
         def rename_category():
             slug = selected_row();
@@ -1442,7 +1469,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 final_slug = slug; meta['names'][slug] = name
             meta.setdefault('icons', {})[final_slug] = edited["icon_svg"]
             meta.setdefault('icon_colors', {})[final_slug] = edited["icon_color"]
-            _save_category_meta(meta); reload_list(select_slug=final_slug); self._refresh_ui_data()
+            _save_category_meta(meta); reload_list(select_slug=final_slug); self._refresh_ui_data(); _broadcast_refresh(self)
 
         def delete_category():
             slug = selected_row();
@@ -1461,14 +1488,14 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 if res != QtWidgets.QMessageBox.Yes: return
             if path.exists(): path.rmdir()
             meta = _sync_category_meta_from_fs(); meta['names'].pop(slug, None); meta.get('icons', {}).pop(slug, None); meta.get('icon_colors', {}).pop(slug, None); meta['order'] = [x for x in meta['order'] if x != slug]; _save_category_meta(meta)
-            reload_list(); self._refresh_ui_data()
+            reload_list(); self._refresh_ui_data(); _broadcast_refresh(self)
 
         def move(offset):
             slug = selected_row();
             if not slug: return
             meta = _sync_category_meta_from_fs(); order = meta['order']; i = order.index(slug); j=i+offset
             if j<0 or j>=len(order): return
-            order[i], order[j] = order[j], order[i]; meta['order']=order; _save_category_meta(meta); reload_list(select_slug=slug); self._refresh_ui_data()
+            order[i], order[j] = order[j], order[i]; meta['order']=order; _save_category_meta(meta); reload_list(select_slug=slug); self._refresh_ui_data(); _broadcast_refresh(self)
 
         reload_list()
         self._cat_btn_add.clicked.connect(add_category); self._cat_btn_ren.clicked.connect(rename_category); self._cat_btn_del.clicked.connect(delete_category)
@@ -1763,6 +1790,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                     "Le bouton sera retiré de l'interface, mais le fichier n'existe déjà plus :\n{}".format(file_path.as_posix())
                 )
             self._refresh_ui_data()
+            _broadcast_refresh(self)
             cmds.inViewMessage(amg="Script <hl>{}</hl> supprimé.".format(label), pos='midCenter', fade=True)
         except PermissionError:
             QtWidgets.QMessageBox.critical(
@@ -1872,6 +1900,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 show_error("Erreur lors de la sauvegarde: {}".format(ex))
                 return
             self._refresh_ui_data()
+            _broadcast_refresh(self)
             dlg.accept()
 
         btns.accepted.connect(do_save)
@@ -2078,17 +2107,28 @@ def close_existing():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True): cmds.deleteUI(WORKSPACE_NAME, control=True)
     if cmds.window(WINDOW_NAME, exists=True): cmds.deleteUI(WINDOW_NAME)
 
-def show():
+def _build_unique_workspace_name(prefix):
+    if not cmds.workspaceControl(prefix, exists=True):
+        return prefix
+    i = 2
+    while True:
+        candidate = "{}{}".format(prefix, i)
+        if not cmds.workspaceControl(candidate, exists=True):
+            return candidate
+        i += 1
+
+def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=False):
     """Launch ELK UI. Tries dockable workspaceControl first, then falls back to a normal Qt window."""
-    close_existing()
+    if close_existing_first:
+        close_existing()
 
     ui = None
     try:
         control = cmds.workspaceControl(
-            WORKSPACE_NAME,
+            workspace_name,
             label="ELK UI",
             retain=False,
-            floating=False,
+            floating=floating,
             dockToMainWindow=("right", 1),
             initialWidth=420,
             minimumWidth=0,
@@ -2121,15 +2161,16 @@ def show():
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        ui = ELKMinimalUI(control_widget)
+        ui = ELKMinimalUI(control_widget, instance_name=workspace_name + "_UI")
         layout.addWidget(ui)
 
         # Keep Python reference alive on the Maya control.
         control_widget._elk_ui_instance = ui
         globals()["ELK_UI_INSTANCE"] = ui
+        globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
 
-        cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True, restore=True)
-        cmds.workspaceControl(WORKSPACE_NAME, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
+        cmds.workspaceControl(workspace_name, edit=True, visible=True, restore=True)
+        cmds.workspaceControl(workspace_name, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
         return ui
 
     except Exception as dock_error:
@@ -2151,13 +2192,18 @@ def show():
         win.resize(520, 760)
         lay = QtWidgets.QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
-        ui = ELKMinimalUI(win)
+        ui = ELKMinimalUI(win, instance_name=workspace_name + "_FallbackUI")
         lay.addWidget(ui)
         win._elk_ui_instance = ui
         globals()["ELK_UI_WINDOW"] = win
         globals()["ELK_UI_INSTANCE"] = ui
+        globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
         win.show()
         return ui
+
+def show_second_instance():
+    workspace_name = _build_unique_workspace_name(SECOND_INSTANCE_WORKSPACE_PREFIX)
+    return show(close_existing_first=False, workspace_name=workspace_name, floating=True)
 
 try:
     ELK_UI_INSTANCE=show()
