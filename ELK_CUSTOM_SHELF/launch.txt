@@ -1,0 +1,26 @@
+import importlib
+import ELK_CUSTOM_SHELF
+importlib.reload(ELK_CUSTOM_SHELF)
+ELK_CUSTOM_SHELF.show()
+
+------
+
+import sys
+import importlib
+
+# Supprime tous les modules ELK_CUSTOM_SHELF du cache Python
+modules_to_delete = []
+
+for module_name in sys.modules:
+    if module_name.startswith("ELK_CUSTOM_SHELF"):
+        modules_to_delete.append(module_name)
+
+for module_name in modules_to_delete:
+    del sys.modules[module_name]
+
+# Réimport propre
+import ELK_CUSTOM_SHELF
+importlib.reload(ELK_CUSTOM_SHELF)
+
+# Launch
+ELK_CUSTOM_SHELF.show()
