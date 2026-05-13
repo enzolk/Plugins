@@ -69,6 +69,32 @@ def event_global_pos(event):
     return event.globalPos()
 
 
+
+
+class ELKMainScrollArea(QtWidgets.QScrollArea):
+    """Map vertical wheel motion to horizontal scrolling in horizontal shelf mode."""
+
+    def __init__(self, parent_ui=None, *args, **kwargs):
+        super(ELKMainScrollArea, self).__init__(*args, **kwargs)
+        self._parent_ui = parent_ui
+
+    def wheelEvent(self, event):
+        parent_ui = self._parent_ui
+        if parent_ui is not None and getattr(parent_ui, "is_horizontal_mode", None) and parent_ui.is_horizontal_mode():
+            delta = event.angleDelta()
+            dx = delta.x()
+            dy = delta.y()
+            step = dx if abs(dx) > abs(dy) and dx != 0 else dy
+            if step != 0:
+                bar = self.horizontalScrollBar()
+                if bar is not None:
+                    lines = step / 120.0
+                    single_step = bar.singleStep() or 20
+                    bar.setValue(bar.value() - int(round(lines * single_step)))
+                    event.accept()
+                    return
+        super(ELKMainScrollArea, self).wheelEvent(event)
+
 def _unique_fs_path(base_path):
     p = Path(base_path)
     if not p.exists():
@@ -1191,7 +1217,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         top.addWidget(self.options_btn)
         main.addLayout(top)
 
-        self.scroll=QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setMinimumHeight(0)
+        self.scroll=ELKMainScrollArea(parent_ui=self); self.scroll.setWidgetResizable(True); self.scroll.setMinimumHeight(0)
         self.scroll.setStyleSheet("QScrollArea{background:%s;border:none;} QScrollBar:vertical{background:#2a2a2a;width:10px;margin:0;} QScrollBar::handle:vertical{background:#565656;border-radius:5px;min-height:28px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;} QScrollBar:horizontal{background:#2a2a2a;height:10px;margin:0;} QScrollBar::handle:horizontal{background:#565656;border-radius:5px;min-width:28px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}"%BG)
         self.content=QtWidgets.QWidget(); self.content.setAttribute(QtCore.Qt.WA_StyledBackground, True); self.content.setStyleSheet("background:%s;"%BG)
         self.content_lay=QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.TopToBottom, self.content)
