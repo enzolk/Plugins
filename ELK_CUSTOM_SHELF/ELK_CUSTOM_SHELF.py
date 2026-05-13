@@ -1161,32 +1161,43 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return widths.get(category_name, 180)
 
     def compute_horizontal_widths(self):
-        """Compute compact horizontal widths per category.
-
-        Horizontal mode must keep small categories compact and only make wide
-        categories scroll internally when they truly need more room.
-        """
         groups = self.grouped_items()
-        collapsed_w = self.collapsed_category_width("")
-        viewport_w = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        n = max(1, len(groups))
+        reserve = self.horizontal_options_space()
+        available = max(280, (self.scroll.viewport().width() - 4 if hasattr(self, "scroll") else self.width()) - reserve)
+        spacing = 8 * max(0, n - 1)
 
-        max_open_w = max(180, int(max(1, viewport_w) * 0.42))
-        min_open_w = 120
+        collapsed_w = 54
 
-        hpad = 6 if self.available_width() < 540 else 10
-        spacing = 4 if self.available_width() < 540 else 6
-        button_w = 48 if self.available_width() < 540 else 56
+        open_groups = [(cat, items) for cat, items in groups if cat not in self.collapsed_categories]
+        closed_groups = [(cat, items) for cat, items in groups if cat in self.collapsed_categories]
+
+        closed_total = len(closed_groups) * collapsed_w
+        open_n = max(1, len(open_groups))
+        open_available = max(160 * open_n, available - spacing - closed_total)
+
+        naturals = []
+        for cat, items in open_groups:
+            visible = min(len(items), 6)
+            naturals.append(max(170, 112 + visible * 62))
 
         widths = {}
-        for cat, items in groups:
-            if cat in self.collapsed_categories:
-                widths[cat] = collapsed_w
-                continue
+        total_natural = sum(naturals)
+        if open_groups:
+            if total_natural <= open_available:
+                extra = open_available - total_natural
+                open_widths = [w + int(extra / open_n) for w in naturals]
+                open_widths[-1] += open_available - sum(open_widths)
+            else:
+                weights = [max(1.0, min(4.0, len(items) / 2.0)) for _, items in open_groups]
+                total_weight = sum(weights)
+                open_widths = [max(150, int(open_available * (w / total_weight))) for w in weights]
 
-            count = max(1, len(items))
-            content_w = (hpad * 2) + (count * button_w) + (max(0, count - 1) * spacing)
-            natural_w = max(min_open_w, content_w)
-            widths[cat] = min(max_open_w, natural_w)
+            for i, (cat, _) in enumerate(open_groups):
+                widths[cat] = open_widths[i]
+
+        for cat, _ in closed_groups:
+            widths[cat] = collapsed_w
 
         self._horizontal_widths = widths
 
