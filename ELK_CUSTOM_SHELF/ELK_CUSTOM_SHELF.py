@@ -1762,6 +1762,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             item['file_path']=save_item_to_disk(item)
             self.shelf_items = load_shelf_items()
             self.refresh()
+            _broadcast_refresh(self)
 
     def _set_icon_preview(self, label, icon_name, color_hex):
         icon_text = (icon_name or "").strip()
