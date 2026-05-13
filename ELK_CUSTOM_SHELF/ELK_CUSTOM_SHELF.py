@@ -180,6 +180,7 @@ def _load_category_meta():
     return data
 
 def _save_category_meta(meta):
+    CATEGORY_META_FILE.parent.mkdir(parents=True, exist_ok=True)
     CATEGORY_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _sync_category_meta_from_fs():
@@ -292,6 +293,7 @@ def _load_items_meta():
 
 
 def _save_items_meta(meta):
+    ITEMS_META_FILE.parent.mkdir(parents=True, exist_ok=True)
     ITEMS_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -1647,7 +1649,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         short_name = QtWidgets.QLineEdit()
         category = QtWidgets.QComboBox()
         category.setEditable(True)
-        categories = sorted({(it.get("category") or "Tools") for it in self.shelf_items})
+        categories = [disp for _, disp, _ in self._category_rows()]
+        categories = sorted({c for c in categories if c})
         if "Tools" not in categories:
             categories.insert(0, "Tools")
         category.addItems(categories)
