@@ -406,6 +406,12 @@ class SvgIconWidget(QtWidgets.QWidget):
         self.setFixedSize(size, size)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
 
+    def set_svg(self, svg_name, color=None):
+        self.svg_name = normalize_icon_name(svg_name)
+        if color is not None:
+            self.color = QtGui.QColor(color or "#36d6ff")
+        self.update()
+
     def paintEvent(self, event):
         path = resolve_icon_path(self.svg_name)
         if not path:
