@@ -1428,22 +1428,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return self.layout_mode == "horizontal"
 
     def desired_layout_mode(self):
-        # Use the largest reliable host dimensions so mode switching does not get
-        # stuck if one intermediate widget reports a stale/clamped size.
-        width_candidates = [self.width()]
-        height_candidates = [self.height()]
-        if self.parentWidget() is not None:
-            width_candidates.append(self.parentWidget().width())
-            height_candidates.append(self.parentWidget().height())
-        if self.window() is not None:
-            width_candidates.append(self.window().width())
-            height_candidates.append(self.window().height())
-        if hasattr(self, "scroll") and self.scroll is not None and self.scroll.viewport() is not None:
-            width_candidates.append(self.scroll.viewport().width())
-            height_candidates.append(self.scroll.viewport().height())
-
-        w = max(1, max(width_candidates))
-        h = max(1, max(height_candidates))
+        w = max(1, self.width())
+        h = max(1, self.height())
         return "horizontal" if (w > h and h <= 250) else "vertical"
 
     def available_width(self):
