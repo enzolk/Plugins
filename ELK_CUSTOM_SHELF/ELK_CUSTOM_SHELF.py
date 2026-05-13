@@ -63,6 +63,12 @@ REORDER_CONFIRM_FRAMES = 10
 HYSTERESIS_RATIO = 1
 
 
+def event_pos(event):
+    if hasattr(event, "position"):
+        return event.position().toPoint()
+    return event.pos()
+
+
 def event_global_pos(event):
     if hasattr(event, "globalPosition"):
         return event.globalPosition().toPoint()
@@ -81,6 +87,7 @@ class ELKCategoryScrollArea(QtWidgets.QScrollArea):
     def wheelEvent(self, event):
         parent_category = self._parent_category
         parent_ui = getattr(parent_category, "parent_ui", None)
+
         if parent_ui is not None and getattr(parent_ui, "is_horizontal_mode", None) and parent_ui.is_horizontal_mode():
             delta = event.angleDelta()
             dx = delta.x()
@@ -94,7 +101,23 @@ class ELKCategoryScrollArea(QtWidgets.QScrollArea):
                     bar.setValue(bar.value() - int(round(lines * single_step)))
                     event.accept()
                     return
-        super(ELKCategoryScrollArea, self).wheelEvent(event)
+            super(ELKCategoryScrollArea, self).wheelEvent(event)
+            return
+
+        # Vertical mode: never scroll inside category; bubble to global shelf scroll.
+        if parent_ui is not None:
+            delta = event.angleDelta()
+            step = delta.y() if delta.y() != 0 else delta.x()
+            global_scroll = getattr(parent_ui, "scroll", None)
+            if global_scroll is not None and step != 0:
+                bar = global_scroll.verticalScrollBar()
+                if bar is not None and bar.maximum() > bar.minimum():
+                    lines = step / 120.0
+                    single_step = bar.singleStep() or 20
+                    bar.setValue(bar.value() - int(round(lines * single_step)))
+                    event.accept()
+                    return
+        event.ignore()
 
 def _unique_fs_path(base_path):
     p = Path(base_path)
@@ -593,12 +616,19 @@ class ToolButton(QtWidgets.QFrame):
         if e.button()==QtCore.Qt.LeftButton:
             self.clicked.emit(self.item)
         elif e.button()==QtCore.Qt.RightButton and getattr(self.parent_ui, "open_script_context_menu", None):
-            self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(e.pos()))
+            self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(event_pos(e)))
             e.accept()
             return
         self._press_pos = None
         self._drag_started = False
         super(ToolButton,self).mouseReleaseEvent(e)
+
+    def contextMenuEvent(self, event):
+        if getattr(self.parent_ui, "open_script_context_menu", None):
+            self.parent_ui.open_script_context_menu(self.item, self.mapToGlobal(event_pos(event)))
+            event.accept()
+            return
+        super(ToolButton, self).contextMenuEvent(event)
 
 
 class Placeholder(QtWidgets.QFrame):
