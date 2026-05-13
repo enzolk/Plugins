@@ -24,6 +24,7 @@ except Exception:
 
 WINDOW_NAME = "ELK_UI_Minimal_Adaptive"
 WORKSPACE_NAME = WINDOW_NAME + "WorkspaceControl"
+SECOND_INSTANCE_WORKSPACE_PREFIX = WINDOW_NAME + "WorkspaceControlSecond"
 OPTIONVAR_MAX_HEIGHT = "ELK_UI_MaxHeightPx"
 OPTIONVAR_UI_SCALE_BTN_TEXT_H = "ELK_UI_ScaleBtnTextH"
 OPTIONVAR_UI_SCALE_BTN_TEXT_V = "ELK_UI_ScaleBtnTextV"
@@ -866,7 +867,7 @@ class Category(QtWidgets.QFrame):
         self.style().unpolish(self); self.style().polish(self); self.update()
 
 class ELKMinimalUI(QtWidgets.QWidget):
-    def __init__(self,parent=None):
+    def __init__(self,parent=None, instance_name=None):
         super(ELKMinimalUI,self).__init__(parent)
         self.view_mode="grid"
         self.layout_mode=None
@@ -880,7 +881,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.last_reorder_time = 0
         self.candidate_key = None
         self.candidate_frames = 0
-        self.setObjectName(WINDOW_NAME)
+        self.instance_name = instance_name or WINDOW_NAME
+        self.setObjectName(self.instance_name)
         self._layout_debug_resize_timer = QtCore.QTimer(self)
         self._layout_debug_resize_timer.setSingleShot(True)
         self._layout_debug_resize_timer.timeout.connect(lambda: self.log_layout_state("resize_debounced"))
@@ -1325,6 +1327,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
             setattr(self, f"_cat_btn_{fn}", b)
         gl.addLayout(row)
         root.addWidget(grp)
+        second_instance_btn = QtWidgets.QPushButton("Open Second Instance")
+        second_instance_btn.clicked.connect(lambda: show_second_instance())
+        root.addWidget(second_instance_btn)
 
         def reload_list(select_slug=None):
             cat_list.clear()
@@ -2078,17 +2083,28 @@ def close_existing():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True): cmds.deleteUI(WORKSPACE_NAME, control=True)
     if cmds.window(WINDOW_NAME, exists=True): cmds.deleteUI(WINDOW_NAME)
 
-def show():
+def _build_unique_workspace_name(prefix):
+    if not cmds.workspaceControl(prefix, exists=True):
+        return prefix
+    i = 2
+    while True:
+        candidate = "{}{}".format(prefix, i)
+        if not cmds.workspaceControl(candidate, exists=True):
+            return candidate
+        i += 1
+
+def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=False):
     """Launch ELK UI. Tries dockable workspaceControl first, then falls back to a normal Qt window."""
-    close_existing()
+    if close_existing_first:
+        close_existing()
 
     ui = None
     try:
         control = cmds.workspaceControl(
-            WORKSPACE_NAME,
+            workspace_name,
             label="ELK UI",
             retain=False,
-            floating=False,
+            floating=floating,
             dockToMainWindow=("right", 1),
             initialWidth=420,
             minimumWidth=0,
@@ -2121,15 +2137,16 @@ def show():
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        ui = ELKMinimalUI(control_widget)
+        ui = ELKMinimalUI(control_widget, instance_name=workspace_name + "_UI")
         layout.addWidget(ui)
 
         # Keep Python reference alive on the Maya control.
         control_widget._elk_ui_instance = ui
         globals()["ELK_UI_INSTANCE"] = ui
+        globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
 
-        cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True, restore=True)
-        cmds.workspaceControl(WORKSPACE_NAME, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
+        cmds.workspaceControl(workspace_name, edit=True, visible=True, restore=True)
+        cmds.workspaceControl(workspace_name, edit=True, minimumWidth=0, minimumHeight=0, widthProperty="free", heightProperty="free")
         return ui
 
     except Exception as dock_error:
@@ -2151,13 +2168,18 @@ def show():
         win.resize(520, 760)
         lay = QtWidgets.QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
-        ui = ELKMinimalUI(win)
+        ui = ELKMinimalUI(win, instance_name=workspace_name + "_FallbackUI")
         lay.addWidget(ui)
         win._elk_ui_instance = ui
         globals()["ELK_UI_WINDOW"] = win
         globals()["ELK_UI_INSTANCE"] = ui
+        globals().setdefault("ELK_UI_INSTANCES", []).append(ui)
         win.show()
         return ui
+
+def show_second_instance():
+    workspace_name = _build_unique_workspace_name(SECOND_INSTANCE_WORKSPACE_PREFIX)
+    return show(close_existing_first=False, workspace_name=workspace_name, floating=True)
 
 try:
     ELK_UI_INSTANCE=show()
