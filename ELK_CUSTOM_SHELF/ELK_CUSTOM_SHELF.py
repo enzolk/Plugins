@@ -644,6 +644,22 @@ def _elk_debug_rect(widget):
         return "<unavailable>"
 
 
+def _elk_enum_debug_name(value):
+    if value is None:
+        return "None"
+    try:
+        return str(int(value))
+    except Exception:
+        pass
+    enum_value = getattr(value, "value", None)
+    if enum_value is not None:
+        try:
+            return str(int(enum_value))
+        except Exception:
+            return str(enum_value)
+    return str(value)
+
+
 def _elk_policy_name(policy):
     names = {
         QtWidgets.QSizePolicy.Fixed: "Fixed",
@@ -654,7 +670,7 @@ def _elk_policy_name(policy):
         QtWidgets.QSizePolicy.MinimumExpanding: "MinimumExpanding",
         QtWidgets.QSizePolicy.Ignored: "Ignored",
     }
-    return names.get(policy, str(int(policy)))
+    return names.get(policy, _elk_enum_debug_name(policy))
 
 
 def _elk_scroll_policy_name(policy):
@@ -663,7 +679,7 @@ def _elk_scroll_policy_name(policy):
         QtCore.Qt.ScrollBarAlwaysOff: "AlwaysOff",
         QtCore.Qt.ScrollBarAlwaysOn: "AlwaysOn",
     }
-    return names.get(policy, str(int(policy)))
+    return names.get(policy, _elk_enum_debug_name(policy))
 
 
 class Category(QtWidgets.QFrame):
