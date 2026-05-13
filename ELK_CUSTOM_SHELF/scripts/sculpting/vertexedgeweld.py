@@ -1,4 +1,4 @@
-# ELK_META {"label": "VertexEdgeWeld", "short_name": "", "tooltip": "A Maya tool that identifies the closest edge to a selected vertex, inserts a vertex in the middle of this edge, and then seamlessly welds the new vertex to the selected vertex for precise geometry adjustments.", "source": "python", "icon_svg": "border-top.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Smart Edge Vertex Insert", "short_name": "EdgeVX", "tooltip": "Détecte automatiquement l’edge la plus proche et insère un vertex intelligemment.", "source": "python", "icon_svg": "vector-bezier-2.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 

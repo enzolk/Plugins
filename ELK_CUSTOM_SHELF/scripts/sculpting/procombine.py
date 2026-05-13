@@ -1,4 +1,4 @@
-# ELK_META {"label": "ProCombine", "short_name": "", "tooltip": "This script combines selected polygonal objects in Maya while preserving their \nhierarchy and applying clean-up operations like deleting history and freezing transformations.", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Clean Combine", "short_name": "ClnCmb", "tooltip": "Combine plusieurs meshes tout en conservant une hiérarchie propre et en appliquant des cleanups.", "source": "python", "icon_svg": "layers-intersect.svg", "icon_color": "#ff5c8a"}
 # combine_and_preserve_hierarchy.py
 import maya.cmds as cmds
 import re

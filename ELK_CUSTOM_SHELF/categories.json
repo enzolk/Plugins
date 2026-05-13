@@ -16,19 +16,19 @@
     "deliver": "Deliver"
   },
   "icons": {
-    "tools": "category-2.svg",
-    "object": "carousel-horizontal.svg",
-    "sculpting": "pyramid-off.svg",
-    "action": "repeat-once.svg",
-    "nurbs": "corner-down-right-double.svg",
-    "deliver": "brand-filezilla.svg"
+    "tools": "tools.svg",
+    "object": "cube.svg",
+    "sculpting": "brush.svg",
+    "action": "bolt.svg",
+    "nurbs": "vector-bezier.svg",
+    "deliver": "upload.svg"
   },
   "icon_colors": {
     "tools": "#36d6ff",
-    "object": "#5ee06c",
-    "sculpting": "#b277ff",
-    "action": "#ff9f2e",
-    "nurbs": "#ffd34d",
-    "deliver": "#4bc8ff"
+    "object": "#ff9f1a",
+    "sculpting": "#ff5c8a",
+    "action": "#c678ff",
+    "nurbs": "#55dd88",
+    "deliver": "#f2c94c"
   }
 }

@@ -1,4 +1,4 @@
-# ELK_META {"label": "ProSeparate", "short_name": "", "tooltip": "Separate", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Separate Mesh", "short_name": "SepMsh", "tooltip": "Sépare les éléments sélectionnés en meshes indépendants.", "source": "python", "icon_svg": "cut.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 
 def separate_and_rename_simple():

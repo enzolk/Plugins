@@ -1,4 +1,4 @@
-# ELK_META {"label": "UV Transfer", "short_name": "", "tooltip": "Transfer the UV between two objects", "source": "python", "icon_svg": "table-import.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "UV Transfer Tool", "short_name": "UVTran", "tooltip": "Transfère les UVs entre deux objets sélectionnés.", "source": "python", "icon_svg": "arrows-transfer-up-down.svg", "icon_color": "#f2c94c"}
 import maya.cmds as cmds
 
 def transfer_uvs_to_target(source_obj):

@@ -1,4 +1,4 @@
-# ELK_META {"label": "Center Edge", "short_name": "", "tooltip": "Select the center edge of the selected obect", "source": "python", "icon_svg": "border-top.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Select Center Edge", "short_name": "CntrEd", "tooltip": "Sélectionne automatiquement l’edge centrale d’un objet polygonal.", "source": "python", "icon_svg": "line-dashed.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 import maya.OpenMaya as om
 

@@ -1,4 +1,4 @@
-# ELK_META {"label": "Open Borders", "short_name": "", "tooltip": "Find the open borders", "source": "python", "icon_svg": "package-export.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Find Open Borders", "short_name": "OpenBD", "tooltip": "Détecte les bordures ouvertes sur un mesh polygonal.", "source": "python", "icon_svg": "border-style-2.svg", "icon_color": "#f2c94c"}
 import maya.cmds as cmds
 
 def get_open_border_vertices():
