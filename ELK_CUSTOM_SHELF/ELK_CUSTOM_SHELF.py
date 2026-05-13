@@ -666,15 +666,20 @@ class ToolButton(QtWidgets.QFrame):
         icon_scale = ui_scale("btn_icon")
         short_text_scale = ui_scale("btn_short")
         lay=QtWidgets.QHBoxLayout(self)
+        self._icon_widget = None
+        self._compact_size_bounds = (34, 96)
         if compact:
             lay.setContentsMargins(0,0,0,0)
             lay.setSpacing(0)
             icon_size = max(8, int(round((20 if tight else 24) * icon_scale)))
             icon = SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size)
+            self._icon_widget = icon
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
-            self.setFixedSize(48,42) if tight else self.setFixedSize(56,48)
+            base_side = 42 if tight else 48
+            self.setFixedSize(base_side, base_side)
+            self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QLabel{background:transparent;border:0px;}")
             short_name = (item.get("short_name") or "").strip()
             if short_name:
@@ -716,6 +721,31 @@ class ToolButton(QtWidgets.QFrame):
             lay.addWidget(lab,1)
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
+
+    def set_compact_square_size(self, side_px):
+        if not self.compact:
+            return
+        min_side, max_side = self._compact_size_bounds
+        side = max(min_side, min(max_side, int(side_px)))
+        self.setFixedSize(side, side)
+        self.setMinimumSize(side, side)
+        self.setMaximumSize(side, side)
+        icon_side = max(12, min(side - 8, int(round(side * 0.58))))
+        if self._icon_widget is not None:
+            self._icon_widget.setFixedSize(icon_side, icon_side)
+        if self._overlay_label is not None:
+            short_px = max(8, min(14, int(round(side * 0.2))))
+            self._overlay_label.setStyleSheet(
+                "QLabel#ToolShortNameOverlay{"
+                "color:#ffffff;"
+                "font-weight:700;"
+                "font-size:%dpx;"
+                "padding:0px 1px;"
+                "background-color:rgba(0, 0, 0, 90);"
+                "border-radius:4px;"
+                "}" % short_px
+            )
+            self._overlay_label.raise_()
 
     def resizeEvent(self, event):
         super(ToolButton, self).resizeEvent(event)
@@ -1113,8 +1143,11 @@ class Category(QtWidgets.QFrame):
         if horizontal and not self.expanded:
             return
 
+        horizontal_buttons = []
         for i,item in enumerate(self.items):
             btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag); self.grid.addWidget(btn,i//cols,i%cols)
+            if horizontal:
+                horizontal_buttons.append(btn)
 
         if not horizontal and self.expanded:
             self._update_vertical_body_height()
@@ -1122,6 +1155,22 @@ class Category(QtWidgets.QFrame):
         elif horizontal:
             self.body_scroll.setMinimumHeight(0)
             self.body_scroll.setMaximumHeight(16777215)
+            self._apply_horizontal_button_adaptive_size(horizontal_buttons, is_tight)
+            QtCore.QTimer.singleShot(0, lambda b=list(horizontal_buttons), t=is_tight: self._apply_horizontal_button_adaptive_size(b, t))
+
+    def _apply_horizontal_button_adaptive_size(self, buttons, is_tight):
+        if not buttons:
+            return
+        body_h = self.body_scroll.viewport().height() if self.body_scroll and self.body_scroll.viewport() else self.body.height()
+        margins = self.grid.contentsMargins()
+        available_h = max(1, body_h - margins.top() - margins.bottom())
+        spacing = max(0, self.grid.spacing())
+        target_side = int(round(available_h - (spacing * 0.5)))
+        min_side = 34 if is_tight else 38
+        max_side = 80 if is_tight else 92
+        target_side = max(min_side, min(max_side, target_side))
+        for btn in buttons:
+            btn.set_compact_square_size(target_side)
 
     def layout_items(self):
         result=[]
