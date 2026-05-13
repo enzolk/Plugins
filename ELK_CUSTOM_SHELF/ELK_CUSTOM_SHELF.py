@@ -1037,10 +1037,18 @@ class Category(QtWidgets.QFrame):
         width=max(1,self.parent_ui.available_width())
 
         is_tight = width < 540
+        header_layout = self.header.layout()
 
         if horizontal:
             # Shelf mode: opened categories receive the available room.
             # Collapsed categories become a very narrow vertical tab.
+            # Keep vertical margins tight in horizontal mode so headers + buttons
+            # can use the full shelf height without creating useless top/bottom gaps.
+            self.outer.setContentsMargins(0, 1, 0, 1)
+            self.outer.setSpacing(2 if is_tight else 3)
+            if header_layout is not None:
+                header_layout.setContentsMargins(8 if is_tight else 10, 4, 8 if is_tight else 10, 4)
+                header_layout.setSpacing(6 if is_tight else 8)
             if not self.expanded:
                 cat_w = self.parent_ui.collapsed_category_width(self.name)
                 self.body_scroll.setVisible(False)
@@ -1059,11 +1067,10 @@ class Category(QtWidgets.QFrame):
                 self.setMinimumWidth(cat_w)
                 self.setMaximumWidth(cat_w)
                 self.setMaximumHeight(16777215)
-                self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+                self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
             hpad = 6 if is_tight else 10
-            bpad = 6 if is_tight else 10
-            self.grid.setContentsMargins(hpad, 0, hpad, bpad)
-            self.grid.setSpacing(4 if is_tight else 6)
+            self.grid.setContentsMargins(hpad, 1, hpad, 2)
+            self.grid.setSpacing(3 if is_tight else 4)
             cols = max(1, len(self.items))
             self.grid.setSizeConstraint(QtWidgets.QLayout.SetMinimumSize)
             self.body_scroll.setMinimumHeight(0)
@@ -1072,6 +1079,11 @@ class Category(QtWidgets.QFrame):
             self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         else:
+            self.outer.setContentsMargins(0, 0, 0, 0)
+            self.outer.setSpacing(5)
+            if header_layout is not None:
+                header_layout.setContentsMargins(10, 8, 10, 8)
+                header_layout.setSpacing(8)
             self.body_scroll.setVisible(self.expanded)
             self.header.setVisible(True)
             self.collapsed_header.setVisible(False)
@@ -1613,7 +1625,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.log_layout_state("layout_mode_change:{}".format(new_mode))
         if new_mode == "horizontal":
             self.content_lay.setDirection(QtWidgets.QBoxLayout.LeftToRight)
-            self.content_lay.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+            self.content_lay.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
             # In shelf mode the content must stretch to the full viewport instead of
             # keeping a small fixed natural width. This avoids the broken/empty area
             # visible when the panel is docked horizontally.
