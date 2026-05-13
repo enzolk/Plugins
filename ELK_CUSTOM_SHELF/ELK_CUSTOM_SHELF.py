@@ -1647,7 +1647,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         short_name = QtWidgets.QLineEdit()
         category = QtWidgets.QComboBox()
         category.setEditable(True)
-        categories = sorted({(it.get("category") or "Tools") for it in self.shelf_items})
+        categories = [disp for _, disp, _ in self._category_rows()]
+        categories = sorted({c for c in categories if c})
         if "Tools" not in categories:
             categories.insert(0, "Tools")
         category.addItems(categories)
