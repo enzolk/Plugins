@@ -1,4 +1,4 @@
-# ELK_META {"label": "Sel Crease", "short_name": "", "tooltip": "Select Creased Edges", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Apply Edge Crease", "short_name": "Crease", "tooltip": "Applique un crease sur les edges sélectionnées.", "source": "python", "icon_svg": "corner-down-right-double.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 
 def select_creased_edges():

@@ -1,2 +1,2 @@
-// ELK_META {"label": "Cam Based", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "package-export.svg", "icon_color": "#4bc8ff"}
+// ELK_META {"label": "Camera Projection UV", "short_name": "CamUV", "tooltip": "Crée des UVs via projection depuis la caméra active.", "source": "mel", "icon_svg": "camera.svg", "icon_color": "#f2c94c"}
 UVCameraBasedProjection;

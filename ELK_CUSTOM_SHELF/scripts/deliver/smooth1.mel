@@ -1,4 +1,4 @@
-// ELK_META {"label": "Smooth1", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "blur.svg", "icon_color": "#4bc8ff"}
+// ELK_META {"label": "UV Shell List Tool", "short_name": "UVList", "tooltip": "Liste et analyse les UV shells des objets sélectionnés.", "source": "mel", "icon_svg": "list-details.svg", "icon_color": "#f2c94c"}
 {
 //Lists the transform nodes of all selected objects
 string $nodes[] = `ls -selection`;

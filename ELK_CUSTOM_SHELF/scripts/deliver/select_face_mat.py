@@ -1,4 +1,4 @@
-# ELK_META {"label": "Select Face Mat", "short_name": "", "tooltip": "Select all faces assigned to a material", "source": "python", "icon_svg": "lasso-polygon.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Select Faces By Material", "short_name": "MatSel", "tooltip": "Sélectionne toutes les faces utilisant un matériau donné.", "source": "python", "icon_svg": "palette.svg", "icon_color": "#f2c94c"}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om2
 

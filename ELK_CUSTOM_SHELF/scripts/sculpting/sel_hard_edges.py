@@ -1,4 +1,4 @@
-# ELK_META {"label": "Sel Hard Edges", "short_name": "", "tooltip": "Select Hard Edges", "source": "python", "icon_svg": "border-top.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Select Hard Edges", "short_name": "HardEg", "tooltip": "Sélectionne les hard edges d’un mesh.", "source": "python", "icon_svg": "border-outer.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 
 def select_edges_by_angle(min_angle, max_angle):

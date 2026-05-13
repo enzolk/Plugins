@@ -1,4 +1,4 @@
-# ELK_META {"label": "AddPoint", "short_name": "", "tooltip": "Add Curve Point Quickly", "source": "python", "icon_svg": "tools-kitchen-2.svg", "icon_color": "#36d6ff"}
+# ELK_META {"label": "Quick Curve Point Insert", "short_name": "CVAdd", "tooltip": "Ajoute rapidement des points sur une courbe NURBS sélectionnée.", "source": "python", "icon_svg": "point.svg", "icon_color": "#36d6ff"}
 import maya.cmds as cmds
 import re
 

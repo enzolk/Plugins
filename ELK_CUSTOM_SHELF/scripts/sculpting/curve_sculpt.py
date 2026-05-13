@@ -1,4 +1,4 @@
-# ELK_META {"label": "Curve Sculpt", "short_name": "", "tooltip": "Store selected vertices, then select a NURBS curve and move vertices to the closest points along the curve.", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Snap Vertices To Curve", "short_name": "VtxCrv", "tooltip": "Déplace automatiquement des vertices sélectionnés vers la courbe NURBS la plus proche.", "source": "python", "icon_svg": "route.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 

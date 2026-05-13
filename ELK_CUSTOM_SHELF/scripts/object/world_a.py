@@ -1,4 +1,4 @@
-# ELK_META {"label": "World_A", "short_name": "", "tooltip": "import maya.cmds as cmds\n \nctx = cmds.currentCtx()\n \nif ctx == '...", "source": "python", "icon_svg": "cube.svg", "icon_color": "#5ee06c"}
+# ELK_META {"label": "Toggle Move Mode", "short_name": "MoveMd", "tooltip": "Alterne rapidement différents modes de déplacement dans Maya.", "source": "python", "icon_svg": "arrows-move.svg", "icon_color": "#ff9f1a"}
 import maya.cmds as cmds
  
 ctx = cmds.currentCtx()

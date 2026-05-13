@@ -1,2 +1,2 @@
-// ELK_META {"label": "Sel Loop", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "click.svg", "icon_color": "#ff9f2e"}
+// ELK_META {"label": "Select Every N Edges", "short_name": "EveryN", "tooltip": "Sélectionne des edges selon un intervalle défini.", "source": "mel", "icon_svg": "list-numbers.svg", "icon_color": "#c678ff"}
 polySelectEdgesEveryN "edgeRing" 0;

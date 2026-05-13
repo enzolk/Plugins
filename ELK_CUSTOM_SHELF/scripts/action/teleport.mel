@@ -1,2 +1,2 @@
-// ELK_META {"label": "Teleport", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "click.svg", "icon_color": "#ff9f2e"}
+// ELK_META {"label": "Snap Together Tool", "short_name": "SnapTG", "tooltip": "Aligne et assemble rapidement deux objets ensemble.", "source": "mel", "icon_svg": "magnet.svg", "icon_color": "#c678ff"}
 SetSnapTogetherTool

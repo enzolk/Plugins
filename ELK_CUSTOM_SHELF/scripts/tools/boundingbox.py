@@ -1,4 +1,4 @@
-# ELK_META {"label": "BoundingBox", "short_name": "", "tooltip": "import maya.cmds as cmds\n\n# Define a function to fill the selection in Maya\ndef fillSelection():\n    # Get the current selection\n    sel = cmds.ls(selection=True)\n    \n    # If there is nothing selected, do nothing\n    if not sel:\n        return\n    \n    # Get the bounding box of the current selection\n    boundingBox = cmds.exactWorldBoundingBox(sel)\n    \n    # Create a cube with the same dimensions as the bounding box\n    cube = cmds.polyCube(w=boundingBox[3]-boundingBox[0], h=boundingBox[4]-bo", "source": "python", "icon_svg": "tools-kitchen-2.svg", "icon_color": "#36d6ff"}
+# ELK_META {"label": "Fill Selection Bounding Box", "short_name": "FillBB", "tooltip": "Crée automatiquement une bounding box polygonale autour de la sélection actuelle.", "source": "python", "icon_svg": "box.svg", "icon_color": "#36d6ff"}
 import maya.cmds as cmds
 
 # Define a function to fill the selection in Maya

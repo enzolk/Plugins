@@ -1,2 +1,2 @@
-// ELK_META {"label": "Transform", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
+// ELK_META {"label": "Transform Tool", "short_name": "Transf", "tooltip": "Outil utilitaire de transformation avancée pour ajustements rapides.", "source": "mel", "icon_svg": "transform.svg", "icon_color": "#ff5c8a"}
 performPolyMove "" 0

@@ -1,4 +1,4 @@
-# ELK_META {"label": "Sym Face", "short_name": "", "tooltip": "Search for not symmetrical faces", "source": "python", "icon_svg": "package-export.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Find Non Symmetrical Faces", "short_name": "SymChk", "tooltip": "Recherche les faces non symétriques dans un mesh.", "source": "python", "icon_svg": "mirror.svg", "icon_color": "#f2c94c"}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 

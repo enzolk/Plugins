@@ -1,4 +1,4 @@
-# ELK_META {"label": "SmartExporter", "short_name": "", "tooltip": "Smrt Exporter Tool", "source": "python", "icon_svg": "table-export.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Smart Exporter", "short_name": "SmrtEx", "tooltip": "Exporte automatiquement des assets avec cleanup et préparation pipeline.", "source": "python", "icon_svg": "upload.svg", "icon_color": "#f2c94c"}
 from pathlib import Path
 import maya.cmds as cmds
 import maya.mel as mel

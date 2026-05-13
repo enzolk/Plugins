@@ -1,2 +1,2 @@
-// ELK_META {"label": "Sweep", "short_name": "", "tooltip": "", "source": "mel", "icon_svg": "vector-spline.svg", "icon_color": "#ffd34d"}
+// ELK_META {"label": "Sweep Mesh Creator", "short_name": "SweepM", "tooltip": "Génère automatiquement un Sweep Mesh depuis une ou plusieurs courbes.", "source": "mel", "icon_svg": "wave-saw-tool.svg", "icon_color": "#55dd88"}
 performSweepMesh 0;

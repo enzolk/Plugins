@@ -1,4 +1,4 @@
-# ELK_META {"label": "Comp_A", "short_name": "", "tooltip": "import maya.cmds as cmds\n \nctx = cmds.currentCtx()\n \nif ctx == '...", "source": "python", "icon_svg": "cube.svg", "icon_color": "#5ee06c"}
+# ELK_META {"label": "Toggle Rotate Mode", "short_name": "RotMod", "tooltip": "Alterne rapidement différents modes de rotation et d’orientation.", "source": "python", "icon_svg": "rotate.svg", "icon_color": "#ff9f1a"}
 import maya.cmds as cmds
  
 ctx = cmds.currentCtx()

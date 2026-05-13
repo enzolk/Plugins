@@ -1,4 +1,4 @@
-# ELK_META {"label": "Freeze", "short_name": "", "tooltip": "Freeze selected components", "source": "python", "icon_svg": "temperature-snow.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Freeze Components", "short_name": "Freeze", "tooltip": "Fige les composants sélectionnés afin de verrouiller temporairement leur comportement.", "source": "python", "icon_svg": "lock.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as mc
 
 def freeze_selected_components():

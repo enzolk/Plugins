@@ -1,4 +1,4 @@
-# ELK_META {"label": "SphereCube", "short_name": "", "tooltip": "Create a sphere from a cube", "source": "python", "icon_svg": "circle-square.svg", "icon_color": "#36d6ff"}
+# ELK_META {"label": "Quad Sphere Creator", "short_name": "QSphere", "tooltip": "Génère automatiquement une sphère quad propre à partir d’un cube subdivisé.", "source": "python", "icon_svg": "sphere.svg", "icon_color": "#36d6ff"}
 import maya.cmds as cmds
 
 def create_quad_sphere_ui():

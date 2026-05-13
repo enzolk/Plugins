@@ -1,4 +1,4 @@
-# ELK_META {"label": "AutoConnect", "short_name": "", "tooltip": "import maya.cmds as cmds\n\nclass AutoConnectTool:\n    def __init__(self):\n        self.window_name = \"AutoConnectWindow\"\n        self.is_active = False  # Tracks if the toggle is ON\n        self.script_job = None  # Stores script job ID\n\n    def create_ui(self):\n        # Close existing window if already open\n        if cmds.window(self.window_name, exists=True):\n            cmds.deleteUI(self.window_name)\n\n        # Create new window\n        self.window = cmds.window(self.window_name, title=\"Aut", "source": "python", "icon_svg": "brush.svg", "icon_color": "#b277ff"}
+# ELK_META {"label": "Auto Connect Tool", "short_name": "AutoCn", "tooltip": "Connecte automatiquement des composants ou meshes selon leur proximité.", "source": "python", "icon_svg": "link.svg", "icon_color": "#ff5c8a"}
 import maya.cmds as cmds
 
 class AutoConnectTool:

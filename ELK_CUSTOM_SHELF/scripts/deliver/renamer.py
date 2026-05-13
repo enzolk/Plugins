@@ -1,4 +1,4 @@
-# ELK_META {"label": "Renamer", "short_name": "", "tooltip": "A renamer tool", "source": "python", "icon_svg": "text-color.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Renamer Tool", "short_name": "Rename", "tooltip": "Outil avancé de renommage d’objets.", "source": "python", "icon_svg": "edit.svg", "icon_color": "#f2c94c"}
 #
 # Copyright (C) by Adrian Sochacki, since 2019. All rights reserved.
 #

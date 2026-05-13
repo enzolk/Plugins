@@ -1,4 +1,4 @@
-# ELK_META {"label": "TrimAuto", "short_name": "", "tooltip": "Using A trimmed plane as a reference, it automaticly place the UV Shells inside Trimmed Area", "source": "python", "icon_svg": "package-export.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Fit UV To Trim", "short_name": "TrimUV", "tooltip": "Replace automatiquement les UVs dans une zone trim donnée.", "source": "python", "icon_svg": "crop.svg", "icon_color": "#f2c94c"}
 import maya.cmds as cmds
 import random
 

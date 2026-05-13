@@ -1,4 +1,4 @@
-# ELK_META {"label": "Share Face Select", "short_name": "", "tooltip": "Select faces that share the same space", "source": "python", "icon_svg": "lasso-polygon.svg", "icon_color": "#4bc8ff"}
+# ELK_META {"label": "Select Overlapping Faces", "short_name": "OverLP", "tooltip": "Sélectionne les faces partageant le même espace.", "source": "python", "icon_svg": "layers-subtract.svg", "icon_color": "#f2c94c"}
 import maya.cmds as cmds
 import math
 
