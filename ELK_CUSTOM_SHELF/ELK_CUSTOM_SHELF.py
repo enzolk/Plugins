@@ -2047,6 +2047,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def open_options_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("ELK Options")
+        self._apply_secondary_dialog_style(dlg)
         root = QtWidgets.QVBoxLayout(dlg)
 
         form = QtWidgets.QFormLayout()
@@ -2114,6 +2115,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         def _category_editor(initial_name="", initial_icon="", initial_color="#36d6ff"):
             cat_dlg = QtWidgets.QDialog(dlg)
             cat_dlg.setWindowTitle("Configurer la catégorie")
+            self._apply_secondary_dialog_style(cat_dlg)
             cat_form = QtWidgets.QFormLayout(cat_dlg)
             name_edit = QtWidgets.QLineEdit(initial_name)
             icon_name = QtWidgets.QLineEdit(normalize_icon_name(initial_icon))
@@ -2273,6 +2275,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def open_add_script_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Add ELK Script")
+        self._apply_secondary_dialog_style(dlg)
         lay = QtWidgets.QFormLayout(dlg)
         full_name = QtWidgets.QLineEdit()
         short_name = QtWidgets.QLineEdit()
@@ -2414,6 +2417,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         icons = icon_catalog()
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Choisir une icône SVG")
+        self._apply_secondary_dialog_style(dlg)
         lay = QtWidgets.QVBoxLayout(dlg)
         search = QtWidgets.QLineEdit()
         search.setPlaceholderText("Tapez pour rechercher une icône…")
@@ -2556,6 +2560,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         current_path = Path(item.get("file_path", ""))
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Modifier le script ELK")
+        self._apply_secondary_dialog_style(dlg)
         dlg.setMinimumSize(840, 620)
         dlg.resize(980, 700)
         dlg.setSizeGripEnabled(True)
@@ -2671,6 +2676,116 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         btns.accepted.connect(do_save)
         dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec()
+
+    def _apply_secondary_dialog_style(self, dialog):
+        dialog.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        dialog.setStyleSheet("""
+            QDialog {
+                background: #2a2a2a;
+                color: #f2f2f2;
+            }
+            QLabel {
+                color: #f0f0f0;
+                background: transparent;
+            }
+            QGroupBox {
+                border: 1px solid #505050;
+                border-radius: 10px;
+                margin-top: 14px;
+                padding-top: 10px;
+                background: #2a2a2a;
+                font-weight: 600;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 6px;
+                color: #dcdcdc;
+            }
+            QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QListWidget {
+                background: #373737;
+                color: #f2f2f2;
+                border: 1px solid #505050;
+                border-radius: 8px;
+                padding: 7px 10px;
+                selection-background-color: #505050;
+            }
+            QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+                border: none;
+                width: 18px;
+                background: transparent;
+            }
+            QAbstractItemView {
+                background: #373737;
+                color: #f0f0f0;
+                border: 1px solid #505050;
+                selection-background-color: #505050;
+                outline: none;
+            }
+            QPushButton, QToolButton {
+                background: #373737;
+                color: #f2f2f2;
+                border: 1px solid #505050;
+                border-radius: 8px;
+                padding: 8px 14px;
+            }
+            QPushButton:hover, QToolButton:hover {
+                background: #505050;
+            }
+            QPushButton:pressed, QToolButton:pressed {
+                background: #5e5e5e;
+            }
+            QDialogButtonBox QPushButton {
+                min-width: 96px;
+            }
+            QCheckBox, QRadioButton {
+                spacing: 8px;
+            }
+            QCheckBox::indicator, QRadioButton::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #505050;
+                border-radius: 8px;
+                background: #373737;
+            }
+            QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+                background: #505050;
+            }
+            QSlider::groove:horizontal {
+                border: none;
+                height: 4px;
+                border-radius: 2px;
+                background: #505050;
+            }
+            QSlider::handle:horizontal {
+                width: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+                background: #f4f4f4;
+            }
+            QScrollBar:vertical {
+                width: 8px;
+                background: transparent;
+                margin: 3px;
+            }
+            QScrollBar:horizontal {
+                height: 8px;
+                background: transparent;
+                margin: 3px;
+            }
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                background: #505050;
+                border-radius: 4px;
+                min-height: 20px;
+                min-width: 20px;
+            }
+            QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {
+                background: transparent;
+                border: none;
+                width: 0px;
+                height: 0px;
+            }
+        """)
 
     def on_search(self,t):
         text = t or ''
