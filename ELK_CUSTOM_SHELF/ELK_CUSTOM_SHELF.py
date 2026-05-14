@@ -139,7 +139,33 @@ def _force_workspace_widget_height(name, height):
     except Exception:
         pass
 
+
+def _get_real_shelf_height(default_height=ELK_TARGET_DOCK_HEIGHT):
+    shelf_widget = _workspace_widget("Shelf")
+    if not shelf_widget:
+        return default_height
+
+    candidates = []
+    for widget in shelf_widget.findChildren(QtWidgets.QWidget):
+        try:
+            height = widget.height()
+            width = widget.width()
+            if widget.isVisible() and width > 100 and 35 <= height <= 130:
+                candidates.append(height)
+        except Exception:
+            pass
+
+    if candidates:
+        return min(candidates)
+
+    return default_height
+
 def _unlock_workspace_widget_height(name):
+    try:
+        cmds.workspaceControl(name, e=True, heightProperty="free")
+    except Exception:
+        pass
+
     widget = _workspace_widget(name)
     if not widget:
         return
@@ -153,6 +179,8 @@ def _unlock_workspace_widget_height(name):
 def _apply_shelf_tab_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
     if not _workspace_exists(workspace_name) or not _workspace_exists("Shelf"):
         return
+
+    shelf_height = _get_real_shelf_height(target_height)
 
     try:
         cmds.workspaceControl(workspace_name, e=True, visible=False)
@@ -175,19 +203,25 @@ def _apply_shelf_tab_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
         pass
 
     try:
-        cmds.workspaceControl(workspace_name, e=True, resizeHeight=target_height)
+        cmds.workspaceControl(
+            workspace_name,
+            e=True,
+            resizeHeight=shelf_height,
+            heightProperty="fixed",
+        )
     except Exception:
         pass
 
-    _force_workspace_widget_height(workspace_name, target_height)
+    _force_workspace_widget_height(workspace_name, shelf_height)
 
 def _schedule_final_shelf_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
     if not _workspace_exists(workspace_name):
         return
 
     QtCore.QTimer.singleShot(0, lambda: _apply_shelf_tab_dock(workspace_name, target_height))
-    QtCore.QTimer.singleShot(200, lambda: _apply_shelf_tab_dock(workspace_name, target_height))
-    QtCore.QTimer.singleShot(500, lambda: _unlock_workspace_widget_height(workspace_name))
+    QtCore.QTimer.singleShot(150, lambda: _apply_shelf_tab_dock(workspace_name, target_height))
+    QtCore.QTimer.singleShot(400, lambda: _apply_shelf_tab_dock(workspace_name, target_height))
+    QtCore.QTimer.singleShot(800, lambda: _unlock_workspace_widget_height(workspace_name))
 
 
 def _maya_version_int():
