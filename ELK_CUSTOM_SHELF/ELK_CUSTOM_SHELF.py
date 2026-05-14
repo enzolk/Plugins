@@ -693,6 +693,7 @@ class ToolButton(QtWidgets.QFrame):
         self._press_pos = None
         self._drag_started = False
         self._overlay_label = None
+        self._icon_widget = None
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
 
         ui_scale = self.parent_ui.ui_scale_value if self.parent_ui else (lambda *_: 1.0)
@@ -705,6 +706,7 @@ class ToolButton(QtWidgets.QFrame):
             lay.setSpacing(0)
             icon_size = max(8, int(round((20 if tight else 24) * icon_scale)))
             icon = SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size)
+            self._icon_widget = icon
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
@@ -740,7 +742,9 @@ class ToolButton(QtWidgets.QFrame):
                 lay.setSpacing(8)
                 icon_size = max(8, int(round(18 * icon_scale)))
                 min_height = 34
-            lay.addWidget(SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size))
+            icon = SvgIconWidget(item.get("icon_svg", ""), item_color(item), icon_size) if item.get("icon_svg") else VectorIcon(item.get("label","tool"), item_color(item), icon_size)
+            self._icon_widget = icon
+            lay.addWidget(icon)
             lab=QtWidgets.QLabel(item.get("label","Tool"))
             lab.setObjectName("ToolLabel")
             lab.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
@@ -2554,7 +2558,11 @@ class ELKMinimalUI(QtWidgets.QWidget):
                                 overlap = True
                 except Exception:
                     overlap = False
-                print("{} right_buttons: options_rect={} search_rect={} add_rect={} available_height={} computed_button_size={} overlap={}".format(prefix, options_rect, search_rect, add_rect, avail_h, computed, overlap))
+                print("{} right_buttons:".format(prefix))
+                print("{}   options_btn rect={} icon_size={} is_square={}".format(prefix, options_rect, self.h_options_btn.iconSize().width() if hasattr(self, "h_options_btn") and self.h_options_btn else "n/a", bool(self.h_options_btn and self.h_options_btn.width() == self.h_options_btn.height())))
+                print("{}   search_btn rect={} icon_size={} is_square={}".format(prefix, search_rect, self.h_search_btn.iconSize().width() if hasattr(self, "h_search_btn") and self.h_search_btn else "n/a", bool(self.h_search_btn and self.h_search_btn.width() == self.h_search_btn.height())))
+                print("{}   add_btn rect={} icon_size={} is_square={}".format(prefix, add_rect, self.h_add_btn.iconSize().width() if hasattr(self, "h_add_btn") and self.h_add_btn else "n/a", bool(self.h_add_btn and self.h_add_btn.width() == self.h_add_btn.height())))
+                print("{}   computed_btn_size={} available_height={} overlap={}".format(prefix, computed, avail_h, overlap))
 
             for cat in self.categories():
                 body_scroll = getattr(cat, "body_scroll", None)
@@ -2590,6 +2598,41 @@ class ELKMinimalUI(QtWidgets.QWidget):
                     print("{} Category content exceeds viewport in Vertical mode: '{}'".format(warn, cat.name))
                 if cat.maximumHeight() < cat.minimumHeight() or (cat.maximumHeight() not in (0, 16777215) and cat.maximumHeight() <= 1):
                     print("{} Suspicious category height constraints on '{}': minH={} maxH={}".format(warn, cat.name, cat.minimumHeight(), cat.maximumHeight()))
+
+                if mode == "Horizontal":
+                    try:
+                        body_bounds = body_viewport.rect() if body_viewport else QtCore.QRect()
+                        body_buttons = []
+                        if body_content is not None:
+                            body_buttons = body_content.findChildren(ToolButton)
+                        for btn in body_buttons:
+                            icon_w = getattr(btn, "_icon_widget", None)
+                            text_w = getattr(btn, "_overlay_label", None)
+                            btn_rect = _elk_debug_rect(btn)
+                            icon_rect = _elk_debug_rect(icon_w)
+                            text_rect = _elk_debug_rect(text_w)
+                            icon_size = icon_w.width() if icon_w is not None else "n/a"
+                            font_px = text_w.fontInfo().pixelSize() if text_w is not None else "n/a"
+                            is_square = btn.width() == btn.height()
+                            overflow = False
+                            clipped = False
+                            overlap_btn = False
+                            if body_viewport is not None:
+                                br = btn.geometry()
+                                overflow = br.right() > body_bounds.right() or br.bottom() > body_bounds.bottom() or br.left() < body_bounds.left() or br.top() < body_bounds.top()
+                                clipped = not body_bounds.contains(br)
+                            for other in body_buttons:
+                                if other is btn:
+                                    continue
+                                if btn.geometry().intersects(other.geometry()):
+                                    overlap_btn = True
+                                    break
+                            computed_size = "{}x{}".format(btn.sizeHint().width(), btn.sizeHint().height())
+                            print("{} button='{}'".format(prefix, btn.item.get("label", "tool")))
+                            print("{}   btn_rect={} icon_rect={} text_rect={}".format(prefix, btn_rect, icon_rect, text_rect))
+                            print("{}   icon_size={} font_px={} computed_size={} is_square={} overflow={} clipped={} overlap={}".format(prefix, icon_size, font_px, computed_size, is_square, overflow, clipped, overlap_btn))
+                    except Exception as ex_btn:
+                        print("{} button layout log failed for cat '{}': {}".format(warn, cat.name, ex_btn))
             print("{} ===== end snapshot =====".format(prefix))
         except Exception as ex:
             print("{} layout log failed: {}".format(warn, ex))
