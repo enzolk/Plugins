@@ -1073,6 +1073,20 @@ class Category(QtWidgets.QFrame):
         is_tight = width < 540
 
         if horizontal:
+            side = max(18, int(self.parent_ui.horizontal_button_side()))
+            header_v = max(2, min(8, int(round(side * 0.14))))
+            header_h = max(5, min(10, int(round(side * 0.18))))
+            self.header.layout().setContentsMargins(header_h, header_v, header_h, header_v)
+            self.header.layout().setSpacing(max(4, int(round(side * 0.14))))
+            self.collapsed_header.layout().setContentsMargins(3, 3, 3, 3)
+            self.collapsed_header.layout().setSpacing(2)
+        else:
+            self.header.layout().setContentsMargins(10, 8, 10, 8)
+            self.header.layout().setSpacing(8)
+            self.collapsed_header.layout().setContentsMargins(5, 5, 5, 5)
+            self.collapsed_header.layout().setSpacing(3)
+
+        if horizontal:
             # Shelf mode: opened categories receive the available room.
             # Collapsed categories become a very narrow vertical tab.
             if not self.expanded:
@@ -1093,7 +1107,8 @@ class Category(QtWidgets.QFrame):
                 self.setMinimumWidth(cat_w)
                 self.setMaximumWidth(cat_w)
                 self.setMaximumHeight(16777215)
-                self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+                self.setMinimumHeight(0)
+                self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
             hpad = 6 if is_tight else 10
             bpad = 6 if is_tight else 10
             self.grid.setContentsMargins(hpad, 0, hpad, bpad)
@@ -1105,6 +1120,7 @@ class Category(QtWidgets.QFrame):
             self.body_scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
             self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            self.outer.setSpacing(2)
         else:
             self.body_scroll.setVisible(self.expanded)
             self.header.setVisible(True)
@@ -1128,6 +1144,7 @@ class Category(QtWidgets.QFrame):
             self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            self.outer.setSpacing(5)
 
         self.count_label.setVisible(not horizontal or self.expanded)
         self.title.setVisible(True)
@@ -1135,8 +1152,12 @@ class Category(QtWidgets.QFrame):
         if horizontal and not self.expanded:
             return
 
+        h_btn_side = self.parent_ui.horizontal_button_side() if horizontal else None
         for i,item in enumerate(self.items):
-            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag); self.grid.addWidget(btn,i//cols,i%cols)
+            btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag)
+            if horizontal:
+                btn.setFixedSize(h_btn_side, h_btn_side)
+            self.grid.addWidget(btn,i//cols,i%cols)
 
         if not horizontal and self.expanded:
             self._update_vertical_body_height()
@@ -1540,6 +1561,35 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def horizontal_options_space(self):
         return 40 if hasattr(self, "h_options_stack") and self.h_options_stack is not None else 0
 
+    def horizontal_button_side(self):
+        """Compute square button side for horizontal mode from real available height."""
+        if not self.is_horizontal_mode():
+            return 56
+        viewport_h = self.scroll.viewport().height() if hasattr(self, "scroll") and self.scroll is not None else self.height()
+        margins = self.content_lay.contentsMargins() if hasattr(self, "content_lay") and self.content_lay is not None else QtCore.QMargins(0, 0, 0, 0)
+        available_h = max(24, int(viewport_h - margins.top() - margins.bottom()))
+
+        sample_header_h = 0
+        if self.category_widgets:
+            sample_header_h = max(0, self.category_widgets[0].header.sizeHint().height())
+        else:
+            sample_header_h = int(round(34 * self.ui_scale_value("cat_text")))
+
+        spacing = 2
+        button_side = available_h - sample_header_h - spacing
+        return max(18, min(56, int(button_side)))
+
+    def apply_horizontal_control_button_sizes(self):
+        if not self.is_horizontal_mode():
+            return
+        side = max(14, min(56, self.horizontal_button_side()))
+        icon_side = max(10, min(18, side - 12))
+        for btn in (self.h_options_btn, self.h_search_btn, self.h_add_btn):
+            if btn is None:
+                continue
+            btn.setFixedSize(side, side)
+            btn.setIconSize(QtCore.QSize(icon_side, icon_side))
+
     def build(self):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.setStyleSheet("""
@@ -1660,6 +1710,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.options_btn.setVisible(False)
             self.add_btn.setVisible(False)
         else:
+            self.content.setMinimumHeight(0)
+            self.content.setMaximumHeight(16777215)
+            self.content.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
             self.content_lay.setDirection(QtWidgets.QBoxLayout.TopToBottom)
             self.content_lay.setAlignment(QtCore.Qt.AlignTop)
             self.scroll.setWidgetResizable(True)
@@ -1671,6 +1724,36 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.options_btn.setVisible(True)
             self.add_btn.setVisible(True)
         return True
+
+    def _sync_horizontal_height_constraints(self):
+        """Propagate real dock viewport height through horizontal shelf hierarchy."""
+        if not self.is_horizontal_mode() or self.scroll is None:
+            return
+        viewport_h = max(1, self.scroll.viewport().height())
+
+        # Keep the scroll content widget exactly on viewport height to prevent
+        # stale sizeHint/minHeight values from previous layouts.
+        self.content.setMinimumHeight(viewport_h)
+        self.content.setMaximumHeight(viewport_h)
+        self.content.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        # Push the same constraint to all category containers and their body scrolls.
+        for cat in self.category_widgets:
+            if not getattr(cat, 'expanded', True):
+                cat.setMinimumHeight(0)
+                cat.setMaximumHeight(viewport_h)
+                continue
+            header_h = cat.header.sizeHint().height() if cat.header and cat.header.isVisible() else 0
+            outer_m = cat.outer.contentsMargins() if cat.outer else QtCore.QMargins(0, 0, 0, 0)
+            outer_spacing = max(0, cat.outer.spacing()) if cat.outer else 0
+            body_h = max(1, viewport_h - header_h - outer_m.top() - outer_m.bottom() - outer_spacing)
+
+            cat.setMinimumHeight(viewport_h)
+            cat.setMaximumHeight(viewport_h)
+            cat.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+            cat.body_scroll.setMinimumHeight(body_h)
+            cat.body_scroll.setMaximumHeight(body_h)
+            cat.body_scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
     def _category_rows(self):
         meta = _sync_category_meta_from_fs()
@@ -2351,35 +2434,30 @@ class ELKMinimalUI(QtWidgets.QWidget):
         if self.is_horizontal_mode():
             self.content_lay.addStretch()
             self.h_options_stack = QtWidgets.QFrame()
+            self.h_options_stack.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
             v = QtWidgets.QVBoxLayout(self.h_options_stack)
             v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(6)
+            v.setSpacing(4)
             self.h_options_btn = QtWidgets.QToolButton()
             self.h_options_btn.setToolTip("Options")
-            self.h_options_btn.setFixedSize(32, 32)
             self.h_options_btn.clicked.connect(self.open_options_dialog)
             self.h_options_btn.setIcon(QtGui.QIcon(resolve_icon_path("settings.svg").as_posix()))
-            self.h_options_btn.setIconSize(QtCore.QSize(18, 18))
             self.h_options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_options_btn, 0, QtCore.Qt.AlignHCenter)
             self.h_search_btn = QtWidgets.QToolButton()
             self.h_search_btn.setToolTip("Search / Filter")
-            self.h_search_btn.setFixedSize(32, 32)
             self.h_search_btn.clicked.connect(self.toggle_horizontal_search)
             self.h_search_btn.setIcon(QtGui.QIcon(resolve_icon_path("search.svg").as_posix()))
-            self.h_search_btn.setIconSize(QtCore.QSize(18, 18))
             self.h_search_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_search_btn, 0, QtCore.Qt.AlignHCenter)
             self.h_add_btn = QtWidgets.QToolButton()
             self.h_add_btn.setToolTip("Add script")
-            self.h_add_btn.setFixedSize(32, 32)
             self.h_add_btn.clicked.connect(self.open_add_script_dialog)
             self.h_add_btn.setIcon(QtGui.QIcon(resolve_icon_path("new-section.svg").as_posix()))
-            self.h_add_btn.setIconSize(QtCore.QSize(18, 18))
             self.h_add_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_add_btn, 0, QtCore.Qt.AlignHCenter)
-            v.addStretch()
-            self.content_lay.addWidget(self.h_options_stack, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
+            self.apply_horizontal_control_button_sizes()
+            self.content_lay.addWidget(self.h_options_stack, 0, QtCore.Qt.AlignRight)
 
             if self.h_search_popup is None:
                 self.h_search_popup = QtWidgets.QFrame(self, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
@@ -2407,6 +2485,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.show_horizontal_search(False)
             self.content_lay.addStretch()
         self.reflow()
+        self.apply_horizontal_control_button_sizes()
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
 
@@ -2494,7 +2573,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         if self.is_horizontal_mode():
             self.compute_horizontal_widths()
             tight = self.height() <= 180 or self.width() <= 760
-            self.layout().setContentsMargins(4, 4, 4, 4) if tight else self.layout().setContentsMargins(10, 10, 10, 10)
+            self.layout().setContentsMargins(2, 2, 2, 2) if tight else self.layout().setContentsMargins(6, 6, 6, 6)
             self.layout().setSpacing(4 if tight else 8)
             self.content_lay.setSpacing(5 if tight else 8)
         else:
@@ -2503,6 +2582,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.content_lay.setSpacing(8)
         self.update_horizontal_search_geometry()
         for c in self.category_widgets: c.reflow()
+        self._sync_horizontal_height_constraints()
         self.log_layout_state("reflow")
 
 
