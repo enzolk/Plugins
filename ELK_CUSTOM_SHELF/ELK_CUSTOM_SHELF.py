@@ -112,9 +112,9 @@ MIN_SUPPORTED_MAYA_VERSION = 2022
 
 
 ELK_TARGET_DOCK_HEIGHT = 134
-DOCK_HEIGHT_RATIO_MIN = 10
-DOCK_HEIGHT_RATIO_MAX = 500
-DOCK_HEIGHT_RATIO_DEFAULT = 200
+DOCK_HEIGHT_RATIO_MIN = 80
+DOCK_HEIGHT_RATIO_MAX = 150
+DOCK_HEIGHT_RATIO_DEFAULT = 100
 
 
 def _clamp_dock_height_ratio(value):
@@ -124,11 +124,7 @@ def _clamp_dock_height_ratio(value):
 def _load_dock_initial_height_ratio_percent():
     if cmds.optionVar(exists=OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO):
         try:
-            raw_ratio = int(cmds.optionVar(q=OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO))
-            clamped_ratio = _clamp_dock_height_ratio(raw_ratio)
-            if clamped_ratio != raw_ratio:
-                cmds.optionVar(iv=(OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO, int(clamped_ratio)))
-            return clamped_ratio
+            return _clamp_dock_height_ratio(cmds.optionVar(q=OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO))
         except Exception:
             pass
     return DOCK_HEIGHT_RATIO_DEFAULT
@@ -205,16 +201,6 @@ def _widget_contains_shelf_control(widget):
     except Exception:
         return False
 
-
-def _is_workspace_shelf_docked(workspace_name):
-    workspace_widget = _workspace_widget(workspace_name)
-    if workspace_widget is None:
-        return False
-    for parent in _iter_parent_chain(workspace_widget):
-        if _widget_contains_shelf_control(parent):
-            return True
-    return False
-
 def _force_workspace_widget_height(name, height):
     widget = _workspace_widget(name)
     if not widget:
@@ -268,8 +254,7 @@ def _apply_shelf_tab_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
     if not _workspace_exists(workspace_name) or not _workspace_exists("Shelf"):
         return
 
-    measured_shelf_height = _get_real_shelf_height(target_height)
-    shelf_height = max(int(target_height), int(measured_shelf_height))
+    shelf_height = _get_real_shelf_height(target_height)
     ratio_pct = _load_dock_initial_height_ratio_percent()
     initial_height = max(1, int(round(float(shelf_height) * (float(ratio_pct) / 100.0))))
     workspace_height_before = _workspace_control_height(workspace_name)
@@ -336,23 +321,6 @@ def _apply_shelf_tab_dock(workspace_name, target_height=ELK_TARGET_DOCK_HEIGHT):
             workspace_height_before,
             workspace_height_after,
             qt_widget_height_after,
-        )
-    )
-    is_shelf_docked = _is_workspace_shelf_docked(workspace_name)
-    is_second_instance = workspace_name.startswith(SECOND_INSTANCE_WORKSPACE_PREFIX)
-    forced_horizontal = bool(is_shelf_docked)
-    print(
-        "[ELK DOCK MODE] workspace_name={} is_second_instance={} dock_area={} "
-        "is_shelf_docked={} reference_shelf_height={} computed_initial_height={} "
-        "forced_horizontal={} reason={}".format(
-            workspace_name,
-            is_second_instance,
-            "ShelfTab" if is_shelf_docked else "Undetermined",
-            is_shelf_docked,
-            shelf_height,
-            initial_height,
-            forced_horizontal,
-            "shelf_docked_workspace" if forced_horizontal else "standard_layout_rules",
         )
     )
 
@@ -1634,9 +1602,6 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def desired_layout_mode(self):
         w = max(1, self.width())
         h = max(1, self.height())
-        workspace_name = self.instance_name[:-3] if self.instance_name.endswith("_UI") else self.instance_name
-        if _is_workspace_shelf_docked(workspace_name):
-            return "horizontal"
         return "horizontal" if (w > h and h <= 250) else "vertical"
 
     def available_width(self):
@@ -2985,7 +2950,7 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
 
 def show_second_instance():
     workspace_name = _build_unique_workspace_name(SECOND_INSTANCE_WORKSPACE_PREFIX)
-    return show(close_existing_first=False, workspace_name=workspace_name, floating=False)
+    return show(close_existing_first=False, workspace_name=workspace_name, floating=True)
 
 try:
     ELK_UI_INSTANCE=show()
