@@ -1566,24 +1566,28 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return 40 if hasattr(self, "h_options_stack") and self.h_options_stack is not None else 0
 
     def horizontal_button_side(self):
-        """Compute square side for the 3 stacked right-side buttons in horizontal mode."""
+        """Compute square button side for horizontal mode from real available height."""
         if not self.is_horizontal_mode():
             return 56
         viewport_h = self.scroll.viewport().height() if hasattr(self, "scroll") and self.scroll is not None else self.height()
         margins = self.content_lay.contentsMargins() if hasattr(self, "content_lay") and self.content_lay is not None else QtCore.QMargins(0, 0, 0, 0)
         available_h = max(24, int(viewport_h - margins.top() - margins.bottom()))
 
-        btn_count = 3
-        stack_spacing = 4
-        spacing_total = stack_spacing * max(0, btn_count - 1)
-        max_side = (available_h - spacing_total) // btn_count
-        return max(14, min(56, int(max_side)))
+        sample_header_h = 0
+        if self.category_widgets:
+            sample_header_h = max(0, self.category_widgets[0].header.sizeHint().height())
+        else:
+            sample_header_h = int(round(34 * self.ui_scale_value("cat_text")))
+
+        spacing = 2
+        button_side = available_h - sample_header_h - spacing
+        return max(18, min(56, int(button_side)))
 
     def apply_horizontal_control_button_sizes(self):
         if not self.is_horizontal_mode():
             return
         side = max(14, min(56, self.horizontal_button_side()))
-        icon_side = max(8, min(18, int(round(side * 0.45))))
+        icon_side = max(10, min(18, side - 12))
         self._last_horizontal_control_size = side
         for btn in (self.h_options_btn, self.h_search_btn, self.h_add_btn):
             if btn is None:
