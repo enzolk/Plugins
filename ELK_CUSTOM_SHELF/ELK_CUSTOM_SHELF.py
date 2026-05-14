@@ -1054,8 +1054,6 @@ def _elk_scroll_policy_name(policy):
 
 
 class Category(QtWidgets.QFrame):
-    _RESIZE_GRAB_PX = 8
-
     def __init__(self,name,items,parent_ui,parent=None):
         super(Category,self).__init__(parent)
         self.name=name; self.items=items; self.parent_ui=parent_ui
@@ -1074,15 +1072,13 @@ class Category(QtWidgets.QFrame):
         self.build()
 
     def mousePressEvent(self, event):
-        resize_edge = self._resize_edge_at_pos(event.pos())
         if (
             self.parent_ui.is_horizontal_mode()
             and self.expanded
             and event.button() == QtCore.Qt.LeftButton
-            and resize_edge is not None
+            and event.pos().x() >= (self.width() - 8)
         ):
             self._resize_drag_active = True
-            self._resize_drag_edge = resize_edge
             self._resize_drag_start_global_x = event_global_pos(event).x()
             self._resize_drag_start_width = self.width()
             event.accept()
@@ -1095,16 +1091,11 @@ class Category(QtWidgets.QFrame):
             and self.expanded
             and not getattr(self, "_resize_drag_active", False)
         ):
-            self.setCursor(
-                QtCore.Qt.SizeHorCursor
-                if self._resize_edge_at_pos(event.pos()) is not None
-                else QtCore.Qt.ArrowCursor
-            )
+            edge_hover = event.pos().x() >= (self.width() - 8)
+            self.setCursor(QtCore.Qt.SizeHorCursor if edge_hover else QtCore.Qt.ArrowCursor)
         if getattr(self, "_resize_drag_active", False):
             delta = event_global_pos(event).x() - getattr(self, "_resize_drag_start_global_x", 0)
-            resize_edge = getattr(self, "_resize_drag_edge", "right")
-            new_w = self._resize_drag_start_width + delta if resize_edge == "right" else self._resize_drag_start_width - delta
-            new_w = max(110, new_w)
+            new_w = max(110, self._resize_drag_start_width + delta)
             self.parent_ui.set_user_horizontal_width(self.name, new_w)
             self.parent_ui.reflow()
             event.accept()
@@ -1114,26 +1105,10 @@ class Category(QtWidgets.QFrame):
     def mouseReleaseEvent(self, event):
         if getattr(self, "_resize_drag_active", False) and event.button() == QtCore.Qt.LeftButton:
             self._resize_drag_active = False
-            self._resize_drag_edge = None
             self.setCursor(QtCore.Qt.ArrowCursor)
             event.accept()
             return
         super(Category, self).mouseReleaseEvent(event)
-
-    def leaveEvent(self, event):
-        if not getattr(self, "_resize_drag_active", False):
-            self.setCursor(QtCore.Qt.ArrowCursor)
-        super(Category, self).leaveEvent(event)
-
-    def _resize_edge_at_pos(self, pos):
-        margin = self._RESIZE_GRAB_PX
-        x = pos.x()
-        w = max(1, self.width())
-        if x <= margin:
-            return "left"
-        if x >= (w - margin):
-            return "right"
-        return None
 
     def build(self):
         self.outer=QtWidgets.QVBoxLayout(self); self.outer.setContentsMargins(0,0,0,0); self.outer.setSpacing(5)
