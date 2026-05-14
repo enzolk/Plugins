@@ -708,8 +708,7 @@ class ToolButton(QtWidgets.QFrame):
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
-            side = self.parent_ui.horizontal_button_side(tight=tight) if self.parent_ui else (42 if tight else 48)
-            self.setFixedSize(side, side)
+            self.setFixedSize(48,42) if tight else self.setFixedSize(56,48)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QLabel{background:transparent;border:0px;}")
             short_name = (item.get("short_name") or "").strip()
             if short_name:
@@ -1538,23 +1537,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         self._horizontal_widths = widths
 
-    def horizontal_button_side(self, tight=False):
-        """Square tool/control size for horizontal shelf mode.
-
-        Adapts to available height so buttons never get cropped when the dock is short.
-        """
-        viewport_h = self.scroll.viewport().height() if hasattr(self, "scroll") and self.scroll is not None else self.height()
-        cat_h = max(0, int(viewport_h) - 24)
-        header_h = 34 if tight else 38
-        usable = max(14, cat_h - header_h)
-        default = 48 if tight else 56
-        return max(14, min(default, usable))
-
     def horizontal_options_space(self):
-        if not (hasattr(self, "h_options_stack") and self.h_options_stack is not None):
-            return 0
-        side = self.horizontal_button_side(tight=self.available_width() < 540)
-        return max(40, side + 12)
+        return 40 if hasattr(self, "h_options_stack") and self.h_options_stack is not None else 0
 
     def build(self):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -2372,28 +2356,26 @@ class ELKMinimalUI(QtWidgets.QWidget):
             v.setSpacing(6)
             self.h_options_btn = QtWidgets.QToolButton()
             self.h_options_btn.setToolTip("Options")
-            side = self.horizontal_button_side(tight=self.available_width() < 540)
-            self.h_options_btn.setFixedSize(side, side)
+            self.h_options_btn.setFixedSize(32, 32)
             self.h_options_btn.clicked.connect(self.open_options_dialog)
             self.h_options_btn.setIcon(QtGui.QIcon(resolve_icon_path("settings.svg").as_posix()))
-            icon_side = max(12, int(side * 0.56))
-            self.h_options_btn.setIconSize(QtCore.QSize(icon_side, icon_side))
+            self.h_options_btn.setIconSize(QtCore.QSize(18, 18))
             self.h_options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_options_btn, 0, QtCore.Qt.AlignHCenter)
             self.h_search_btn = QtWidgets.QToolButton()
             self.h_search_btn.setToolTip("Search / Filter")
-            self.h_search_btn.setFixedSize(side, side)
+            self.h_search_btn.setFixedSize(32, 32)
             self.h_search_btn.clicked.connect(self.toggle_horizontal_search)
             self.h_search_btn.setIcon(QtGui.QIcon(resolve_icon_path("search.svg").as_posix()))
-            self.h_search_btn.setIconSize(QtCore.QSize(icon_side, icon_side))
+            self.h_search_btn.setIconSize(QtCore.QSize(18, 18))
             self.h_search_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_search_btn, 0, QtCore.Qt.AlignHCenter)
             self.h_add_btn = QtWidgets.QToolButton()
             self.h_add_btn.setToolTip("Add script")
-            self.h_add_btn.setFixedSize(side, side)
+            self.h_add_btn.setFixedSize(32, 32)
             self.h_add_btn.clicked.connect(self.open_add_script_dialog)
             self.h_add_btn.setIcon(QtGui.QIcon(resolve_icon_path("new-section.svg").as_posix()))
-            self.h_add_btn.setIconSize(QtCore.QSize(icon_side, icon_side))
+            self.h_add_btn.setIconSize(QtCore.QSize(18, 18))
             self.h_add_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_add_btn, 0, QtCore.Qt.AlignHCenter)
             v.addStretch()
