@@ -112,9 +112,9 @@ MIN_SUPPORTED_MAYA_VERSION = 2022
 
 
 ELK_TARGET_DOCK_HEIGHT = 134
-DOCK_HEIGHT_RATIO_MIN = 80
-DOCK_HEIGHT_RATIO_MAX = 150
-DOCK_HEIGHT_RATIO_DEFAULT = 100
+DOCK_HEIGHT_RATIO_MIN = 10
+DOCK_HEIGHT_RATIO_MAX = 500
+DOCK_HEIGHT_RATIO_DEFAULT = 200
 
 
 def _clamp_dock_height_ratio(value):
@@ -124,7 +124,11 @@ def _clamp_dock_height_ratio(value):
 def _load_dock_initial_height_ratio_percent():
     if cmds.optionVar(exists=OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO):
         try:
-            return _clamp_dock_height_ratio(cmds.optionVar(q=OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO))
+            raw_ratio = int(cmds.optionVar(q=OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO))
+            clamped_ratio = _clamp_dock_height_ratio(raw_ratio)
+            if clamped_ratio != raw_ratio:
+                cmds.optionVar(iv=(OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO, int(clamped_ratio)))
+            return clamped_ratio
         except Exception:
             pass
     return DOCK_HEIGHT_RATIO_DEFAULT
@@ -2950,7 +2954,7 @@ def show(close_existing_first=True, workspace_name=WORKSPACE_NAME, floating=Fals
 
 def show_second_instance():
     workspace_name = _build_unique_workspace_name(SECOND_INSTANCE_WORKSPACE_PREFIX)
-    return show(close_existing_first=False, workspace_name=workspace_name, floating=True)
+    return show(close_existing_first=False, workspace_name=workspace_name, floating=False)
 
 try:
     ELK_UI_INSTANCE=show()
