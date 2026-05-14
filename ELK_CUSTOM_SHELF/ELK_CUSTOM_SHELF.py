@@ -867,6 +867,36 @@ class ToolButton(QtWidgets.QFrame):
             self.setMinimumHeight(min_height)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QFrame#ToolButton QLabel{background:transparent;}")
 
+    def apply_compact_side(self, side):
+        if not self.compact:
+            return
+        side = max(12, int(side))
+        self.setFixedSize(side, side)
+        pad = max(0, int(round(side * 0.05)))
+        lay = self.layout()
+        if lay is not None:
+            lay.setContentsMargins(pad, pad, pad, pad)
+            lay.setSpacing(0)
+
+        icon_side = max(8, int(round(side * (0.48 if self.tight else 0.52))))
+        if self._icon_widget is not None:
+            self._icon_widget.setFixedSize(icon_side, icon_side)
+
+        if self._overlay_label is not None:
+            short_scale = self.parent_ui.ui_scale_value("btn_short") if self.parent_ui else 1.0
+            short_px = max(6, int(round(min(10, side * 0.22) * short_scale)))
+            self._overlay_label.setStyleSheet(
+                "QLabel#ToolShortNameOverlay{"
+                "color:#ffffff;"
+                "font-weight:700;"
+                "font-size:%dpx;"
+                "padding:0px 1px;"
+                "background-color:rgba(0, 0, 0, 90);"
+                "border-radius:3px;"
+                "}" % short_px
+            )
+            self._overlay_label.adjustSize()
+
     def resizeEvent(self, event):
         super(ToolButton, self).resizeEvent(event)
         if self._overlay_label is not None:
@@ -1226,7 +1256,7 @@ class Category(QtWidgets.QFrame):
                 self.setMinimumHeight(0)
                 self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
             hpad = 6 if is_tight else 10
-            bpad = 6 if is_tight else 10
+            bpad = 2 if is_tight else 4
             self.grid.setContentsMargins(hpad, 0, hpad, bpad)
             self.grid.setSpacing(4 if is_tight else 6)
             cols = max(1, len(self.items))
@@ -1272,7 +1302,7 @@ class Category(QtWidgets.QFrame):
         for i,item in enumerate(self.items):
             btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag)
             if horizontal:
-                btn.setFixedSize(h_btn_side, h_btn_side)
+                btn.apply_compact_side(h_btn_side)
             self.grid.addWidget(btn,i//cols,i%cols)
 
         if not horizontal and self.expanded:
@@ -1281,6 +1311,34 @@ class Category(QtWidgets.QFrame):
         elif horizontal:
             self.body_scroll.setMinimumHeight(0)
             self.body_scroll.setMaximumHeight(16777215)
+            QtCore.QTimer.singleShot(0, self._fit_horizontal_body_to_viewport)
+
+    def _fit_horizontal_body_to_viewport(self):
+        if not self.parent_ui.is_horizontal_mode() or not self.expanded:
+            return
+        viewport = self.body_scroll.viewport()
+        if viewport is None:
+            return
+
+        vp_h = max(1, viewport.height())
+        margins = self.grid.contentsMargins()
+        spacing = max(0, self.grid.spacing())
+        rows = 1 if self.grid.count() > 0 else 0
+        safety = 2
+        avail_h = max(1, vp_h - margins.top() - margins.bottom() - (spacing * max(0, rows - 1)) - safety)
+        side = max(18, avail_h)
+
+        for btn in self.body.findChildren(ToolButton):
+            btn.apply_compact_side(side)
+
+        self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        vbar = self.body_scroll.verticalScrollBar()
+        if vbar is not None:
+            vbar.setValue(0)
+
+        self.body.adjustSize()
+        self.body.setMinimumHeight(min(self.body.sizeHint().height(), vp_h))
+        self.body.setMaximumHeight(vp_h)
 
     def layout_items(self):
         result=[]
@@ -2723,7 +2781,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                         body_bounds = body_viewport.rect() if body_viewport else QtCore.QRect()
                         body_buttons = []
                         if body_content is not None:
-                            body_buttons = body_content.findChildren(ToolButton)
+                            body_buttons = [b for b in body_content.findChildren(ToolButton) if b.isVisible() and b.parentWidget() is body_content]
                         for btn in body_buttons:
                             icon_w = getattr(btn, "_icon_widget", None)
                             text_w = getattr(btn, "_overlay_label", None)
