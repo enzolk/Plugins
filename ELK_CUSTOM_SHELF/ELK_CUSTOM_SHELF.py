@@ -708,7 +708,8 @@ class ToolButton(QtWidgets.QFrame):
             lay.addStretch(1)
             lay.addWidget(icon,0,QtCore.Qt.AlignCenter)
             lay.addStretch(1)
-            self.setFixedSize(48,42) if tight else self.setFixedSize(56,48)
+            side = self.parent_ui.horizontal_button_side(tight=tight) if self.parent_ui else (42 if tight else 48)
+            self.setFixedSize(side, side)
             self.setStyleSheet("QFrame#ToolButton{background:#444444;border:1px solid #565656;border-radius:7px;} QFrame#ToolButton:hover{background:#505050;border-color:#6a6a6a;} QLabel{background:transparent;border:0px;}")
             short_name = (item.get("short_name") or "").strip()
             if short_name:
@@ -1537,8 +1538,25 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         self._horizontal_widths = widths
 
+    def horizontal_button_side(self, tight=False):
+        """Square tool/control size for horizontal shelf mode.
+
+        Adapts to available height so buttons never get cropped when the dock is short.
+        """
+        viewport_h = self.scroll.viewport().height() if hasattr(self, "scroll") and self.scroll is not None else self.height()
+        live_h = self.height()
+        reference_h = min(max(1, int(viewport_h)), max(1, int(live_h)))
+        cat_h = max(0, reference_h - 10)
+        header_h = 34 if tight else 38
+        usable = max(14, cat_h - header_h)
+        default = 48 if tight else 56
+        return max(14, min(default, usable))
+
     def horizontal_options_space(self):
-        return 40 if hasattr(self, "h_options_stack") and self.h_options_stack is not None else 0
+        if not (hasattr(self, "h_options_stack") and self.h_options_stack is not None):
+            return 0
+        side = self.horizontal_button_side(tight=self.available_width() < 540)
+        return max(40, side + 12)
 
     def build(self):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -1561,14 +1579,17 @@ class ELKMinimalUI(QtWidgets.QWidget):
         QtWidgets.QToolTip.setFont(QtGui.QFont("Segoe UI", 9))
 
         main=QtWidgets.QVBoxLayout(self); main.setContentsMargins(10,10,10,10); main.setSpacing(8)
-        top=QtWidgets.QHBoxLayout(); top.setSpacing(8)
-        self.title_label=QtWidgets.QLabel("ELK UI"); self.title_label.setStyleSheet("color:#ffad3b;font-size:15px;font-weight:900;"); top.addWidget(self.title_label)
-        self.search_box=QtWidgets.QLineEdit(); self.search_box.setPlaceholderText("Search tools..."); self.search_box.textChanged.connect(self.on_search); top.addWidget(self.search_box,1)
-        self.view_btn=QtWidgets.QPushButton("Grid"); self.view_btn.clicked.connect(self.toggle_view); top.addWidget(self.view_btn)
-        self.add_btn=QtWidgets.QToolButton(); self.add_btn.setToolTip("Add script"); self.add_btn.clicked.connect(self.open_add_script_dialog); self.add_btn.setFixedSize(32,32); self.add_btn.setIcon(QtGui.QIcon(resolve_icon_path("new-section.svg").as_posix())); self.add_btn.setIconSize(QtCore.QSize(18, 18)); self.add_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}"); top.addWidget(self.add_btn)
+        self.top_bar = QtWidgets.QWidget()
+        self.top_bar_lay = QtWidgets.QHBoxLayout(self.top_bar)
+        self.top_bar_lay.setContentsMargins(0, 0, 0, 0)
+        self.top_bar_lay.setSpacing(8)
+        self.title_label=QtWidgets.QLabel("ELK UI"); self.title_label.setStyleSheet("color:#ffad3b;font-size:15px;font-weight:900;"); self.top_bar_lay.addWidget(self.title_label)
+        self.search_box=QtWidgets.QLineEdit(); self.search_box.setPlaceholderText("Search tools..."); self.search_box.textChanged.connect(self.on_search); self.top_bar_lay.addWidget(self.search_box,1)
+        self.view_btn=QtWidgets.QPushButton("Grid"); self.view_btn.clicked.connect(self.toggle_view); self.top_bar_lay.addWidget(self.view_btn)
+        self.add_btn=QtWidgets.QToolButton(); self.add_btn.setToolTip("Add script"); self.add_btn.clicked.connect(self.open_add_script_dialog); self.add_btn.setFixedSize(32,32); self.add_btn.setIcon(QtGui.QIcon(resolve_icon_path("new-section.svg").as_posix())); self.add_btn.setIconSize(QtCore.QSize(18, 18)); self.add_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}"); self.top_bar_lay.addWidget(self.add_btn)
         self.options_btn=QtWidgets.QToolButton(); self.options_btn.setToolTip("Options"); self.options_btn.clicked.connect(self.open_options_dialog); self.options_btn.setFixedSize(32,32); self.options_btn.setIcon(QtGui.QIcon(resolve_icon_path("settings.svg").as_posix())); self.options_btn.setIconSize(QtCore.QSize(18, 18)); self.options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
-        top.addWidget(self.options_btn)
-        main.addLayout(top)
+        self.top_bar_lay.addWidget(self.options_btn)
+        main.addWidget(self.top_bar)
 
         self.scroll=QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setMinimumHeight(0)
         self.scroll.setStyleSheet("QScrollArea{background:%s;border:none;} QScrollBar:vertical{background:#2a2a2a;width:10px;margin:0;} QScrollBar::handle:vertical{background:#565656;border-radius:5px;min-height:28px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;} QScrollBar:horizontal{background:#2a2a2a;height:10px;margin:0;} QScrollBar::handle:horizontal{background:#565656;border-radius:5px;min-width:28px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}"%BG)
@@ -1659,6 +1680,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.view_btn.setVisible(False)
             self.options_btn.setVisible(False)
             self.add_btn.setVisible(False)
+            if hasattr(self, "top_bar") and self.top_bar is not None:
+                self.top_bar.setVisible(False)
+                self.top_bar.setMaximumHeight(0)
+                self.top_bar.setMinimumHeight(0)
         else:
             self.content_lay.setDirection(QtWidgets.QBoxLayout.TopToBottom)
             self.content_lay.setAlignment(QtCore.Qt.AlignTop)
@@ -1670,6 +1695,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.view_btn.setVisible(True)
             self.options_btn.setVisible(True)
             self.add_btn.setVisible(True)
+            if hasattr(self, "top_bar") and self.top_bar is not None:
+                self.top_bar.setVisible(True)
+                self.top_bar.setMinimumHeight(0)
+                self.top_bar.setMaximumHeight(16777215)
         return True
 
     def _category_rows(self):
@@ -2356,26 +2385,28 @@ class ELKMinimalUI(QtWidgets.QWidget):
             v.setSpacing(6)
             self.h_options_btn = QtWidgets.QToolButton()
             self.h_options_btn.setToolTip("Options")
-            self.h_options_btn.setFixedSize(32, 32)
+            side = self.horizontal_button_side(tight=self.available_width() < 540)
+            self.h_options_btn.setFixedSize(side, side)
             self.h_options_btn.clicked.connect(self.open_options_dialog)
             self.h_options_btn.setIcon(QtGui.QIcon(resolve_icon_path("settings.svg").as_posix()))
-            self.h_options_btn.setIconSize(QtCore.QSize(18, 18))
+            icon_side = max(12, int(side * 0.56))
+            self.h_options_btn.setIconSize(QtCore.QSize(icon_side, icon_side))
             self.h_options_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_options_btn, 0, QtCore.Qt.AlignHCenter)
             self.h_search_btn = QtWidgets.QToolButton()
             self.h_search_btn.setToolTip("Search / Filter")
-            self.h_search_btn.setFixedSize(32, 32)
+            self.h_search_btn.setFixedSize(side, side)
             self.h_search_btn.clicked.connect(self.toggle_horizontal_search)
             self.h_search_btn.setIcon(QtGui.QIcon(resolve_icon_path("search.svg").as_posix()))
-            self.h_search_btn.setIconSize(QtCore.QSize(18, 18))
+            self.h_search_btn.setIconSize(QtCore.QSize(icon_side, icon_side))
             self.h_search_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_search_btn, 0, QtCore.Qt.AlignHCenter)
             self.h_add_btn = QtWidgets.QToolButton()
             self.h_add_btn.setToolTip("Add script")
-            self.h_add_btn.setFixedSize(32, 32)
+            self.h_add_btn.setFixedSize(side, side)
             self.h_add_btn.clicked.connect(self.open_add_script_dialog)
             self.h_add_btn.setIcon(QtGui.QIcon(resolve_icon_path("new-section.svg").as_posix()))
-            self.h_add_btn.setIconSize(QtCore.QSize(18, 18))
+            self.h_add_btn.setIconSize(QtCore.QSize(icon_side, icon_side))
             self.h_add_btn.setStyleSheet("QToolButton{background:#444444;color:#f0f0f0;border:1px solid #565656;border-radius:7px;} QToolButton:hover{background:#505050;}")
             v.addWidget(self.h_add_btn, 0, QtCore.Qt.AlignHCenter)
             v.addStretch()
