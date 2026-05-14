@@ -2044,49 +2044,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.shelf_items = load_shelf_items()
         self.refresh()
 
-    def _secondary_ui_stylesheet(self):
-        return """
-QDialog{background:#2a2a2a;color:#f0f0f0;}
-QLabel{color:#f0f0f0;background:transparent;}
-QGroupBox{background:#373737;border:1px solid #505050;border-radius:9px;margin-top:14px;padding:10px 12px 12px 12px;font-weight:700;}
-QGroupBox::title{subcontrol-origin:margin;left:10px;padding:0 6px;color:#ffad3b;}
-QLineEdit,QPlainTextEdit,QTextEdit,QSpinBox,QComboBox,QListWidget{
-    background:#373737;color:#f0f0f0;border:1px solid #505050;border-radius:7px;
-    selection-background-color:#ffad3b;selection-color:#1d1d1d;
-}
-QLineEdit,QSpinBox,QComboBox{min-height:30px;padding:4px 8px;}
-QPlainTextEdit,QTextEdit{padding:8px;}
-QLineEdit:focus,QPlainTextEdit:focus,QTextEdit:focus,QSpinBox:focus,QComboBox:focus,QListWidget:focus{border:1px solid #ffad3b;}
-QLineEdit:hover,QPlainTextEdit:hover,QTextEdit:hover,QSpinBox:hover,QComboBox:hover,QListWidget:hover{border:1px solid #6a6a6a;}
-QPushButton{background:#373737;color:#f0f0f0;border:1px solid #505050;border-radius:7px;padding:8px 14px;min-height:30px;}
-QPushButton:hover{background:#505050;border:1px solid #666666;}
-QPushButton:pressed{background:#313131;}
-QDialogButtonBox QPushButton{min-width:104px;}
-QDialogButtonBox QPushButton[text=\"OK\"],QDialogButtonBox QPushButton[text=\"Save\"]{background:#ffad3b;color:#1b1b1b;border:1px solid #ffad3b;font-weight:700;}
-QDialogButtonBox QPushButton[text=\"OK\"]:hover,QDialogButtonBox QPushButton[text=\"Save\"]:hover{background:#ffbf5e;}
-QListWidget::item{padding:7px 8px;border-radius:6px;}
-QListWidget::item:selected{background:#505050;color:#ffffff;}
-QScrollBar:vertical{background:#2a2a2a;width:8px;margin:2px;}
-QScrollBar::handle:vertical{background:#505050;border-radius:4px;min-height:24px;}
-QScrollBar:horizontal{background:#2a2a2a;height:8px;margin:2px;}
-QScrollBar::handle:horizontal{background:#505050;border-radius:4px;min-width:24px;}
-QScrollBar::add-line,QScrollBar::sub-line{width:0;height:0;}
-QCheckBox{spacing:8px;}
-QCheckBox::indicator{width:16px;height:16px;border-radius:8px;border:1px solid #505050;background:#373737;}
-QCheckBox::indicator:checked{background:#ffad3b;border:1px solid #ffad3b;}
-"""
-
-    def _style_secondary_dialog(self, dlg):
-        dlg.setStyleSheet(self._secondary_ui_stylesheet())
-
     def open_options_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("ELK Options")
-        dlg.resize(760, 760)
-        self._style_secondary_dialog(dlg)
         root = QtWidgets.QVBoxLayout(dlg)
-        root.setContentsMargins(14, 14, 14, 14)
-        root.setSpacing(12)
 
         form = QtWidgets.QFormLayout()
         spin = QtWidgets.QSpinBox(); spin.setRange(0, 4000); spin.setSuffix(" px"); spin.setSpecialValueText("No limit"); spin.setValue(self.max_height_px)
@@ -2153,7 +2114,6 @@ QCheckBox::indicator:checked{background:#ffad3b;border:1px solid #ffad3b;}
         def _category_editor(initial_name="", initial_icon="", initial_color="#36d6ff"):
             cat_dlg = QtWidgets.QDialog(dlg)
             cat_dlg.setWindowTitle("Configurer la catégorie")
-            self._style_secondary_dialog(cat_dlg)
             cat_form = QtWidgets.QFormLayout(cat_dlg)
             name_edit = QtWidgets.QLineEdit(initial_name)
             icon_name = QtWidgets.QLineEdit(normalize_icon_name(initial_icon))
@@ -2313,11 +2273,7 @@ QCheckBox::indicator:checked{background:#ffad3b;border:1px solid #ffad3b;}
     def open_add_script_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Add ELK Script")
-        dlg.setMinimumSize(840, 620)
-        self._style_secondary_dialog(dlg)
         lay = QtWidgets.QFormLayout(dlg)
-        lay.setContentsMargins(14, 14, 14, 14)
-        lay.setSpacing(10)
         full_name = QtWidgets.QLineEdit()
         short_name = QtWidgets.QLineEdit()
         category = QtWidgets.QComboBox()
@@ -2458,8 +2414,6 @@ QCheckBox::indicator:checked{background:#ffad3b;border:1px solid #ffad3b;}
         icons = icon_catalog()
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Choisir une icône SVG")
-        dlg.resize(560, 620)
-        self._style_secondary_dialog(dlg)
         lay = QtWidgets.QVBoxLayout(dlg)
         search = QtWidgets.QLineEdit()
         search.setPlaceholderText("Tapez pour rechercher une icône…")
@@ -2547,7 +2501,7 @@ QCheckBox::indicator:checked{background:#ffad3b;border:1px solid #ffad3b;}
 
     def open_script_context_menu(self, item, global_pos):
         menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet("QMenu{background:#2a2a2a;color:#f0f0f0;border:1px solid #505050;border-radius:7px;padding:6px;} QMenu::item{padding:8px 18px;border-radius:6px;} QMenu::item:selected{background:#505050;} QMenu::separator{height:1px;background:#505050;margin:4px 10px;}")
+        menu.setStyleSheet("QMenu{background:#373737;color:#f0f0f0;border:1px solid #565656;} QMenu::item{padding:6px 16px;} QMenu::item:selected{background:#505050;}")
         edit_action = menu.addAction("Modifier")
         delete_action = menu.addAction("Supprimer")
         chosen = menu.exec_(global_pos) if hasattr(menu, "exec_") else menu.exec(global_pos)
@@ -2605,10 +2559,7 @@ QCheckBox::indicator:checked{background:#ffad3b;border:1px solid #ffad3b;}
         dlg.setMinimumSize(840, 620)
         dlg.resize(980, 700)
         dlg.setSizeGripEnabled(True)
-        self._style_secondary_dialog(dlg)
         root = QtWidgets.QVBoxLayout(dlg)
-        root.setContentsMargins(14, 14, 14, 14)
-        root.setSpacing(10)
 
         err = QtWidgets.QLabel("")
         err.setWordWrap(True)
