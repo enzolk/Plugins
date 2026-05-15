@@ -1549,10 +1549,54 @@ class Category(QtWidgets.QFrame):
         self.arrow.setText("⌄" if self.expanded else "›")
         if hasattr(self, "collapsed_arrow"):
             self.collapsed_arrow.setText("⌄" if not self.expanded else "›")
+        if not self.expanded and not self.parent_ui.is_horizontal_mode():
+            self._apply_vertical_collapsed_geometry()
         QtCore.QTimer.singleShot(0, self.parent_ui.reflow)
 
+    def _vertical_collapsed_height(self):
+        """Return the real compact height for a collapsed category in vertical mode."""
+        try:
+            self.header.adjustSize()
+            header_h = self.header.sizeHint().height()
+        except Exception:
+            header_h = 42
+        try:
+            margins = self.outer.contentsMargins()
+            margin_h = margins.top() + margins.bottom()
+        except Exception:
+            margin_h = 0
+        # Keep a tiny safety padding for the frame border, but do not keep the old opened body height.
+        return max(1, int(header_h + margin_h + 2))
+
+    def _apply_vertical_collapsed_geometry(self):
+        """Force a closed category to use only its header height in vertical mode."""
+        if self.parent_ui.is_horizontal_mode() or self.expanded:
+            return
+
+        self.header.setVisible(True)
+        self.collapsed_header.setVisible(False)
+        self.body_scroll.setVisible(False)
+
+        # This is the important part: remove every height constraint inherited from
+        # the previously opened state. A hidden QScrollArea can still keep its old
+        # fixed/minimum height in the parent layout if we do not reset it explicitly.
+        self.body_scroll.setMinimumHeight(0)
+        self.body_scroll.setMaximumHeight(0)
+        self.body_scroll.setFixedHeight(0)
+        self.body_scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        collapsed_h = self._vertical_collapsed_height()
+        self.setMinimumHeight(collapsed_h)
+        self.setMaximumHeight(collapsed_h)
+        self.setFixedHeight(collapsed_h)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.updateGeometry()
+
     def _update_vertical_body_height(self):
-        if self.parent_ui.is_horizontal_mode() or not self.expanded:
+        if self.parent_ui.is_horizontal_mode():
+            return
+        if not self.expanded:
+            self._apply_vertical_collapsed_geometry()
             return
         self.grid.activate()
         body_layout = self.body.layout()
@@ -1660,16 +1704,10 @@ class Category(QtWidgets.QFrame):
             self.left_resize_handle.raise_()
             self.right_resize_handle.raise_()
         else:
-            self.body_scroll.setVisible(self.expanded)
             self.header.setVisible(True)
             self.collapsed_header.setVisible(False)
             self.setMinimumWidth(0)
             self.setMaximumWidth(16777215)
-            if self._last_valid_vertical_category_height is not None:
-                self.setMinimumHeight(self._last_valid_vertical_category_height)
-            else:
-                self.setMinimumHeight(0)
-            self.setMaximumHeight(16777215)
             self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             hpad = 6 if width < 500 else 10
             bpad = 6 if width < 500 else 10
@@ -1677,8 +1715,6 @@ class Category(QtWidgets.QFrame):
             self.grid.setSpacing(5 if width < 500 else 7)
             cols=1 if self.parent_ui.view_mode=="list" or width<430 else max(2,min(6,int(width/205)))
             self.grid.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
-            self.body_scroll.setMinimumHeight(0)
-            self.body_scroll.setMaximumHeight(16777215)
             self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self.body_scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -1686,10 +1722,19 @@ class Category(QtWidgets.QFrame):
             self.left_resize_handle.setVisible(False)
             self.right_resize_handle.setVisible(False)
 
+            if not self.expanded:
+                self._apply_vertical_collapsed_geometry()
+            else:
+                self.body_scroll.setVisible(True)
+                self.body_scroll.setMinimumHeight(0)
+                self.body_scroll.setMaximumHeight(16777215)
+                self.setMinimumHeight(0)
+                self.setMaximumHeight(16777215)
+
         self.count_label.setVisible(not horizontal or self.expanded)
         self.title.setVisible(True)
 
-        if horizontal and not self.expanded:
+        if not self.expanded:
             return
 
         h_btn_side = self.parent_ui.horizontal_category_button_side() if horizontal else None
