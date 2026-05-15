@@ -502,6 +502,7 @@ def _script_payload(item):
         "source": item.get("source", "python"),
         "icon_svg": item.get("icon_svg", ""),
         "icon_color": item.get("icon_color", ""),
+        "apply_elk_ui_style": bool(item.get("apply_elk_ui_style", False)),
     }
     return "# ELK_META " + json.dumps(meta, ensure_ascii=False) + "\n" + (item.get("command", "") or "")
 
@@ -518,7 +519,7 @@ def _read_script_file(path, category):
             meta = {}
         command = "\n".join(lines[1:])
     source = meta.get("source") or ('mel' if path.suffix.lower() == '.mel' else 'python')
-    return {"category": category, "label": meta.get("label") or path.stem, "short_name": meta.get("short_name", ""), "tooltip": meta.get("tooltip", ""), "source": source, "command": command, "icon_svg": normalize_icon_name(meta.get("icon_svg", "")), "icon_color": meta.get("icon_color", ""), "file_path": str(path)}
+    return {"category": category, "label": meta.get("label") or path.stem, "short_name": meta.get("short_name", ""), "tooltip": meta.get("tooltip", ""), "source": source, "command": command, "icon_svg": normalize_icon_name(meta.get("icon_svg", "")), "icon_color": meta.get("icon_color", ""), "apply_elk_ui_style": bool(meta.get("apply_elk_ui_style", False)), "file_path": str(path)}
 
 def bootstrap_scripts_from_legacy():
     if SCRIPTS_ROOT.exists() and any(SCRIPTS_ROOT.rglob('*.*')):
@@ -619,16 +620,169 @@ def save_item_to_disk(item):
             "source": "mel",
             "icon_svg": item.get("icon_svg", ""),
             "icon_color": item.get("icon_color", ""),
+            "apply_elk_ui_style": bool(item.get("apply_elk_ui_style", False)),
         }
         payload = "// ELK_META " + json.dumps(meta, ensure_ascii=False) + "\n" + payload
     out.write_text(payload, encoding='utf-8')
     return str(out)
 BG="#2a2a2a"; PANEL="#373737"; BUTTON_BG="#444444"; BUTTON_HOVER="#505050"; BORDER="#565656"; TEXT="#f0f0f0"; MUTED="#b7b7b7"
 
+ELK_LAUNCHED_SCRIPT_STYLE = """
+QWidget {
+    background: #2a2a2a;
+    color: #f0f0f0;
+}
+QDialog, QMainWindow, QWidget[windowType="topLevel"] {
+    background: #2a2a2a;
+}
+QLabel {
+    color: #f0f0f0;
+    background: transparent;
+}
+QGroupBox, QFrame {
+    border-color: #505050;
+}
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QListWidget, QTreeWidget, QTableWidget {
+    background: #373737;
+    color: #f2f2f2;
+    border: 1px solid #505050;
+    border-radius: 7px;
+    padding: 5px 8px;
+    selection-background-color: #505050;
+}
+QPushButton, QToolButton {
+    background: #373737;
+    color: #f2f2f2;
+    border: 1px solid #505050;
+    border-radius: 7px;
+    padding: 5px 10px;
+}
+QPushButton:hover, QToolButton:hover {
+    background: #505050;
+}
+QPushButton:pressed, QToolButton:pressed {
+    background: #5e5e5e;
+}
+QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+    border: none;
+    width: 22px;
+    background: transparent;
+}
+QSlider::groove:horizontal {
+    border: none;
+    height: 3px;
+    border-radius: 1px;
+    background: #505050;
+}
+QSlider::sub-page:horizontal {
+    border: none;
+    height: 3px;
+    border-radius: 1px;
+    background: #ff9f2e;
+}
+QSlider::add-page:horizontal {
+    border: none;
+    height: 3px;
+    border-radius: 1px;
+    background: #505050;
+}
+QSlider::handle:horizontal {
+    width: 14px;
+    height: 14px;
+    margin: -6px 0;
+    border-radius: 7px;
+    background: #f6f6f6;
+    border: 2px solid #ff9f2e;
+}
+QScrollBar:vertical {
+    width: 8px;
+    background: transparent;
+    margin: 3px;
+}
+QScrollBar:horizontal {
+    height: 8px;
+    background: transparent;
+    margin: 3px;
+}
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #505050;
+    border-radius: 4px;
+    min-height: 20px;
+    min-width: 20px;
+}
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+    border: none;
+    width: 0px;
+    height: 0px;
+}
+"""
+
+def _top_level_widget_ids():
+    return {id(w) for w in QtWidgets.QApplication.topLevelWidgets() if w is not None}
+
+def _maya_window_names():
+    try:
+        return set(cmds.lsUI(windows=True) or [])
+    except Exception:
+        return set()
+
+def _make_widget_responsive(widget):
+    if widget is None:
+        return
+    try:
+        widget.setMinimumSize(0, 0)
+        widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+    except Exception:
+        pass
+    for child in widget.findChildren(QtWidgets.QWidget):
+        try:
+            child.setMinimumSize(0, 0)
+            if isinstance(child, (QtWidgets.QLineEdit, QtWidgets.QComboBox, QtWidgets.QPushButton, QtWidgets.QToolButton)):
+                child.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+            elif isinstance(child, (QtWidgets.QPlainTextEdit, QtWidgets.QTextEdit, QtWidgets.QListWidget, QtWidgets.QTreeWidget, QtWidgets.QTableWidget, QtWidgets.QScrollArea)):
+                child.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        except Exception:
+            continue
+
+def _apply_elk_style_to_widget(widget):
+    if widget is None:
+        return
+    try:
+        widget.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        widget.setStyleSheet(ELK_LAUNCHED_SCRIPT_STYLE)
+        widget.setProperty("elkStyledLaunch", True)
+        _make_widget_responsive(widget)
+    except Exception:
+        pass
+
+def _apply_elk_style_to_maya_window(window_name):
+    try:
+        ptr = omui.MQtUtil.findWindow(window_name)
+        if ptr:
+            _apply_elk_style_to_widget(wrapInstance(int(ptr), QtWidgets.QWidget))
+    except Exception:
+        pass
+
+def _style_launched_script_windows(before_widget_ids, before_maya_windows):
+    before_widget_ids = set(before_widget_ids or [])
+    before_maya_windows = set(before_maya_windows or [])
+    for window_name in _maya_window_names() - before_maya_windows:
+        _apply_elk_style_to_maya_window(window_name)
+    for widget in QtWidgets.QApplication.topLevelWidgets():
+        try:
+            if id(widget) not in before_widget_ids and not widget.property("elkStyledLaunch"):
+                _apply_elk_style_to_widget(widget)
+        except Exception:
+            continue
+
 def run_item(item):
     cmd=item.get("command","") or ""
     if not cmd.strip():
         cmds.warning("[ELK UI] Empty command: {}".format(item.get("label","Tool"))); return
+    use_elk_style = bool(item.get("apply_elk_ui_style", False))
+    before_widget_ids = _top_level_widget_ids() if use_elk_style else set()
+    before_maya_windows = _maya_window_names() if use_elk_style else set()
     try:
         if (item.get("source") or "mel").lower()=="python":
             glb={"cmds":cmds,"mel":mel,"maya":__import__("maya")}; exec(cmd, glb, glb)
@@ -636,6 +790,10 @@ def run_item(item):
             mel.eval(cmd)
     except Exception as e:
         cmds.warning("[ELK UI] Error in {}: {}".format(item.get("label","Tool"), e)); traceback.print_exc()
+    finally:
+        if use_elk_style:
+            for delay in (0, 80, 250):
+                QtCore.QTimer.singleShot(delay, lambda bw=before_widget_ids, bm=before_maya_windows: _style_launched_script_windows(bw, bm))
 
 ICON_COLORS = [
     "#36d6ff", "#67e86a", "#ffad3b", "#a56bff", "#ffd43b", "#ff5d3b",
@@ -790,6 +948,155 @@ class SvgIconWidget(QtWidgets.QWidget):
         painter.drawPixmap(0, 0, pm)
         painter.end()
 
+
+class ElkNumericSliderControl(QtWidgets.QWidget):
+    valueChanged = QtCore.Signal(int)
+
+    def __init__(self, minimum=0, maximum=100, value=0, suffix="", special_value_text="", parent=None):
+        super(ElkNumericSliderControl, self).__init__(parent)
+        self._suffix = suffix or ""
+        self._special_value_text = special_value_text or ""
+        self._syncing = False
+
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.slider.setRange(int(minimum), int(maximum))
+        self.slider.setSingleStep(1)
+        self.slider.setPageStep(max(1, int((maximum - minimum) / 10)))
+        self.slider.setCursor(QtCore.Qt.PointingHandCursor)
+        self.slider.setMinimumWidth(24)
+
+        self.value_edit = QtWidgets.QLineEdit()
+        self.value_edit.setObjectName("ElkNumericValueField")
+        self.value_edit.setAlignment(QtCore.Qt.AlignCenter)
+        self.value_edit.setMinimumWidth(48)
+        self.value_edit.setMaximumWidth(82 if suffix.strip() else 70)
+        self.value_edit.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(14)
+        lay.addWidget(self.slider, 1)
+        lay.addWidget(self.value_edit, 0)
+
+        self.slider.valueChanged.connect(self._from_slider)
+        self.value_edit.editingFinished.connect(self._from_text)
+        self.setValue(value)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+    def value(self):
+        return int(self.slider.value())
+
+    def setValue(self, value):
+        value = max(self.slider.minimum(), min(self.slider.maximum(), int(value)))
+        if self.slider.value() == value:
+            self._refresh_text(value)
+            return
+        self.slider.setValue(value)
+
+    def _format_value(self, value):
+        if self._special_value_text and value == self.slider.minimum():
+            return self._special_value_text
+        return "{}{}".format(value, self._suffix)
+
+    def _refresh_text(self, value):
+        self.value_edit.setText(self._format_value(int(value)))
+
+    def _from_slider(self, value):
+        if self._syncing:
+            return
+        self._syncing = True
+        self._refresh_text(value)
+        self._syncing = False
+        self.valueChanged.emit(int(value))
+
+    def _from_text(self):
+        if self._syncing:
+            return
+        text = (self.value_edit.text() or "").strip()
+        if self._special_value_text and text.casefold() == self._special_value_text.casefold():
+            value = self.slider.minimum()
+        else:
+            match = re.search(r"-?\d+", text)
+            value = int(match.group(0)) if match else self.slider.value()
+        self.setValue(value)
+
+
+class ElkResponsiveButtonRow(QtWidgets.QWidget):
+    def __init__(self, buttons, min_button_width=76, parent=None):
+        super(ElkResponsiveButtonRow, self).__init__(parent)
+        self.buttons = list(buttons)
+        self.min_button_width = int(min_button_width)
+        self.grid = QtWidgets.QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(12)
+        self.grid.setVerticalSpacing(10)
+        self._columns = 0
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        self._relayout()
+
+    def resizeEvent(self, event):
+        super(ElkResponsiveButtonRow, self).resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self):
+        width = max(1, self.width())
+        spacing = max(0, self.grid.horizontalSpacing())
+        columns = max(1, min(len(self.buttons), int((width + spacing) / float(self.min_button_width + spacing))))
+        if columns == self._columns and self.grid.count() == len(self.buttons):
+            return
+        self._columns = columns
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        for idx, button in enumerate(self.buttons):
+            row = idx // columns
+            col = idx % columns
+            self.grid.addWidget(button, row, col)
+        for col in range(max(1, columns)):
+            self.grid.setColumnStretch(col, 1)
+
+    def set_compact_metrics(self, min_button_width, horizontal_spacing, vertical_spacing):
+        self.min_button_width = int(min_button_width)
+        self.grid.setHorizontalSpacing(int(horizontal_spacing))
+        self.grid.setVerticalSpacing(int(vertical_spacing))
+        self._columns = 0
+        self._relayout()
+
+
+class ElkIconPreviewTile(QtWidgets.QFrame):
+    def __init__(self, size=60, parent=None):
+        super(ElkIconPreviewTile, self).__init__(parent)
+        self.setObjectName("ElkIconPreviewTile")
+        self.setFixedSize(size, size)
+        self.icon = SvgIconWidget("library-photo.svg", "#8a8a8a", 21)
+        self.text = QtWidgets.QLabel("No icon\nselected")
+        self.text.setObjectName("ElkIconTileText")
+        self.text.setAlignment(QtCore.Qt.AlignCenter)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(5, 5, 5, 5)
+        lay.setSpacing(3)
+        lay.addStretch(1)
+        lay.addWidget(self.icon, 0, QtCore.Qt.AlignCenter)
+        lay.addWidget(self.text, 0, QtCore.Qt.AlignCenter)
+        lay.addStretch(1)
+        self.set_icon("")
+
+    def set_icon(self, icon_name, color="#36d6ff"):
+        icon_name = normalize_icon_name(icon_name)
+        if icon_name:
+            self.icon.set_svg(icon_name, color)
+            self.icon.setFixedSize(25, 25)
+            self.text.hide()
+        else:
+            self.icon.set_svg("library-photo.svg", "#8a8a8a")
+            self.icon.setFixedSize(21, 21)
+            self.text.show()
+
+
 class ToolButton(QtWidgets.QFrame):
     clicked=QtCore.Signal(dict)
     dragStarted=QtCore.Signal(object, object)
@@ -878,7 +1185,9 @@ class ToolButton(QtWidgets.QFrame):
             lay.setContentsMargins(pad, pad, pad, pad)
             lay.setSpacing(0)
 
-        icon_side = max(8, int(round(side * (0.48 if self.tight else 0.52))))
+        icon_scale = self.parent_ui.ui_scale_value("btn_icon") if self.parent_ui else 1.0
+        icon_side = max(8, int(round(side * (0.48 if self.tight else 0.52) * icon_scale)))
+        icon_side = min(max(8, side - (pad * 2)), icon_side)
         if self._icon_widget is not None:
             self._icon_widget.setFixedSize(icon_side, icon_side)
 
@@ -1383,7 +1692,7 @@ class Category(QtWidgets.QFrame):
         if horizontal and not self.expanded:
             return
 
-        h_btn_side = self.parent_ui.horizontal_button_side() if horizontal else None
+        h_btn_side = self.parent_ui.horizontal_category_button_side() if horizontal else None
         for i,item in enumerate(self.items):
             btn=ToolButton(item,self.color,compact=horizontal,tight=is_tight,parent_ui=self.parent_ui); btn.clicked.connect(run_item); btn.dragStarted.connect(self.parent_ui.start_drag)
             if horizontal:
@@ -1407,11 +1716,7 @@ class Category(QtWidgets.QFrame):
 
         vp_h = max(1, viewport.height())
         margins = self.grid.contentsMargins()
-        spacing = max(0, self.grid.spacing())
-        rows = 1 if self.grid.count() > 0 else 0
-        safety = 2
-        avail_h = max(1, vp_h - margins.top() - margins.bottom() - (spacing * max(0, rows - 1)) - safety)
-        side = max(18, avail_h)
+        side = self.parent_ui.horizontal_category_button_side()
 
         for btn in self.body.findChildren(ToolButton):
             btn.apply_compact_side(side)
@@ -1422,8 +1727,9 @@ class Category(QtWidgets.QFrame):
             vbar.setValue(0)
 
         self.body.adjustSize()
-        self.body.setMinimumHeight(min(self.body.sizeHint().height(), vp_h))
-        self.body.setMaximumHeight(vp_h)
+        body_h = max(1, vp_h - margins.top() - margins.bottom())
+        self.body.setMinimumHeight(min(self.body.sizeHint().height(), body_h))
+        self.body.setMaximumHeight(body_h)
 
     def layout_items(self):
         result=[]
@@ -1469,6 +1775,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self._layout_debug_resize_timer = QtCore.QTimer(self)
         self._layout_debug_resize_timer.setSingleShot(True)
         self._layout_debug_resize_timer.timeout.connect(lambda: self.log_layout_state("resize_debounced"))
+        self._live_ui_scale_timer = QtCore.QTimer(self)
+        self._live_ui_scale_timer.setSingleShot(True)
+        self._live_ui_scale_timer.setInterval(35)
+        self._live_ui_scale_timer.timeout.connect(self._apply_live_ui_scale_settings)
         self.setMinimumSize(0, 0)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.build()
@@ -1605,6 +1915,48 @@ class ELKMinimalUI(QtWidgets.QWidget):
             "cat_icon_h": self._load_percent_option(OPTIONVAR_UI_SCALE_CAT_ICON_H),
             "cat_icon_v": self._load_percent_option(OPTIONVAR_UI_SCALE_CAT_ICON_V),
         }
+
+    def _ui_scale_optionvar_map(self):
+        return {
+            "btn_text_h": OPTIONVAR_UI_SCALE_BTN_TEXT_H,
+            "btn_text_v": OPTIONVAR_UI_SCALE_BTN_TEXT_V,
+            "btn_icon_h": OPTIONVAR_UI_SCALE_BTN_ICON_H,
+            "btn_icon_v": OPTIONVAR_UI_SCALE_BTN_ICON_V,
+            "btn_short_h": OPTIONVAR_UI_SCALE_BTN_SHORT_H,
+            "btn_short_v": OPTIONVAR_UI_SCALE_BTN_SHORT_V,
+            "cat_text_h": OPTIONVAR_UI_SCALE_CAT_TEXT_H,
+            "cat_text_v": OPTIONVAR_UI_SCALE_CAT_TEXT_V,
+            "cat_icon_h": OPTIONVAR_UI_SCALE_CAT_ICON_H,
+            "cat_icon_v": OPTIONVAR_UI_SCALE_CAT_ICON_V,
+        }
+
+    def _set_ui_scale_setting_live(self, key, value):
+        optionvar_map = self._ui_scale_optionvar_map()
+        if key not in optionvar_map:
+            return
+        val = max(10, min(300, int(value)))
+        self.ui_scale_settings[key] = val
+        cmds.optionVar(iv=(optionvar_map[key], val))
+        self._live_ui_scale_timer.start()
+
+    def _apply_live_ui_scale_settings(self):
+        current_settings = dict(self.ui_scale_settings)
+        seen = set()
+        try:
+            seen.add(id(self))
+            self.ui_scale_settings = dict(current_settings)
+            self.reflow()
+        except Exception:
+            pass
+        for ui in _iter_live_ui_instances():
+            if id(ui) in seen:
+                continue
+            seen.add(id(ui))
+            try:
+                ui.ui_scale_settings = dict(current_settings)
+                ui.reflow()
+            except Exception:
+                continue
 
     def _load_layout_debug_logs_enabled(self):
         if cmds.optionVar(exists=OPTIONVAR_LAYOUT_DEBUG_LOGS):
@@ -1838,6 +2190,34 @@ class ELKMinimalUI(QtWidgets.QWidget):
         max_side = (available_h - spacing_total) // btn_count
         return max(14, min(56, int(max_side)))
 
+    def horizontal_category_button_side(self):
+        if not self.is_horizontal_mode():
+            return 56
+
+        viewport_h = self.scroll.viewport().height() if hasattr(self, "scroll") and self.scroll is not None else self.height()
+        viewport_h = max(1, int(viewport_h))
+        candidates = []
+
+        for cat in getattr(self, "category_widgets", []):
+            if not getattr(cat, "expanded", True):
+                continue
+            try:
+                header_h = cat.header.sizeHint().height() if cat.header and cat.header.isVisible() else 0
+                outer_m = cat.outer.contentsMargins() if cat.outer else QtCore.QMargins(0, 0, 0, 0)
+                outer_spacing = max(0, cat.outer.spacing()) if cat.outer else 0
+                grid_m = cat.grid.contentsMargins() if cat.grid else QtCore.QMargins(0, 0, 0, 0)
+                hbar = cat.body_scroll.horizontalScrollBar() if cat.body_scroll else None
+                hbar_h = hbar.sizeHint().height() if hbar is not None else 0
+                body_h = viewport_h - header_h - outer_m.top() - outer_m.bottom() - outer_spacing
+                available_h = body_h - hbar_h - grid_m.top() - grid_m.bottom() - 2
+                candidates.append(int(available_h))
+            except Exception:
+                continue
+
+        if not candidates:
+            return self.horizontal_button_side()
+        return max(18, min(56, min(candidates)))
+
     def apply_horizontal_control_button_sizes(self):
         if not self.is_horizontal_mode():
             return
@@ -2016,7 +2396,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                     cat.grid.setContentsMargins(3, 0, 3, 1)
                     cat.grid.setSpacing(2)
 
-            button_side = max(10, min(56, body_h - 2))
+            button_side = self.horizontal_category_button_side()
             for btn in cat.layout_items():
                 if isinstance(btn, ToolButton):
                     btn.setFixedSize(button_side, button_side)
@@ -2044,25 +2424,206 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.shelf_items = load_shelf_items()
         self.refresh()
 
+    def _add_numeric_option_row(self, form_layout, label, minimum, maximum, value, suffix="", special_value_text=""):
+        control = ElkNumericSliderControl(
+            minimum=minimum,
+            maximum=maximum,
+            value=value,
+            suffix=suffix,
+            special_value_text=special_value_text
+        )
+        form_layout.addRow(label, control)
+        return control
+
+    def _configure_responsive_form_layout(self, form_layout):
+        form_layout.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
+        form_layout.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form_layout.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form_layout.setLabelAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        form_layout.setHorizontalSpacing(15)
+        form_layout.setVerticalSpacing(8)
+        form_layout.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
+
+    def _create_secondary_dialog_root(self, dialog, margin=10, spacing=10):
+        dialog.setMinimumSize(120, 80)
+        dialog.setSizeGripEnabled(True)
+
+        outer = QtWidgets.QVBoxLayout(dialog)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setObjectName("SecondaryDialogScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setMinimumSize(0, 0)
+        scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        outer.addWidget(scroll)
+
+        content = QtWidgets.QWidget()
+        content.setObjectName("SecondaryDialogContent")
+        content.setMinimumSize(0, 0)
+        content.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        scroll.setWidget(content)
+
+        root = QtWidgets.QVBoxLayout(content)
+        root.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
+        root.setContentsMargins(margin, margin, margin, margin)
+        root.setSpacing(spacing)
+        return root, scroll, content
+
+    def _install_secondary_dialog_responsiveness(self, dialog, scroll, root, form_layouts=None, compact_widgets=None):
+        form_layouts = list(form_layouts or [])
+        compact_widgets = list(compact_widgets or [])
+
+        def _apply():
+            viewport = scroll.viewport()
+            available_h = viewport.height() if viewport else dialog.height()
+            tiny = available_h < 360
+            compact = available_h < 560
+
+            margin = 5 if tiny else (7 if compact else 10)
+            spacing = 5 if tiny else (7 if compact else 10)
+            root.setContentsMargins(margin, margin, margin, margin)
+            root.setSpacing(spacing)
+
+            form_spacing = 3 if tiny else (5 if compact else 8)
+            for form_layout in form_layouts:
+                form_layout.setVerticalSpacing(form_spacing)
+
+            for widget, normal_h, compact_h, tiny_h in compact_widgets:
+                target_h = tiny_h if tiny else (compact_h if compact else normal_h)
+                if target_h is not None:
+                    widget.setMinimumHeight(int(target_h))
+
+        class _SecondaryResponsiveFilter(QtCore.QObject):
+            def eventFilter(self, obj, event):
+                if event.type() in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
+                    _apply()
+                return False
+
+        responsive_filter = _SecondaryResponsiveFilter(dialog)
+        dialog.installEventFilter(responsive_filter)
+        scroll.viewport().installEventFilter(responsive_filter)
+        filters = getattr(dialog, "_elk_secondary_responsive_filters", [])
+        filters.append(responsive_filter)
+        dialog._elk_secondary_responsive_filters = filters
+        QtCore.QTimer.singleShot(0, _apply)
+
+    def _style_dialog_buttons(self, button_box, primary_roles=None):
+        primary_roles = primary_roles or (
+            QtWidgets.QDialogButtonBox.Ok,
+            QtWidgets.QDialogButtonBox.Save,
+            QtWidgets.QDialogButtonBox.Apply,
+        )
+        for role in primary_roles:
+            button = button_box.button(role)
+            if button is not None:
+                button.setProperty("primary", True)
+                button.style().unpolish(button)
+                button.style().polish(button)
+
+    def _build_script_editor(self, text=""):
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("ElkScriptEditorFrame")
+        lay = QtWidgets.QHBoxLayout(frame)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        gutter = QtWidgets.QLabel("1")
+        gutter.setObjectName("ElkScriptLineGutter")
+        gutter.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignHCenter)
+        gutter.setFixedWidth(34)
+        lay.addWidget(gutter)
+
+        editor = QtWidgets.QPlainTextEdit(text)
+        editor.setObjectName("ElkScriptEditor")
+        editor.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        editor.setPlaceholderText("Paste or write your script here...")
+        editor.setFrameShape(QtWidgets.QFrame.NoFrame)
+        editor.setMinimumHeight(235)
+        editor.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        lay.addWidget(editor, 1)
+        return frame, editor
+
+    def _build_icon_picker_row(self, icon_name_edit, icon_color, choose_button, preview_tile):
+        row = QtWidgets.QWidget()
+        row.setObjectName("ElkIconPickerRow")
+        lay = QtWidgets.QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(9)
+        side = QtWidgets.QVBoxLayout()
+        side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(5)
+        side.addWidget(choose_button, 0, QtCore.Qt.AlignLeft)
+        recommendation = QtWidgets.QLabel("Recommended: 24x24px")
+        recommendation.setObjectName("ElkHintText")
+        side.addWidget(recommendation, 0, QtCore.Qt.AlignLeft)
+        side.addStretch(1)
+        lay.addWidget(preview_tile, 0, QtCore.Qt.AlignTop)
+        lay.addLayout(side, 1)
+        return row
+
+    def _build_category_manager_item(self, slug, display_name):
+        meta = _sync_category_meta_from_fs()
+        icon_name = normalize_icon_name((meta.get("icons") or {}).get(slug, "category.svg"))
+        icon_color = (meta.get("icon_colors") or {}).get(slug, "#36d6ff")
+
+        row = QtWidgets.QFrame()
+        row.setObjectName("CategoryManagerRow")
+        row.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        lay = QtWidgets.QHBoxLayout(row)
+        lay.setContentsMargins(10, 4, 10, 4)
+        lay.setSpacing(9)
+
+        grip = SvgIconWidget("grip-vertical.svg", "#8b8b8b", 13)
+        lay.addWidget(grip, 0, QtCore.Qt.AlignVCenter)
+
+        icon = SvgIconWidget(icon_name, icon_color, 19)
+        lay.addWidget(icon, 0, QtCore.Qt.AlignVCenter)
+
+        name_label = QtWidgets.QLabel(display_name)
+        name_label.setObjectName("CategoryManagerName")
+        lay.addWidget(name_label, 1, QtCore.Qt.AlignVCenter)
+
+        slug_label = QtWidgets.QLabel("[{}]".format(slug))
+        slug_label.setObjectName("CategoryManagerSlug")
+        slug_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        lay.addWidget(slug_label, 0, QtCore.Qt.AlignVCenter)
+        return row
+
     def open_options_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("ELK Options")
         self._apply_secondary_dialog_style(dlg)
-        root = QtWidgets.QVBoxLayout(dlg)
+        dlg.resize(590, 720)
+        root, scroll, _content = self._create_secondary_dialog_root(dlg)
 
         form = QtWidgets.QFormLayout()
-        spin = QtWidgets.QSpinBox(); spin.setRange(0, 4000); spin.setSuffix(" px"); spin.setSpecialValueText("No limit"); spin.setValue(self.max_height_px)
-        form.addRow("Max UI height:", spin)
-        dock_height_ratio_spin = QtWidgets.QSpinBox()
-        dock_height_ratio_spin.setRange(DOCK_HEIGHT_RATIO_MIN, DOCK_HEIGHT_RATIO_MAX)
-        dock_height_ratio_spin.setSuffix(" %")
-        dock_height_ratio_spin.setValue(int(self.dock_initial_height_ratio_pct))
-        form.addRow("Hauteur initiale du dock (%):", dock_height_ratio_spin)
+        self._configure_responsive_form_layout(form)
+        spin = self._add_numeric_option_row(
+            form,
+            "Max UI height:",
+            0,
+            4000,
+            self.max_height_px,
+            suffix=" px",
+            special_value_text="No limit"
+        )
+        dock_height_ratio_spin = self._add_numeric_option_row(
+            form,
+            "Hauteur initiale du dock (%):",
+            DOCK_HEIGHT_RATIO_MIN,
+            DOCK_HEIGHT_RATIO_MAX,
+            int(self.dock_initial_height_ratio_pct),
+            suffix=" %"
+        )
         layout_debug_check = QtWidgets.QCheckBox("Enable Layout Debug Logs")
         layout_debug_check.setChecked(bool(self.layout_debug_logs_enabled))
         form.addRow("", layout_debug_check)
         scale_grp = QtWidgets.QGroupBox("UI scale (%)")
         scale_form = QtWidgets.QFormLayout(scale_grp)
+        self._configure_responsive_form_layout(scale_form)
         scale_spins = {}
         labels = [
             ("btn_text_h", "Textes des boutons (Horizontal)"),
@@ -2077,22 +2638,46 @@ class ELKMinimalUI(QtWidgets.QWidget):
             ("cat_icon_v", "Icônes des catégories (Vertical)"),
         ]
         for key, label in labels:
-            s = QtWidgets.QSpinBox(); s.setRange(10, 300); s.setSuffix("%"); s.setValue(int(self.ui_scale_settings.get(key, 100)))
+            s = self._add_numeric_option_row(
+                scale_form,
+                label + ":",
+                10,
+                300,
+                int(self.ui_scale_settings.get(key, 100)),
+                suffix=" %"
+            )
+            s.valueChanged.connect(lambda value, scale_key=key: self._set_ui_scale_setting_live(scale_key, value))
             scale_spins[key] = s
-            scale_form.addRow(label + ":", s)
         root.addLayout(form)
         root.addWidget(scale_grp)
 
         grp = QtWidgets.QGroupBox("Category Manager")
+        grp.setObjectName("CategoryManagerBox")
         gl = QtWidgets.QVBoxLayout(grp)
-        cat_list = QtWidgets.QListWidget(); cat_list.setMinimumHeight(180)
-        gl.addWidget(cat_list)
-        row = QtWidgets.QHBoxLayout()
-        for label, fn in (("+ Add", "add"), ("Rename", "ren"), ("Delete", "del"), ("↑", "up"), ("↓", "down")):
-            b = QtWidgets.QPushButton(label); b.setProperty("op", fn); row.addWidget(b)
+        gl.setContentsMargins(8, 11, 8, 8)
+        gl.setSpacing(8)
+        cat_list = QtWidgets.QListWidget()
+        cat_list.setObjectName("CategoryManagerList")
+        cat_list.setMinimumHeight(108)
+        cat_list.setSpacing(0)
+        cat_list.setAlternatingRowColors(True)
+        cat_list.setUniformItemSizes(False)
+        cat_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        cat_list.setFocusPolicy(QtCore.Qt.NoFocus)
+        cat_list.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        gl.addWidget(cat_list, 1)
+        category_buttons = []
+        for label, fn in (("+ Add", "add"), ("Edit", "ren"), ("Delete", "del"), ("↑", "up"), ("↓", "down")):
+            b = QtWidgets.QPushButton(label)
+            b.setProperty("op", fn)
+            b.setMinimumHeight(32)
+            b.setMinimumWidth(0)
+            b.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            category_buttons.append(b)
             setattr(self, f"_cat_btn_{fn}", b)
-        gl.addLayout(row)
-        root.addWidget(grp)
+        category_button_row = ElkResponsiveButtonRow(category_buttons, min_button_width=68)
+        gl.addWidget(category_button_row)
+        root.addWidget(grp, 1)
         second_instance_btn = QtWidgets.QPushButton("Open Second Instance")
         second_instance_btn.clicked.connect(lambda: show_second_instance())
         root.addWidget(second_instance_btn)
@@ -2100,11 +2685,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
         def reload_list(select_slug=None):
             cat_list.clear()
             for slug, disp, path in self._category_rows():
-                it = QtWidgets.QListWidgetItem(f"{disp}    [{slug}]")
+                it = QtWidgets.QListWidgetItem()
                 it.setData(QtCore.Qt.UserRole, slug)
                 it.setData(QtCore.Qt.UserRole+1, disp)
                 it.setData(QtCore.Qt.UserRole+2, str(path))
+                it.setSizeHint(QtCore.QSize(0, 30))
                 cat_list.addItem(it)
+                cat_list.setItemWidget(it, self._build_category_manager_item(slug, disp))
                 if select_slug and slug == select_slug:
                     cat_list.setCurrentItem(it)
 
@@ -2116,24 +2703,25 @@ class ELKMinimalUI(QtWidgets.QWidget):
             cat_dlg = QtWidgets.QDialog(dlg)
             cat_dlg.setWindowTitle("Configurer la catégorie")
             self._apply_secondary_dialog_style(cat_dlg)
-            cat_form = QtWidgets.QFormLayout(cat_dlg)
+            cat_dlg.resize(430, 285)
+            cat_root, cat_scroll, _cat_content = self._create_secondary_dialog_root(cat_dlg)
+            cat_form = QtWidgets.QFormLayout()
+            self._configure_responsive_form_layout(cat_form)
             name_edit = QtWidgets.QLineEdit(initial_name)
+            name_edit.setPlaceholderText("e.g. Action")
             icon_name = QtWidgets.QLineEdit(normalize_icon_name(initial_icon))
             icon_name.setReadOnly(True)
             icon_color = QtWidgets.QComboBox()
             icon_color.addItems(ICON_COLORS)
             icon_color.setCurrentText(initial_color if initial_color in ICON_COLORS else "#36d6ff")
             color_picker_row = self._build_color_picker_row(icon_color, initial_color)
-            icon_preview = QtWidgets.QLabel("")
-            icon_preview.setMinimumHeight(24)
-            icon_preview.setStyleSheet("color:#b7b7b7;")
-            icon_visual = SvgIconWidget(icon_name.text().strip(), icon_color.currentText(), 20)
-            icon_btn = QtWidgets.QPushButton("Choisir icône SVG…")
+            icon_visual = ElkIconPreviewTile()
+            icon_visual.set_icon(icon_name.text().strip(), icon_color.currentText())
+            icon_btn = QtWidgets.QPushButton("Choose Icon...")
+            icon_row = self._build_icon_picker_row(icon_name, icon_color, icon_btn, icon_visual)
 
             def _refresh_preview():
-                self._set_icon_preview(icon_preview, icon_name.text().strip(), icon_color.currentText())
-                icon_visual.setVisible(bool(icon_name.text().strip()))
-                icon_visual.set_svg(icon_name.text().strip(), icon_color.currentText())
+                icon_visual.set_icon(icon_name.text().strip(), icon_color.currentText())
 
             def _pick():
                 picked = self._pick_svg_icon(icon_name.text().strip(), icon_color.currentText())
@@ -2145,14 +2733,15 @@ class ELKMinimalUI(QtWidgets.QWidget):
             icon_btn.clicked.connect(_pick)
             icon_color.currentTextChanged.connect(lambda _v: _refresh_preview())
             _refresh_preview()
-            cat_form.addRow("Nom", name_edit)
-            cat_form.addRow("Icône SVG", icon_btn)
-            cat_form.addRow("Aperçu icône", icon_visual)
-            cat_form.addRow("Sélection", icon_preview)
-            cat_form.addRow("Couleur", color_picker_row)
+            cat_form.addRow("Name", name_edit)
+            cat_form.addRow("SVG Icon", icon_row)
+            cat_form.addRow("Color", color_picker_row)
+            cat_root.addLayout(cat_form)
             cat_btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-            cat_form.addRow(cat_btns)
+            cat_root.addWidget(cat_btns)
+            self._style_dialog_buttons(cat_btns)
             cat_btns.accepted.connect(cat_dlg.accept); cat_btns.rejected.connect(cat_dlg.reject)
+            self._install_secondary_dialog_responsiveness(cat_dlg, cat_scroll, cat_root, form_layouts=[cat_form])
             if (cat_dlg.exec_() if hasattr(cat_dlg, "exec_") else cat_dlg.exec()):
                 return {
                     "name": (name_edit.text() or "").strip(),
@@ -2248,24 +2837,57 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         root.addWidget(btns); btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        self._style_dialog_buttons(btns)
+
+        def _apply_options_vertical_responsiveness():
+            viewport = scroll.viewport()
+            available_h = viewport.height() if viewport else dlg.height()
+            tiny = available_h < 430
+            compact = available_h < 650
+
+            margin = 5 if tiny else (7 if compact else 10)
+            spacing = 5 if tiny else (7 if compact else 10)
+            root.setContentsMargins(margin, margin, margin, margin)
+            root.setSpacing(spacing)
+
+            form_spacing = 3 if tiny else (5 if compact else 8)
+            form.setVerticalSpacing(form_spacing)
+            scale_form.setVerticalSpacing(form_spacing)
+
+            group_margin = 5 if tiny else (7 if compact else 8)
+            group_top = 8 if tiny else (9 if compact else 11)
+            gl.setContentsMargins(group_margin, group_top, group_margin, group_margin)
+            gl.setSpacing(4 if tiny else (6 if compact else 8))
+
+            cat_list.setMinimumHeight(44 if tiny else (72 if compact else 108))
+            button_h = 26 if tiny else (29 if compact else 32)
+            for button in category_buttons:
+                button.setMinimumHeight(button_h)
+            category_button_row.set_compact_metrics(
+                52 if tiny else (60 if compact else 68),
+                5 if tiny else (7 if compact else 9),
+                4 if tiny else (5 if compact else 7)
+            )
+
+        class _OptionsResponsiveFilter(QtCore.QObject):
+            def eventFilter(self, obj, event):
+                if event.type() in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
+                    _apply_options_vertical_responsiveness()
+                return False
+
+        responsive_filter = _OptionsResponsiveFilter(dlg)
+        dlg.installEventFilter(responsive_filter)
+        scroll.viewport().installEventFilter(responsive_filter)
+        dlg._elk_options_responsive_filter = responsive_filter
+        QtCore.QTimer.singleShot(0, _apply_options_vertical_responsiveness)
+
         if dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec():
             self.max_height_px = int(spin.value()); cmds.optionVar(iv=(OPTIONVAR_MAX_HEIGHT, self.max_height_px))
             self.dock_initial_height_ratio_pct = _clamp_dock_height_ratio(dock_height_ratio_spin.value())
             cmds.optionVar(iv=(OPTIONVAR_DOCK_INITIAL_HEIGHT_RATIO, int(self.dock_initial_height_ratio_pct)))
             self.layout_debug_logs_enabled = bool(layout_debug_check.isChecked())
             cmds.optionVar(iv=(OPTIONVAR_LAYOUT_DEBUG_LOGS, 1 if self.layout_debug_logs_enabled else 0))
-            optionvar_map = {
-                "btn_text_h": OPTIONVAR_UI_SCALE_BTN_TEXT_H,
-                "btn_text_v": OPTIONVAR_UI_SCALE_BTN_TEXT_V,
-                "btn_icon_h": OPTIONVAR_UI_SCALE_BTN_ICON_H,
-                "btn_icon_v": OPTIONVAR_UI_SCALE_BTN_ICON_V,
-                "btn_short_h": OPTIONVAR_UI_SCALE_BTN_SHORT_H,
-                "btn_short_v": OPTIONVAR_UI_SCALE_BTN_SHORT_V,
-                "cat_text_h": OPTIONVAR_UI_SCALE_CAT_TEXT_H,
-                "cat_text_v": OPTIONVAR_UI_SCALE_CAT_TEXT_V,
-                "cat_icon_h": OPTIONVAR_UI_SCALE_CAT_ICON_H,
-                "cat_icon_v": OPTIONVAR_UI_SCALE_CAT_ICON_V,
-            }
+            optionvar_map = self._ui_scale_optionvar_map()
             for key, opt_name in optionvar_map.items():
                 val = int(scale_spins[key].value())
                 self.ui_scale_settings[key] = val
@@ -2276,7 +2898,10 @@ class ELKMinimalUI(QtWidgets.QWidget):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Add ELK Script")
         self._apply_secondary_dialog_style(dlg)
-        lay = QtWidgets.QFormLayout(dlg)
+        dlg.resize(640, 610)
+        root, scroll, _content = self._create_secondary_dialog_root(dlg)
+        lay = QtWidgets.QFormLayout()
+        self._configure_responsive_form_layout(lay)
         full_name = QtWidgets.QLineEdit()
         short_name = QtWidgets.QLineEdit()
         category = QtWidgets.QComboBox()
@@ -2304,43 +2929,59 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         desc = QtWidgets.QLineEdit()
         source = QtWidgets.QComboBox(); source.addItems(["python", "mel"])
+        source.setMaximumWidth(260)
+        apply_elk_ui_style = QtWidgets.QCheckBox("Apply ELK visual skin on launched UI")
+        apply_elk_ui_style.setToolTip("Apply ELK dark styling to windows created by this script when launched from the shelf.")
         icon_name = QtWidgets.QLineEdit()
         icon_name.setReadOnly(True)
-        icon_preview = QtWidgets.QLabel("Aucune")
-        icon_preview.setMinimumHeight(22)
         icon_color = QtWidgets.QComboBox(); icon_color.addItems(ICON_COLORS)
         icon_color.setCurrentText("#36d6ff")
-        icon_visual = SvgIconWidget("", icon_color.currentText(), 20)
-        icon_visual.setVisible(False)
+        icon_file_tile = ElkIconPreviewTile()
         color_picker_row = self._build_color_picker_row(icon_color, "#36d6ff")
-        icon_btn = QtWidgets.QPushButton("Choisir icône…")
+        icon_btn = QtWidgets.QPushButton("Choose Icon...")
+        icon_row = self._build_icon_picker_row(icon_name, icon_color, icon_btn, icon_file_tile)
+        full_name.setPlaceholderText("e.g. Smart Unbevel Tool")
+        short_name.setPlaceholderText("e.g. Unbevel")
+        desc.setPlaceholderText("Optional description...")
+        if category.count() > 0:
+            category.setCurrentText(category.currentText() or category.itemText(0))
+        source.setItemIcon(0, QtGui.QIcon(resolve_icon_path("brand-python.svg").as_posix()) if resolve_icon_path("brand-python.svg") else QtGui.QIcon())
+        source.setItemIcon(1, QtGui.QIcon(resolve_icon_path("code.svg").as_posix()) if resolve_icon_path("code.svg") else QtGui.QIcon())
 
         def pick_icon():
             picked = self._pick_svg_icon(icon_name.text().strip(), icon_color.currentText())
             if not picked:
                 return
-            icon_name.setText(picked[0]); icon_color.setCurrentText(picked[1]); self._set_icon_preview(icon_preview, icon_name.text(), icon_color.currentText())
-            icon_visual.setVisible(True); icon_visual.set_svg(icon_name.text(), icon_color.currentText())
+            icon_name.setText(picked[0]); icon_color.setCurrentText(picked[1])
+            icon_file_tile.set_icon(icon_name.text(), icon_color.currentText())
 
         icon_btn.clicked.connect(pick_icon)
-        icon_color.currentTextChanged.connect(lambda _v: (self._set_icon_preview(icon_preview, icon_name.text(), icon_color.currentText()), icon_visual.set_svg(icon_name.text(), icon_color.currentText())))
-        code = QtWidgets.QPlainTextEdit()
-        code.setMinimumHeight(220)
-        lay.addRow("Nom complet", full_name)
-        lay.addRow("Nom abrégé", short_name)
-        lay.addRow("Catégorie", category)
+        icon_color.currentTextChanged.connect(lambda _v: icon_file_tile.set_icon(icon_name.text(), icon_color.currentText()))
+        code_frame, code = self._build_script_editor("")
+        code_frame.setMinimumHeight(250)
+        lay.addRow("Full name", full_name)
+        lay.addRow("Short name", short_name)
+        lay.addRow("Category", category)
         lay.addRow("Description", desc)
         lay.addRow("Source", source)
-        lay.addRow("Icône SVG", icon_btn)
-        lay.addRow("Aperçu icône", icon_visual)
-        lay.addRow("Sélection", icon_preview)
-        lay.addRow("Couleur", color_picker_row)
-        lay.addRow("Script", code)
+        lay.addRow("UI Skin", apply_elk_ui_style)
+        lay.addRow("SVG Icon", icon_row)
+        lay.addRow("Color", color_picker_row)
+        lay.addRow("Script", code_frame)
+        root.addLayout(lay)
         btns=QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok|QtWidgets.QDialogButtonBox.Cancel)
-        lay.addRow(btns)
+        root.addWidget(btns)
+        self._style_dialog_buttons(btns)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        self._install_secondary_dialog_responsiveness(
+            dlg,
+            scroll,
+            root,
+            form_layouts=[lay],
+            compact_widgets=[(code_frame, 250, 165, 95)]
+        )
         if (dlg.exec_() if hasattr(dlg,'exec_') else dlg.exec()):
-            item={"label":full_name.text().strip() or "New Script","short_name":short_name.text().strip(),"category":category.currentText().strip() or "Tools","tooltip":desc.text().strip(),"source":source.currentText(),"icon_svg": normalize_icon_name(icon_name.text().strip()), "icon_color": icon_color.currentText(), "command":code.toPlainText()}
+            item={"label":full_name.text().strip() or "New Script","short_name":short_name.text().strip(),"category":category.currentText().strip() or "Tools","tooltip":desc.text().strip(),"source":source.currentText(),"icon_svg": normalize_icon_name(icon_name.text().strip()), "icon_color": icon_color.currentText(), "apply_elk_ui_style": bool(apply_elk_ui_style.isChecked()), "command":code.toPlainText()}
             item['file_path']=save_item_to_disk(item)
             self.shelf_items = load_shelf_items()
             self.refresh()
@@ -2376,7 +3017,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         lay.setSpacing(6)
 
         swatch = QtWidgets.QLabel()
-        swatch.setFixedSize(22, 22)
+        swatch.setObjectName("ElkColorSwatch")
+        swatch.setFixedSize(34, 34)
         swatch.setFrameShape(QtWidgets.QFrame.Box)
         swatch.setLineWidth(1)
 
@@ -2388,7 +3030,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
 
         def _apply_color(color_hex):
             safe = _valid_color_hex(color_hex)
-            swatch.setStyleSheet("background:{};border:1px solid #565656;border-radius:4px;".format(safe))
+            swatch.setStyleSheet("background:{};border:1px solid #565656;border-radius:7px;".format(safe))
             idx = color_combo.findText(safe)
             if idx >= 0 and color_combo.currentIndex() != idx:
                 color_combo.setCurrentIndex(idx)
@@ -2408,9 +3050,9 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self._apply_color_combo_swatch(color_combo)
         _apply_color(color_combo.currentText() or initial_color)
 
-        lay.addWidget(swatch)
+        lay.addWidget(swatch, 0, QtCore.Qt.AlignVCenter)
         lay.addWidget(color_combo, 1)
-        lay.addWidget(choose_btn)
+        lay.addWidget(choose_btn, 0, QtCore.Qt.AlignVCenter)
         return row
 
     def _pick_svg_icon(self, current_name="", current_color="#36d6ff"):
@@ -2418,12 +3060,15 @@ class ELKMinimalUI(QtWidgets.QWidget):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Choisir une icône SVG")
         self._apply_secondary_dialog_style(dlg)
-        lay = QtWidgets.QVBoxLayout(dlg)
+        dlg.resize(460, 510)
+        lay, scroll, _content = self._create_secondary_dialog_root(dlg)
         search = QtWidgets.QLineEdit()
         search.setPlaceholderText("Tapez pour rechercher une icône…")
         lay.addWidget(search)
         lst = QtWidgets.QListWidget()
         lst.setUniformItemSizes(True)
+        lst.setMinimumHeight(190)
+        lst.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         lay.addWidget(lst, 1)
         info = QtWidgets.QLabel("Tapez pour rechercher une icône.")
         info.setStyleSheet("color:#b7b7b7;")
@@ -2493,7 +3138,14 @@ class ELKMinimalUI(QtWidgets.QWidget):
         lst.itemClicked.connect(lambda it: selection.update({"name": it.data(QtCore.Qt.UserRole)}))
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         lay.addWidget(btns)
+        self._style_dialog_buttons(btns)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        self._install_secondary_dialog_responsiveness(
+            dlg,
+            scroll,
+            lay,
+            compact_widgets=[(lst, 190, 125, 72)]
+        )
         if not icons:
             return None
         if (dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec()):
@@ -2561,10 +3213,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Modifier le script ELK")
         self._apply_secondary_dialog_style(dlg)
-        dlg.setMinimumSize(840, 620)
-        dlg.resize(980, 700)
-        dlg.setSizeGripEnabled(True)
-        root = QtWidgets.QVBoxLayout(dlg)
+        dlg.resize(820, 590)
+        root, scroll, _content = self._create_secondary_dialog_root(dlg)
 
         err = QtWidgets.QLabel("")
         err.setWordWrap(True)
@@ -2572,9 +3222,13 @@ class ELKMinimalUI(QtWidgets.QWidget):
         err.hide()
 
         form = QtWidgets.QFormLayout()
+        self._configure_responsive_form_layout(form)
         full_name = QtWidgets.QLineEdit(item.get("label", ""))
+        full_name.setPlaceholderText("e.g. Smart Unbevel Tool")
         short_name = QtWidgets.QLineEdit(item.get("short_name", ""))
+        short_name.setPlaceholderText("e.g. Unbevel")
         desc = QtWidgets.QLineEdit(item.get("tooltip", ""))
+        desc.setPlaceholderText("Optional description...")
         category = QtWidgets.QComboBox(); category.setEditable(True)
         categories = [disp for _, disp, _ in self._category_rows()]
         categories = sorted({c for c in categories if c})
@@ -2602,35 +3256,49 @@ class ELKMinimalUI(QtWidgets.QWidget):
         category.lineEdit().textEdited.connect(_filter_category_options)
         source = QtWidgets.QComboBox(); source.addItems(["python", "mel"])
         source.setCurrentText((item.get("source") or "python").lower())
+        source.setMaximumWidth(260)
+        apply_elk_ui_style = QtWidgets.QCheckBox("Apply ELK visual skin on launched UI")
+        apply_elk_ui_style.setToolTip("Apply ELK dark styling to windows created by this script when launched from the shelf.")
+        apply_elk_ui_style.setChecked(bool(item.get("apply_elk_ui_style", False)))
+        source.setItemIcon(0, QtGui.QIcon(resolve_icon_path("brand-python.svg").as_posix()) if resolve_icon_path("brand-python.svg") else QtGui.QIcon())
+        source.setItemIcon(1, QtGui.QIcon(resolve_icon_path("code.svg").as_posix()) if resolve_icon_path("code.svg") else QtGui.QIcon())
         icon_name = QtWidgets.QLineEdit(normalize_icon_name(item.get("icon_svg", ""))); icon_name.setReadOnly(True)
         icon_color = QtWidgets.QComboBox(); icon_color.addItems(ICON_COLORS); icon_color.setCurrentText(item.get("icon_color") or "#36d6ff")
         color_picker_row = self._build_color_picker_row(icon_color, item.get("icon_color") or "#36d6ff")
-        icon_btn = QtWidgets.QPushButton("Choisir icône…")
-        icon_preview = QtWidgets.QLabel("{} ({})".format(icon_name.text() or "Aucune", icon_color.currentText()))
-        icon_visual = SvgIconWidget(icon_name.text().strip(), icon_color.currentText(), 20)
-        icon_visual.setVisible(bool(icon_name.text().strip()))
-        icon_btn.clicked.connect(lambda: (lambda picked: (icon_name.setText(picked[0]), icon_color.setCurrentText(picked[1]), self._set_icon_preview(icon_preview, picked[0], picked[1])) if picked else None)(self._pick_svg_icon(icon_name.text(), icon_color.currentText())))
-        icon_color.currentTextChanged.connect(lambda _v: (self._set_icon_preview(icon_preview, icon_name.text(), icon_color.currentText()), icon_visual.set_svg(icon_name.text(), icon_color.currentText())))
+        icon_btn = QtWidgets.QPushButton("Choose Icon...")
+        icon_file_tile = ElkIconPreviewTile()
+        icon_file_tile.set_icon(icon_name.text().strip(), icon_color.currentText())
+        icon_row = self._build_icon_picker_row(icon_name, icon_color, icon_btn, icon_file_tile)
 
-        form.addRow("Nom du script", full_name)
-        form.addRow("Nom abrégé", short_name)
+        def _pick_edit_icon():
+            picked = self._pick_svg_icon(icon_name.text(), icon_color.currentText())
+            if not picked:
+                return
+            icon_name.setText(picked[0])
+            icon_color.setCurrentText(picked[1])
+            icon_file_tile.set_icon(icon_name.text(), icon_color.currentText())
+
+        icon_btn.clicked.connect(_pick_edit_icon)
+        icon_color.currentTextChanged.connect(lambda _v: icon_file_tile.set_icon(icon_name.text(), icon_color.currentText()))
+
+        form.addRow("Full name", full_name)
+        form.addRow("Short name", short_name)
         form.addRow("Description", desc)
-        form.addRow("Catégorie", category)
-        form.addRow("Type", source)
-        form.addRow("Icône SVG", icon_btn)
-        form.addRow("Aperçu icône", icon_visual)
-        form.addRow("Sélection", icon_preview)
-        form.addRow("Couleur", color_picker_row)
+        form.addRow("Category", category)
+        form.addRow("Source", source)
+        form.addRow("UI Skin", apply_elk_ui_style)
+        form.addRow("SVG Icon", icon_row)
+        form.addRow("Color", color_picker_row)
         root.addLayout(form)
         root.addWidget(err)
 
-        code = QtWidgets.QPlainTextEdit(item.get("command", ""))
-        code.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        code.setMinimumHeight(360)
-        root.addWidget(code, 1)
+        code_frame, code = self._build_script_editor(item.get("command", ""))
+        code_frame.setMinimumHeight(270)
+        root.addWidget(code_frame, 1)
 
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
         root.addWidget(btns)
+        self._style_dialog_buttons(btns)
         btns.rejected.connect(dlg.reject)
 
         def show_error(msg):
@@ -2662,7 +3330,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
             if current_path and target_path.resolve() != current_path.resolve() and target_path.exists():
                 show_error("Un script avec le même nom existe déjà dans cette catégorie.")
                 return
-            updated = {"label": name, "short_name": short, "tooltip": tip, "category": cat, "source": src, "icon_svg": normalize_icon_name(icon_name.text().strip()), "icon_color": icon_color.currentText(), "command": cmd, "file_path": str(target_path)}
+            updated = {"label": name, "short_name": short, "tooltip": tip, "category": cat, "source": src, "icon_svg": normalize_icon_name(icon_name.text().strip()), "icon_color": icon_color.currentText(), "apply_elk_ui_style": bool(apply_elk_ui_style.isChecked()), "command": cmd, "file_path": str(target_path)}
             try:
                 if current_path and current_path.exists() and current_path.resolve() != target_path.resolve():
                     current_path.unlink()
@@ -2675,14 +3343,30 @@ class ELKMinimalUI(QtWidgets.QWidget):
             dlg.accept()
 
         btns.accepted.connect(do_save)
+        self._install_secondary_dialog_responsiveness(
+            dlg,
+            scroll,
+            root,
+            form_layouts=[form],
+            compact_widgets=[(code_frame, 270, 180, 100)]
+        )
         dlg.exec_() if hasattr(dlg, "exec_") else dlg.exec()
 
     def _apply_secondary_dialog_style(self, dialog):
         dialog.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        combo_arrow = resolve_icon_path("elk-dropdown-arrow.svg") or resolve_icon_path("chevron-down.svg")
+        combo_arrow_url = combo_arrow.as_posix() if combo_arrow else ""
         dialog.setStyleSheet("""
             QDialog {
                 background: #2a2a2a;
                 color: #f2f2f2;
+            }
+            QScrollArea#SecondaryDialogScroll {
+                background: #2a2a2a;
+                border: none;
+            }
+            QWidget#SecondaryDialogContent {
+                background: #2a2a2a;
             }
             QLabel {
                 color: #f0f0f0;
@@ -2691,8 +3375,8 @@ class ELKMinimalUI(QtWidgets.QWidget):
             QGroupBox {
                 border: 1px solid #505050;
                 border-radius: 10px;
-                margin-top: 14px;
-                padding-top: 10px;
+                margin-top: 11px;
+                padding-top: 8px;
                 background: #2a2a2a;
                 font-weight: 600;
             }
@@ -2702,18 +3386,142 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 padding: 0 6px;
                 color: #dcdcdc;
             }
+            QGroupBox#CategoryManagerBox {
+                border: 1px solid #464646;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 8px;
+                background: #2a2a2a;
+                font-weight: 700;
+            }
+            QGroupBox#CategoryManagerBox::title {
+                left: 12px;
+                padding: 0 7px;
+                color: #f0f0f0;
+            }
             QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QListWidget {
                 background: #373737;
                 color: #f2f2f2;
                 border: 1px solid #505050;
                 border-radius: 8px;
-                padding: 7px 10px;
+                padding: 5px 8px;
                 selection-background-color: #505050;
+            }
+            QLineEdit, QComboBox {
+                min-height: 24px;
+            }
+            QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus {
+                border: 1px solid #5d5d5d;
+                background: #3a3a3a;
+            }
+            QLineEdit[placeholderText], QPlainTextEdit[placeholderText] {
+                color: #f2f2f2;
+            }
+            QListWidget#CategoryManagerList {
+                background: #252525;
+                border: 1px solid #424242;
+                border-radius: 6px;
+                padding: 0px;
+                outline: none;
+            }
+            QListWidget#CategoryManagerList::item {
+                min-height: 30px;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+                background: #252525;
+            }
+            QListWidget#CategoryManagerList::item:alternate {
+                background: #2c2c2c;
+            }
+            QListWidget#CategoryManagerList::item:selected {
+                background: #333333;
+                border-left: 2px solid #ff9f2e;
+            }
+            QFrame#CategoryManagerRow {
+                background: transparent;
+                border: none;
+            }
+            QLabel#CategoryManagerName {
+                color: #f0f0f0;
+                font-weight: 650;
+                background: transparent;
+                border: none;
+            }
+            QLabel#CategoryManagerSlug {
+                color: #9c9c9c;
+                font-weight: 500;
+                background: transparent;
+                border: none;
+            }
+            QLineEdit#ElkNumericValueField {
+                background: #2f2f2f;
+                color: #f6f6f6;
+                border: 1px solid #505050;
+                border-radius: 7px;
+                padding: 6px 8px;
+                font-weight: 600;
+            }
+            QLineEdit#ElkNumericValueField:focus {
+                border: 1px solid #ff9f2e;
+                background: #373737;
+            }
+            QFrame#ElkIconPreviewTile {
+                background: #262626;
+                border: 1px dashed #505050;
+                border-radius: 7px;
+            }
+            QLabel#ElkIconTileText, QLabel#ElkHintText {
+                color: #9d9d9d;
+                font-weight: 500;
+                font-size: 10px;
+            }
+            QWidget#ElkIconPickerRow {
+                background: transparent;
+            }
+            QWidget#ElkColorPickerRow {
+                background: transparent;
+            }
+            QLabel#ElkColorSwatch {
+                border-radius: 7px;
+            }
+            QFrame#ElkScriptEditorFrame {
+                background: #252525;
+                border: 1px solid #444444;
+                border-radius: 8px;
+            }
+            QLabel#ElkScriptLineGutter {
+                background: #303030;
+                color: #8e8e8e;
+                border-right: 1px solid #3f3f3f;
+                padding-top: 8px;
+                font-family: Menlo, Consolas, monospace;
+            }
+            QPlainTextEdit#ElkScriptEditor {
+                background: #252525;
+                border: none;
+                border-radius: 0px;
+                padding: 8px 10px;
+                color: #f0f0f0;
+                font-family: Menlo, Consolas, monospace;
             }
             QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
                 border: none;
-                width: 18px;
+                width: 22px;
                 background: transparent;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                padding-right: 6px;
+            }
+            QComboBox::down-arrow {
+                image: url(__ELK_COMBO_ARROW__);
+                width: 12px;
+                height: 12px;
+                margin-right: 8px;
+            }
+            QComboBox::down-arrow:disabled {
+                image: none;
             }
             QAbstractItemView {
                 background: #373737;
@@ -2727,7 +3535,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 color: #f2f2f2;
                 border: 1px solid #505050;
                 border-radius: 8px;
-                padding: 8px 14px;
+                padding: 5px 10px;
             }
             QPushButton:hover, QToolButton:hover {
                 background: #505050;
@@ -2736,7 +3544,41 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 background: #5e5e5e;
             }
             QDialogButtonBox QPushButton {
-                min-width: 96px;
+                min-width: 72px;
+                min-height: 29px;
+            }
+            QPushButton[primary="true"] {
+                background: #ff9f2e;
+                color: #ffffff;
+                border: 1px solid #ff9f2e;
+            }
+            QPushButton[primary="true"]:hover {
+                background: #ffad3b;
+                border-color: #ffad3b;
+            }
+            QPushButton[primary="true"]:pressed {
+                background: #f28a16;
+                border-color: #f28a16;
+            }
+            QGroupBox#CategoryManagerBox QPushButton {
+                min-width: 0px;
+                border-radius: 7px;
+                background: #333333;
+                border: 1px solid #4a4a4a;
+                padding: 6px 8px;
+            }
+            QGroupBox#CategoryManagerBox QPushButton:hover {
+                background: #3d3d3d;
+                border-color: #5a5a5a;
+            }
+            QGroupBox#CategoryManagerBox QPushButton[op="add"] {
+                color: #f4f4f4;
+                border: 1px solid #ff9f2e;
+                background: #303030;
+            }
+            QGroupBox#CategoryManagerBox QPushButton[op="add"]:hover {
+                background: #39332b;
+                border-color: #ffad3b;
             }
             QCheckBox, QRadioButton {
                 spacing: 8px;
@@ -2753,15 +3595,33 @@ class ELKMinimalUI(QtWidgets.QWidget):
             }
             QSlider::groove:horizontal {
                 border: none;
-                height: 4px;
-                border-radius: 2px;
+                height: 3px;
+                border-radius: 1px;
+                background: #505050;
+            }
+            QSlider::sub-page:horizontal {
+                border: none;
+                height: 3px;
+                border-radius: 1px;
+                background: #ff9f2e;
+            }
+            QSlider::add-page:horizontal {
+                border: none;
+                height: 3px;
+                border-radius: 1px;
                 background: #505050;
             }
             QSlider::handle:horizontal {
                 width: 14px;
-                margin: -5px 0;
+                height: 14px;
+                margin: -6px 0;
                 border-radius: 7px;
-                background: #f4f4f4;
+                background: #f6f6f6;
+                border: 2px solid #ff9f2e;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #ffffff;
+                border: 2px solid #ffad3b;
             }
             QScrollBar:vertical {
                 width: 8px;
@@ -2785,7 +3645,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                 width: 0px;
                 height: 0px;
             }
-        """)
+        """.replace("__ELK_COMBO_ARROW__", combo_arrow_url))
 
     def on_search(self,t):
         text = t or ''
