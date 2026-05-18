@@ -2719,23 +2719,28 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return max(0.1, float(self.ui_scale_settings.get(key, 100)) / 100.0)
 
     def _apply_max_height_limit(self):
-        max_h = self.max_height_px if self.max_height_px > 0 else 16777215
+        """Apply only a preferred horizontal dock height, never a hard height cap.
+
+        The previous implementation used maximumHeight on the Qt widget, its
+        parent, and the Maya workspaceControl. That made the shelf unable to grow
+        taller than the horizontal height limit, so desired_layout_mode() kept
+        seeing a short, wide panel and the UI could not return to vertical mode.
+
+        We now leave the widget resizable in both directions. The option still
+        acts as a preferred shelf height when Maya creates/resizes the dock, but
+        it no longer prevents the user from making the window tall enough to
+        trigger the vertical layout.
+        """
         self.setMinimumWidth(0)
         self.setMinimumHeight(0)
-        self.setMaximumHeight(max_h)
+        self.setMaximumHeight(16777215)
 
-        # Apply the cap only to the immediate ELK host widget.
-        # Do NOT touch self.window() here because in Maya dock mode it can
-        # resolve to a higher-level app window and unintentionally clamp Maya.
         host = self.parentWidget()
         if host is not None:
             host.setMinimumWidth(0)
             host.setMinimumHeight(0)
-            host.setMaximumHeight(max_h)
+            host.setMaximumHeight(16777215)
 
-        # When docked in a Maya workspaceControl, also clamp the control itself.
-        # Without this, Maya can keep stretching the dock area vertically even if
-        # the Qt widget has a lower max height.
         if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
             try:
                 cmds.workspaceControl(
@@ -2743,14 +2748,14 @@ class ELKMinimalUI(QtWidgets.QWidget):
                     edit=True,
                     minimumWidth=0,
                     minimumHeight=0,
-                    maximumHeight=max_h
+                    maximumHeight=16777215
                 )
-                if self.max_height_px > 0:
+                if self.max_height_px > 0 and self.is_horizontal_mode():
                     cmds.workspaceControl(
                         WORKSPACE_NAME,
                         edit=True,
                         heightProperty="preferred",
-                        resizeHeight=max_h
+                        resizeHeight=int(self.max_height_px)
                     )
             except Exception:
                 pass
@@ -2759,8 +2764,23 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return self.layout_mode == "horizontal"
 
     def desired_layout_mode(self):
-        w = max(1, self.width())
-        h = max(1, self.height())
+        """Return the responsive layout mode from the real visible viewport.
+
+        Horizontal mode is reserved for a true shelf shape: short and clearly
+        wider than tall. As soon as the panel becomes tall enough, or not wide
+        enough, the UI must go back to vertical.
+        """
+        try:
+            if hasattr(self, "scroll") and self.scroll is not None and self.scroll.viewport() is not None:
+                w = max(1, int(self.scroll.viewport().width()))
+                h = max(1, int(self.scroll.viewport().height()))
+            else:
+                w = max(1, int(self.width()))
+                h = max(1, int(self.height()))
+        except Exception:
+            w = max(1, int(self.width()))
+            h = max(1, int(self.height()))
+
         return "horizontal" if (w > h and h <= 250) else "vertical"
 
     def available_width(self):
@@ -3085,6 +3105,28 @@ class ELKMinimalUI(QtWidgets.QWidget):
             self.view_btn.setVisible(True)
             self.options_btn.setVisible(True)
             self.add_btn.setVisible(True)
+
+            # Clear every height/width constraint that may have been installed by
+            # horizontal shelf mode. Without this reset, categories can keep a
+            # fixed horizontal height and prevent a clean vertical reflow.
+            for cat in getattr(self, "category_widgets", []):
+                try:
+                    cat.setMinimumWidth(0)
+                    cat.setMaximumWidth(16777215)
+                    cat.setMinimumHeight(0)
+                    cat.setMaximumHeight(16777215)
+                    cat.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+                    if getattr(cat, "body_scroll", None) is not None:
+                        cat.body_scroll.setMinimumHeight(0)
+                        cat.body_scroll.setMaximumHeight(16777215)
+                        cat.body_scroll.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+                    if getattr(cat, "body", None) is not None:
+                        cat.body.setMinimumHeight(0)
+                        cat.body.setMaximumHeight(16777215)
+                except Exception:
+                    pass
+
+        self._apply_max_height_limit()
         return True
 
     def _sync_horizontal_height_constraints(self):
