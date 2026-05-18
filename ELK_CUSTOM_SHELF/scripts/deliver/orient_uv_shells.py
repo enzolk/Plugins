@@ -1,4 +1,4 @@
-# ELK_META {"label": "Orient UV Shells", "short_name": "UVOrnt", "tooltip": "Oriente toutes les UV shells dans la même direction.", "source": "python", "icon_svg": "axis-x.svg", "icon_color": "#f2c94c"}
+# ELK_META {"label": "Orient UV Shells", "short_name": "UVOrnt", "tooltip": "Oriente toutes les UV shells dans la même direction.", "source": "python", "icon_svg": "axis-x.svg", "icon_color": "#ffd43b", "apply_elk_ui_style": true}
 import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om

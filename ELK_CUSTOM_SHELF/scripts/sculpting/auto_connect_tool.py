@@ -1,4 +1,4 @@
-# ELK_META {"label": "Auto Connect Tool", "short_name": "AutoCn", "tooltip": "Connecte automatiquement des composants ou meshes selon leur proximité.", "source": "python", "icon_svg": "link.svg", "icon_color": "#ff5c8a"}
+# ELK_META {"label": "Auto Connect Tool", "short_name": "AutoCn", "tooltip": "Connecte automatiquement des composants ou meshes selon leur proximité.", "source": "python", "icon_svg": "link.svg", "icon_color": "#36d6ff", "apply_elk_ui_style": false, "quick_favorite": true, "secondary_scripts": []}
 import maya.cmds as cmds
 
 class AutoConnectTool:

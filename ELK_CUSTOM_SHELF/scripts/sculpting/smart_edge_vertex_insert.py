@@ -1,4 +1,4 @@
-# ELK_META {"label": "Smart Edge Vertex Insert", "short_name": "EdgeVX", "tooltip": "Détecte automatiquement l’edge la plus proche et insère un vertex intelligemment.", "source": "python", "icon_svg": "vector-bezier-2.svg", "icon_color": "#ff5c8a"}
+# ELK_META {"label": "Smart Edge Vertex Insert", "short_name": "EdgeVX", "tooltip": "Détecte automatiquement l’edge la plus proche et insère un vertex intelligemment.", "source": "python", "icon_svg": "vector-bezier-2.svg", "icon_color": "#36d6ff", "apply_elk_ui_style": true, "secondary_scripts": []}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 

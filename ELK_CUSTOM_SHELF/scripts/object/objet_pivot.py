@@ -1,4 +1,4 @@
-# ELK_META {"label": "Toggle Scale Mode", "short_name": "ScaleM", "tooltip": "Alterne rapidement les différents modes d’échelle d’objet.", "source": "python", "icon_svg": "scale.svg", "icon_color": "#ff9f1a"}
+# ELK_META {"label": "Objet Pivot", "short_name": "ObjPiv", "tooltip": "Alterne rapidement différents modes de pivot dans Maya.", "source": "python", "icon_svg": "cube.svg", "icon_color": "#ffad3b", "apply_elk_ui_style": false, "quick_favorite": false, "secondary_scripts": []}
 import maya.cmds as cmds
  
 ctx = cmds.currentCtx()

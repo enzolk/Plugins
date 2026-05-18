@@ -1,4 +1,4 @@
-# ELK_META {"label": "Weighted Normals Pro", "short_name": "WNorm", "tooltip": "Outil avancé de weighted normals avec live preview, hard edge detection, UV seam support, smoothing et blending configurable en temps réel.", "source": "python", "icon_svg": "border-corner-rounded.svg", "icon_color": "#ff5d3b"}
+# ELK_META {"label": "Weighted Normals Pro", "short_name": "WNorm", "tooltip": "Outil avancé de weighted normals avec live preview, hard edge detection, UV seam support, smoothing et blending configurable en temps réel.", "source": "python", "icon_svg": "border-corner-rounded.svg", "icon_color": "#ff5d3b", "apply_elk_ui_style": false}
 # -*- coding: utf-8 -*-
 
 import math

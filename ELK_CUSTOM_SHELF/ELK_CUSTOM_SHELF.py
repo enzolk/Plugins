@@ -16,11 +16,25 @@ from maya import OpenMayaUI as omui
 try:
     from PySide2 import QtWidgets, QtCore, QtGui
     from PySide2 import QtSvg
-    from shiboken2 import wrapInstance
+    from shiboken2 import wrapInstance, isValid as _qt_is_valid
 except Exception:
     from PySide6 import QtWidgets, QtCore, QtGui
     from PySide6 import QtSvg
-    from shiboken6 import wrapInstance
+    from shiboken6 import wrapInstance, isValid as _qt_is_valid
+
+def _qt_object_alive(obj):
+    if obj is None:
+        return False
+    try:
+        return bool(_qt_is_valid(obj))
+    except Exception:
+        try:
+            obj.objectName()
+            return True
+        except RuntimeError:
+            return False
+        except Exception:
+            return False
 
 WINDOW_NAME = "ELK_UI_Minimal_Adaptive"
 WORKSPACE_NAME = WINDOW_NAME + "WorkspaceControl"
@@ -2305,28 +2319,36 @@ class Category(QtWidgets.QFrame):
             QtCore.QTimer.singleShot(0, self._fit_horizontal_body_to_viewport)
 
     def _fit_horizontal_body_to_viewport(self):
-        if not self.parent_ui.is_horizontal_mode() or not self.expanded:
+        if not _qt_object_alive(self):
             return
-        viewport = self.body_scroll.viewport()
-        if viewport is None:
+        try:
+            if not _qt_object_alive(getattr(self, "body_scroll", None)) or not _qt_object_alive(getattr(self, "body", None)):
+                return
+            if not _qt_object_alive(getattr(self, "parent_ui", None)) or not self.parent_ui.is_horizontal_mode() or not self.expanded:
+                return
+            viewport = self.body_scroll.viewport()
+            if viewport is None or not _qt_object_alive(viewport):
+                return
+
+            vp_h = max(1, viewport.height())
+            margins = self.grid.contentsMargins()
+            side = self.parent_ui.horizontal_category_button_side()
+
+            for btn in self.body.findChildren(ToolButton):
+                if _qt_object_alive(btn):
+                    btn.apply_compact_side(side)
+
+            self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            vbar = self.body_scroll.verticalScrollBar()
+            if vbar is not None and _qt_object_alive(vbar):
+                vbar.setValue(0)
+
+            self.body.adjustSize()
+            body_h = max(1, vp_h - margins.top() - margins.bottom())
+            self.body.setMinimumHeight(min(self.body.sizeHint().height(), body_h))
+            self.body.setMaximumHeight(body_h)
+        except RuntimeError:
             return
-
-        vp_h = max(1, viewport.height())
-        margins = self.grid.contentsMargins()
-        side = self.parent_ui.horizontal_category_button_side()
-
-        for btn in self.body.findChildren(ToolButton):
-            btn.apply_compact_side(side)
-
-        self.body_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        vbar = self.body_scroll.verticalScrollBar()
-        if vbar is not None:
-            vbar.setValue(0)
-
-        self.body.adjustSize()
-        body_h = max(1, vp_h - margins.top() - margins.bottom())
-        self.body.setMinimumHeight(min(self.body.sizeHint().height(), body_h))
-        self.body.setMaximumHeight(body_h)
 
     def layout_items(self):
         result=[]
@@ -2485,6 +2507,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
                     if key: order.append(key); category_by_file[key]=c.name
         _save_items_meta({"order":order, "category_by_file":category_by_file})
         self.shelf_items = load_shelf_items()
+        self._schedule_layout_settle()
         _broadcast_refresh(self)
 
     def _quick_favorites_groups(self):
@@ -2508,6 +2531,12 @@ class ELKMinimalUI(QtWidgets.QWidget):
         return [groups_by_category[name] for name in ordered_categories if groups_by_category[name]["items"]]
 
     def show_quick_favorites_menu(self):
+        try:
+            if self._quick_favorites_menu is not None and self._quick_favorites_menu.isVisible():
+                self._quick_favorites_menu.close()
+                return
+        except Exception:
+            self._quick_favorites_menu = None
         groups = self._quick_favorites_groups()
         if not groups:
             try:
@@ -3116,6 +3145,36 @@ class ELKMinimalUI(QtWidgets.QWidget):
     def _refresh_ui_data(self):
         self.shelf_items = load_shelf_items()
         self.refresh()
+
+    def _schedule_layout_settle(self):
+        for delay in (0, 35, 90, 180):
+            QtCore.QTimer.singleShot(delay, self._settle_layout_once)
+
+    def _settle_layout_once(self):
+        if not _qt_object_alive(self):
+            return
+        try:
+            if self.layout() is not None:
+                self.layout().invalidate()
+            if getattr(self, "content_lay", None) is not None:
+                self.content_lay.invalidate()
+            self.reflow()
+            if self.is_horizontal_mode():
+                self.compute_horizontal_widths()
+                for cat in self.categories():
+                    try:
+                        if not _qt_object_alive(cat):
+                            continue
+                        cat.reflow()
+                        cat._fit_horizontal_body_to_viewport()
+                    except (RuntimeError, ReferenceError):
+                        continue
+                self._sync_horizontal_height_constraints()
+                self.apply_horizontal_control_button_sizes()
+            self.updateGeometry()
+            self.update()
+        except Exception:
+            pass
 
     def _add_numeric_option_row(self, form_layout, label, minimum, maximum, value, suffix="", special_value_text=""):
         control = ElkNumericSliderControl(
@@ -4664,6 +4723,7 @@ class ELKMinimalUI(QtWidgets.QWidget):
         self.apply_horizontal_control_button_sizes()
         self._keep_search_focus = False
         self.shelf_items = load_shelf_items()
+        self._schedule_layout_settle()
 
     def log_layout_state(self, reason=""):
         if not getattr(self, "layout_debug_logs_enabled", False):

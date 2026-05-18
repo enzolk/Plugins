@@ -1,4 +1,4 @@
-# ELK_META {"label": "Match Orientation Tool", "short_name": "MatchT", "tooltip": "Aligne automatiquement l’orientation d’un objet sur un autre via analyse PCA, ICP et matching spatial avancé tout en conservant les pivots", "source": "python", "icon_svg": "clipboard-copy.svg", "icon_color": "#ff5d3b"}
+# ELK_META {"label": "Match Orientation Tool", "short_name": "MatchT", "tooltip": "Aligne automatiquement l’orientation d’un objet sur un autre via analyse PCA, ICP et matching spatial avancé tout en conservant les pivots", "source": "python", "icon_svg": "clipboard-copy.svg", "icon_color": "#ff5d3b", "apply_elk_ui_style": false, "quick_favorite": false, "secondary_scripts": []}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 import numpy as np

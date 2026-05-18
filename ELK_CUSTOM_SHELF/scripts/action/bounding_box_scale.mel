@@ -1,0 +1,2 @@
+// ELK_META {"label": "Bounding Box Scale", "short_name": "BBScale", "tooltip": "Outil de mise à l’échelle basé sur la bounding box.", "source": "mel", "icon_svg": "box-model.svg", "icon_color": "#a56bff", "apply_elk_ui_style": false, "secondary_scripts": []}
+bt_boundingBoxScaleWindow;

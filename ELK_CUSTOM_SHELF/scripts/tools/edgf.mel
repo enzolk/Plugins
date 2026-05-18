@@ -1,5 +1,0 @@
-// ELK_META {"label": "Insert Edge Loop Flow", "short_name": "EdgFlw", "tooltip": "Variante de l’outil Insert Edge Loop avec paramètres orientés flow / retopologie.", "source": "mel", "icon_svg": "wave-sine.svg", "icon_color": "#36d6ff"}
-//insert edgeloop relative distance 
-SplitEdgeRingTool; 
-polySelectEditCtx -e -splitType 1 -insertWithEdgeFlow 1 
-polySelectEditContext; 

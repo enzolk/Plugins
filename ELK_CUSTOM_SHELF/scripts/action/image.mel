@@ -1,2 +1,0 @@
-// ELK_META {"label": "Free Image Plane", "short_name": "ImgFree", "tooltip": "Déverrouille ou libère des image planes dans la scène Maya.", "source": "mel", "icon_svg": "photo.svg", "icon_color": "#c678ff"}
-CreateImagePlane

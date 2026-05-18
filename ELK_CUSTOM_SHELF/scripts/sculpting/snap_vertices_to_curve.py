@@ -1,4 +1,4 @@
-# ELK_META {"label": "Snap Vertices To Curve", "short_name": "VtxCrv", "tooltip": "Déplace automatiquement des vertices sélectionnés vers la courbe NURBS la plus proche.", "source": "python", "icon_svg": "route.svg", "icon_color": "#ff5c8a"}
+# ELK_META {"label": "Snap Vertices To Curve", "short_name": "VtxCrv", "tooltip": "Déplace automatiquement des vertices sélectionnés vers la courbe NURBS la plus proche.", "source": "python", "icon_svg": "route.svg", "icon_color": "#36d6ff", "apply_elk_ui_style": true, "secondary_scripts": []}
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 

@@ -1,2 +1,0 @@
-// ELK_META {"label": "Quad Draw", "short_name": "QDraw", "tooltip": "Active directement l’outil Quad Draw pour la retopologie et la reconstruction de surfaces.", "source": "mel", "icon_svg": "pencil.svg", "icon_color": "#36d6ff"}
-QuadDrawTool

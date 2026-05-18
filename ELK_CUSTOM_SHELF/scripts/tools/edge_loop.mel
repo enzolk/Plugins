@@ -1,5 +1,0 @@
-// ELK_META {"label": "Insert Edge Loop", "short_name": "EdgeLp", "tooltip": "Lance rapidement l’outil Insert Edge Loop avec paramètres prédéfinis pour accélérer le découpage d’edge loops.", "source": "mel", "icon_svg": "border-vertical.svg", "icon_color": "#36d6ff"}
-//insert edgeloop relative distance 
-SplitEdgeRingTool; 
-polySelectEditCtx -e -splitType 1 -insertWithEdgeFlow 0 
-polySelectEditContext; 
